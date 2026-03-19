@@ -11,7 +11,7 @@ import type { PlatformSettings, SetTradingModeRequestMode, ActionResponse } from
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui-elements";
 import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
-import { Shield, TrendingUp, Clock, Crosshair, Save, RotateCcw, CheckCircle2, Key, Eye, EyeOff, AlertTriangle, Zap, Bot, Lock, Unlock, Database, Download, FlaskConical, Sparkles, ChevronRight, XCircle } from "lucide-react";
+import { Shield, TrendingUp, Clock, Crosshair, Save, RotateCcw, CheckCircle2, Key, Eye, EyeOff, AlertTriangle, Zap, Bot, Lock, Unlock, Database, Download, FlaskConical, Sparkles, ChevronRight, XCircle, Wifi, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
 
@@ -382,13 +382,20 @@ interface SetupProgress {
   backtestsCreated?: number;
 }
 
-function InitialSetupWizard({ onComplete }: { onComplete: () => void }) {
+interface PreflightResult {
+  deriv: { ok: boolean; error?: string };
+  openai: { ok: boolean; error?: string };
+}
+
+function InitialSetupWizard({ onComplete, openAiKeySet }: { onComplete: () => void; openAiKeySet: boolean }) {
   const { toast } = useToast();
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [running, setRunning] = useState(false);
-  const [currentStep, setCurrentStep] = useState<"idle" | "backfill" | "analyse" | "done">("idle");
+  const [currentStep, setCurrentStep] = useState<"idle" | "preflight" | "backfill" | "analyse" | "done">("idle");
   const [progress, setProgress] = useState<SetupProgress | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const [preflight, setPreflight] = useState<PreflightResult | null>(null);
+  const [preflightRunning, setPreflightRunning] = useState(false);
   const base = import.meta.env.BASE_URL || "/";
 
   const fetchStatus = async () => {
@@ -430,11 +437,48 @@ function InitialSetupWizard({ onComplete }: { onComplete: () => void }) {
     return true;
   };
 
+  const handleRunPreflight = async () => {
+    if (preflightRunning) return;
+    setPreflightRunning(true);
+    setPreflight(null);
+    try {
+      const r = await fetch(`${base}api/setup/preflight`, { method: "POST", headers: { "Content-Type": "application/json" } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data: PreflightResult = await r.json();
+      setPreflight(data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Preflight request failed.";
+      setPreflight({ deriv: { ok: false, error: msg }, openai: { ok: false, error: msg } });
+    } finally {
+      setPreflightRunning(false);
+    }
+  };
+
   const handleStartSetup = async () => {
     if (running) return;
     setRunning(true);
 
     try {
+      setCurrentStep("preflight");
+      setPreflightRunning(true);
+      setPreflight(null);
+      const preflightResp = await fetch(`${base}api/setup/preflight`, { method: "POST", headers: { "Content-Type": "application/json" } });
+      if (!preflightResp.ok) {
+        throw new Error(`Connection check request failed (HTTP ${preflightResp.status}). Please try again.`);
+      }
+      const preflightData: PreflightResult = await preflightResp.json();
+      setPreflight(preflightData);
+      setPreflightRunning(false);
+
+      if (!preflightData.deriv.ok || !preflightData.openai.ok) {
+        const failedChecks = [];
+        if (!preflightData.deriv.ok) failedChecks.push("Deriv API");
+        if (!preflightData.openai.ok) failedChecks.push("OpenAI API");
+        throw new Error(`Connection check failed for: ${failedChecks.join(", ")}. Fix your API keys in Settings → API Keys and retry.`);
+      }
+
+      await new Promise(r => setTimeout(r, 1500));
+
       setCurrentStep("backfill");
       setProgress({ phase: "start", message: "Connecting to Deriv API..." });
       await streamPhase(`${base}api/setup/backfill`);
@@ -458,6 +502,8 @@ function InitialSetupWizard({ onComplete }: { onComplete: () => void }) {
   if (dismissed || status?.setupComplete) return null;
   if (!status) return null;
 
+  const bothKeysConfigured = status.hasToken && openAiKeySet;
+
   const STEP_LABELS = [
     { key: "backfill", icon: Download, label: "Download 24 months of trading history" },
     { key: "analyse", icon: FlaskConical, label: "Run all strategies as backtests" },
@@ -473,6 +519,9 @@ function InitialSetupWizard({ onComplete }: { onComplete: () => void }) {
     : 0;
 
   const progressPct = currentStep === "backfill" ? backfillPct : currentStep === "analyse" ? analysePct : currentStep === "done" ? 100 : 0;
+
+  const isRunningPost = running && currentStep !== "preflight";
+  const isPreflightPhase = running && currentStep === "preflight";
 
   return (
     <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
@@ -501,6 +550,10 @@ function InitialSetupWizard({ onComplete }: { onComplete: () => void }) {
                 <p className="text-sm text-muted-foreground">
                   Enter your <span className="text-primary font-medium">Deriv API token</span> in the API Keys section below, then return here to run initial setup.
                 </p>
+              ) : !openAiKeySet ? (
+                <p className="text-sm text-muted-foreground">
+                  Enter your <span className="text-primary font-medium">OpenAI API key</span> in the API Keys section below. Both keys are required before running initial setup.
+                </p>
               ) : (
                 <>
                   <p className="text-sm text-muted-foreground">
@@ -521,20 +574,96 @@ function InitialSetupWizard({ onComplete }: { onComplete: () => void }) {
                         : "No historical data yet"}
                     </p>
                   </div>
-                  <button
-                    onClick={handleStartSetup}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all"
-                  >
-                    <Zap className="w-4 h-4" />
-                    Run Initial Setup
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
+
+                  {preflight && (
+                    <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/50 bg-background/50">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Connection Check Results</p>
+                      <div className="flex items-center gap-2 text-sm">
+                        {preflight.deriv.ok
+                          ? <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                          : <XCircle className="w-4 h-4 text-destructive shrink-0" />}
+                        <span className={preflight.deriv.ok ? "text-emerald-500 font-medium" : "text-destructive font-medium"}>
+                          Deriv API: {preflight.deriv.ok ? "Connected" : preflight.deriv.error}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
+                        {preflight.openai.ok
+                          ? <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                          : <XCircle className="w-4 h-4 text-destructive shrink-0" />}
+                        <span className={preflight.openai.ok ? "text-emerald-500 font-medium" : "text-destructive font-medium"}>
+                          OpenAI API: {preflight.openai.ok ? "Connected" : preflight.openai.error}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {bothKeysConfigured && (
+                      <button
+                        onClick={handleRunPreflight}
+                        disabled={preflightRunning}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:border-primary/50 transition-all disabled:opacity-50"
+                        title="Test both API connections before starting setup"
+                      >
+                        {preflightRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
+                        {preflightRunning ? "Checking..." : "Check Connections"}
+                      </button>
+                    )}
+                    <button
+                      onClick={handleStartSetup}
+                      disabled={!bothKeysConfigured}
+                      title={!bothKeysConfigured ? "Both Deriv API token and OpenAI API key must be configured before running setup" : undefined}
+                      className={cn(
+                        "flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all",
+                        bothKeysConfigured
+                          ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:shadow-primary/40"
+                          : "bg-muted text-muted-foreground cursor-not-allowed opacity-60"
+                      )}
+                    >
+                      <Zap className="w-4 h-4" />
+                      Run Initial Setup
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 </>
               )}
             </>
           )}
 
-          {running && (
+          {(isPreflightPhase || (running && preflight && currentStep !== "idle")) && !isRunningPost && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                {preflightRunning
+                  ? <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
+                  : <Wifi className="w-4 h-4 text-primary shrink-0" />}
+                <span className="text-sm font-medium text-foreground">
+                  {preflightRunning ? "Checking API connections..." : "Connection Check"}
+                </span>
+              </div>
+              {preflight && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2 text-sm">
+                    {preflight.deriv.ok
+                      ? <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      : <XCircle className="w-4 h-4 text-destructive shrink-0" />}
+                    <span className={preflight.deriv.ok ? "text-emerald-500" : "text-destructive"}>
+                      Deriv API: {preflight.deriv.ok ? "Connected" : preflight.deriv.error}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    {preflight.openai.ok
+                      ? <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      : <XCircle className="w-4 h-4 text-destructive shrink-0" />}
+                    <span className={preflight.openai.ok ? "text-emerald-500" : "text-destructive"}>
+                      OpenAI API: {preflight.openai.ok ? "Connected" : preflight.openai.error}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {isRunningPost && (
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 {STEP_LABELS.map(({ key, icon: Icon, label }, i) => {
@@ -544,13 +673,13 @@ function InitialSetupWizard({ onComplete }: { onComplete: () => void }) {
                     <React.Fragment key={key}>
                       <div className={cn(
                         "flex items-center gap-1.5 text-xs font-medium transition-colors",
-                        isDone ? "text-success" : isActive ? "text-primary" : "text-muted-foreground/40"
+                        isDone ? "text-emerald-500" : isActive ? "text-primary" : "text-muted-foreground/40"
                       )}>
                         <Icon className="w-3.5 h-3.5 shrink-0" />
                         <span className="hidden sm:inline">{label.split(" ").slice(0, 3).join(" ")}</span>
                       </div>
                       {i < STEP_LABELS.length - 1 && (
-                        <div className={cn("flex-1 h-px", isDone ? "bg-success/40" : "bg-border/50")} />
+                        <div className={cn("flex-1 h-px", isDone ? "bg-emerald-500/40" : "bg-border/50")} />
                       )}
                     </React.Fragment>
                   );
@@ -580,6 +709,13 @@ function InitialSetupWizard({ onComplete }: { onComplete: () => void }) {
                   <span>{progress.message}</span>
                 </div>
               )}
+            </div>
+          )}
+
+          {!running && progress?.phase === "error" && currentStep === "idle" && (
+            <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-3">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{progress.message}</span>
             </div>
           )}
         </CardContent>
@@ -813,6 +949,7 @@ export default function Settings() {
 
       <AnimatePresence>
         <InitialSetupWizard
+          openAiKeySet={form.openai_api_key_set === "true"}
           onComplete={() => {
             queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() });
             fetchAiStatus();

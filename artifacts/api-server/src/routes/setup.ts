@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq, and, inArray, count } from "drizzle-orm";
 import { db, candlesTable, backtestRunsTable, backtestTradesTable, platformStateTable } from "@workspace/db";
 import { getDerivClientWithDbToken, getDbApiToken, SUPPORTED_SYMBOLS } from "../lib/deriv.js";
+import { checkOpenAiHealth, isOpenAIConfigured } from "../lib/openai.js";
 import { runBacktestSimulation } from "./backtest.js";
 
 const router: IRouter = Router();
@@ -16,6 +17,75 @@ const AI_LOCKABLE_KEYS = [
   "tp_multiplier_strong", "tp_multiplier_medium", "tp_multiplier_weak",
   "sl_ratio", "time_exit_window_hours",
 ];
+
+router.post("/setup/preflight", async (_req, res): Promise<void> => {
+  try {
+    const derivToken = await getDbApiToken();
+    const openaiConfigured = await isOpenAIConfigured();
+
+    const [derivResult, openaiResult] = await Promise.all([
+      (async (): Promise<{ ok: boolean; error?: string }> => {
+        if (!derivToken) return { ok: false, error: "Deriv API token not configured. Add it in Settings → API Keys." };
+        const DERIV_WS_URL = "wss://ws.binaryws.com/websockets/v3?app_id=1089";
+        const { default: WebSocket } = await import("ws");
+        return new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          const ws = new WebSocket(DERIV_WS_URL);
+          let settled = false;
+          const timeout = setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              try { ws.close(); } catch {}
+              resolve({ ok: false, error: "Deriv WebSocket connection timed out after 15 seconds." });
+            }
+          }, 15000);
+
+          ws.on("open", () => {
+            ws.send(JSON.stringify({ authorize: derivToken, req_id: 1 }));
+          });
+
+          ws.on("message", (raw: Buffer) => {
+            if (settled) return;
+            try {
+              const data = JSON.parse(raw.toString());
+              if (data.req_id !== 1) return;
+              settled = true;
+              clearTimeout(timeout);
+              try { ws.close(); } catch {}
+              if (data.error) {
+                resolve({ ok: false, error: `Deriv auth failed: ${(data.error as { message: string }).message}` });
+              } else {
+                resolve({ ok: true });
+              }
+            } catch {}
+          });
+
+          ws.on("error", (err: Error) => {
+            if (!settled) {
+              settled = true;
+              clearTimeout(timeout);
+              resolve({ ok: false, error: `Deriv connection error: ${err.message}` });
+            }
+          });
+        });
+      })(),
+      (async (): Promise<{ ok: boolean; error?: string }> => {
+        if (!openaiConfigured) return { ok: false, error: "OpenAI API key not configured. Add it in Settings → API Keys." };
+        const health = await checkOpenAiHealth();
+        if (!health.working) {
+          return { ok: false, error: health.error || "OpenAI API key is invalid or the API is unreachable." };
+        }
+        return { ok: true };
+      })(),
+    ]);
+
+    res.json({ deriv: derivResult, openai: openaiResult });
+  } catch (err) {
+    res.status(500).json({
+      deriv: { ok: false, error: "Preflight check failed unexpectedly." },
+      openai: { ok: false, error: err instanceof Error ? err.message : "Unknown error" },
+    });
+  }
+});
 
 router.get("/setup/status", async (_req, res): Promise<void> => {
   try {

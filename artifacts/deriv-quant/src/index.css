@@ -1,9 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&display=swap');
 @import "tailwindcss";
 
 @theme inline {
   --font-sans: 'Inter', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-mono: 'Inter', sans-serif;
 
   /* Exact colours from canvas design mockup (#0e1120, #1a2035, #60a5fa …) */
   --color-background: #0e1120;
@@ -55,6 +55,8 @@
   body {
     @apply bg-background text-foreground font-sans antialiased selection:bg-primary/25;
     min-height: 100vh;
+    font-feature-settings: "tnum" 1, "calt" 0, "zero" 0;
+    font-variant-numeric: tabular-nums lining-nums;
   }
 
   #root {

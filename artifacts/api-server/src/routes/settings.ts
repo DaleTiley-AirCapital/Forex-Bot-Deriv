@@ -176,7 +176,7 @@ router.get("/settings/api-key-status", async (_req, res): Promise<void> => {
   for (const s of states) stateMap[s.key] = s.value;
 
   res.json({
-    deriv_api_token_set: !!stateMap["deriv_api_token"] || !!process.env["Deriv_Api_Token"],
+    deriv_api_token_set: !!stateMap["deriv_api_token"],
     openai_api_key_set: !!stateMap["openai_api_key"],
   });
 });

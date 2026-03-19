@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import cors from "cors";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import router from "./routes/index.js";
@@ -13,19 +14,15 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
 
-// In production (Docker), serve the built React frontend from the same process.
-// This removes the need for a separate nginx container.
-if (process.env.SERVE_FRONTEND === "true") {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  // Vite outputs to dist/public — path inside the Docker image
-  const frontendDist = path.resolve(__dirname, "../../deriv-quant/dist/public");
+// Serve the built React frontend automatically if the dist folder exists.
+// No env var required — it just works in production (Railway) and is skipped
+// in development where the Vite dev server runs separately.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const frontendDist = path.resolve(__dirname, "../../deriv-quant/dist/public");
 
+if (fs.existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
-
-  // For any non-API route, return index.html so the React router works
-
   app.get(/.*/, (_req, res) => {
-
     res.sendFile(path.join(frontendDist, "index.html"));
   });
 }

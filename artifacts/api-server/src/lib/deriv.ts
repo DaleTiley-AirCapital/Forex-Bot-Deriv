@@ -697,23 +697,10 @@ function decryptStoredSecret(stored: string): string {
   return decrypted;
 }
 
-export function getDerivClient(): DerivClient {
-  const token = process.env["Deriv_Api_Token"];
-  if (!token) {
-    throw new Error("Deriv_Api_Token environment variable is not set");
-  }
-  if (!derivClient) {
-    derivClient = new DerivClient(token);
-  }
-  return derivClient;
-}
-
 export async function getDerivClientWithDbToken(): Promise<DerivClient> {
-  const dbToken = await getDbApiToken();
-  const envToken = process.env["Deriv_Api_Token"];
-  const token = dbToken || envToken;
+  const token = await getDbApiToken();
   if (!token) {
-    throw new Error("No Deriv API token configured. Set it in Settings or as Deriv_Api_Token environment variable.");
+    throw new Error("No Deriv API token configured. Add it in Settings → API Keys.");
   }
   if (!derivClient || lastToken !== token) {
     if (derivClient) {

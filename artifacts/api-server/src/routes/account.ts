@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { eq } from "drizzle-orm";
 import { db, platformStateTable } from "@workspace/db";
 import { getDerivClientWithDbToken } from "../lib/deriv.js";
 
@@ -104,10 +105,11 @@ router.post("/account/set-mode", async (req, res): Promise<void> => {
   }
 
   if (mode === "live") {
-    if (process.env["LIVE_TRADING_ENABLED"] !== "true") {
+    const tokenRow = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "deriv_api_token")).limit(1);
+    if (!tokenRow.length || !tokenRow[0].value) {
       res.status(403).json({
         success: false,
-        message: "Live trading is disabled. Set LIVE_TRADING_ENABLED environment variable to enable.",
+        message: "Live trading requires a Deriv API token. Set it in Settings → API Keys first.",
       });
       return;
     }

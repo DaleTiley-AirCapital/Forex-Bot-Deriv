@@ -20,9 +20,9 @@ router.post("/trade/live/start", async (req, res): Promise<void> => {
     });
     return;
   }
-  const liveEnabled = process.env["LIVE_TRADING_ENABLED"] === "true";
-  if (!liveEnabled) {
-    res.json({ success: false, message: "Live trading is disabled. Set LIVE_TRADING_ENABLED=true in environment to enable." });
+  const tokenRow = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "deriv_api_token")).limit(1);
+  if (!tokenRow.length || !tokenRow[0].value) {
+    res.status(403).json({ success: false, message: "Live trading requires a Deriv API token. Set it in Settings → API Keys first." });
     return;
   }
   await db.insert(platformStateTable).values({ key: "mode", value: "live" })

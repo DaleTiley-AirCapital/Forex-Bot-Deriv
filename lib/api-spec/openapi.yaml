@@ -1,0 +1,1434 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.1.0
+  description: Deriv Quant Research & Execution Platform API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: data
+    description: Data collection and streaming
+  - name: models
+    description: Feature engineering and model training
+  - name: backtest
+    description: Backtesting engine
+  - name: signals
+    description: Signal generation and management
+  - name: trades
+    description: Trade execution and history
+  - name: portfolio
+    description: Portfolio management and allocation
+  - name: risk
+    description: Risk manager controls
+  - name: settings
+    description: Platform configuration and trading parameters
+  - name: account
+    description: Deriv account info and trading mode
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /data/backfill:
+    post:
+      operationId: startBackfill
+      tags: [data]
+      summary: Start historical data backfill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackfillRequest"
+      responses:
+        "200":
+          description: Backfill started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /data/stream/start:
+    post:
+      operationId: startStream
+      tags: [data]
+      summary: Start live tick stream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StreamRequest"
+      responses:
+        "200":
+          description: Stream started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /data/stream/stop:
+    post:
+      operationId: stopStream
+      tags: [data]
+      summary: Stop live tick stream
+      responses:
+        "200":
+          description: Stream stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /data/status:
+    get:
+      operationId: getDataStatus
+      tags: [data]
+      summary: Get data collection status
+      responses:
+        "200":
+          description: Data status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataStatus"
+
+  /data/ticks:
+    get:
+      operationId: getTicks
+      tags: [data]
+      summary: Get recent ticks for a symbol
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        "200":
+          description: Tick data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Tick"
+
+  /data/candles:
+    get:
+      operationId: getCandles
+      tags: [data]
+      summary: Get candles for a symbol and timeframe
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: timeframe
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 200
+      responses:
+        "200":
+          description: Candle data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Candle"
+
+  /data/spikes:
+    get:
+      operationId: getSpikeEvents
+      tags: [data]
+      summary: Get spike events for a symbol
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Spike events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SpikeEvent"
+
+  /models/features/build:
+    post:
+      operationId: buildFeatures
+      tags: [models]
+      summary: Build feature set from raw data
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeatureBuildRequest"
+      responses:
+        "200":
+          description: Feature build started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /models/train:
+    post:
+      operationId: trainModel
+      tags: [models]
+      summary: Train probability model
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainModelRequest"
+      responses:
+        "200":
+          description: Training started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /models/latest:
+    get:
+      operationId: getLatestModels
+      tags: [models]
+      summary: Get latest model runs
+      responses:
+        "200":
+          description: Latest model runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ModelRun"
+
+  /models/score:
+    post:
+      operationId: scoreSignal
+      tags: [models]
+      summary: Score a trade signal using the model
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScoreRequest"
+      responses:
+        "200":
+          description: Score result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoreResult"
+
+  /backtest/run:
+    post:
+      operationId: runBacktest
+      tags: [backtest]
+      summary: Run a backtest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BacktestRunRequest"
+      responses:
+        "200":
+          description: Backtest started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /backtest/results:
+    get:
+      operationId: getBacktestResults
+      tags: [backtest]
+      summary: Get all backtest run summaries
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Backtest results list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BacktestRun"
+
+  /backtest/{id}:
+    get:
+      operationId: getBacktestById
+      tags: [backtest]
+      summary: Get a specific backtest result
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Backtest result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestRun"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /backtest/{id}/analyse:
+    post:
+      operationId: analyseBacktest
+      tags: [backtest]
+      summary: Get AI analysis of a backtest result
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: AI analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacktestAnalysis"
+        "400":
+          description: OpenAI not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Backtest not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /signals/latest:
+    get:
+      operationId: getLatestSignals
+      tags: [signals]
+      summary: Get latest trade signals
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Latest signals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SignalLog"
+
+  /trade/paper/start:
+    post:
+      operationId: startPaperTrading
+      tags: [trades]
+      summary: Start paper trading mode
+      responses:
+        "200":
+          description: Paper trading started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /trade/live/start:
+    post:
+      operationId: startLiveTrading
+      tags: [trades]
+      summary: Start live trading mode
+      responses:
+        "200":
+          description: Live trading started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /trade/stop:
+    post:
+      operationId: stopTrading
+      tags: [trades]
+      summary: Stop all trading activity
+      responses:
+        "200":
+          description: Trading stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /trade/open:
+    get:
+      operationId: getOpenTrades
+      tags: [trades]
+      summary: Get currently open trades
+      responses:
+        "200":
+          description: Open trades
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Trade"
+
+  /trade/positions:
+    get:
+      operationId: getLivePositions
+      tags: [trades]
+      summary: Get live positions with current price and P&L
+      responses:
+        "200":
+          description: Live positions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LivePosition"
+
+  /trade/history:
+    get:
+      operationId: getTradeHistory
+      tags: [trades]
+      summary: Get historical trades
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: symbol
+          in: query
+          schema:
+            type: string
+        - name: strategy
+          in: query
+          schema:
+            type: string
+        - name: mode
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Trade history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Trade"
+
+  /portfolio/status:
+    get:
+      operationId: getPortfolioStatus
+      tags: [portfolio]
+      summary: Get portfolio status and capital allocation
+      responses:
+        "200":
+          description: Portfolio status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioStatus"
+
+  /portfolio/mode:
+    post:
+      operationId: setPortfolioMode
+      tags: [portfolio]
+      summary: Set allocation mode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPortfolioModeRequest"
+      responses:
+        "200":
+          description: Mode updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /risk/status:
+    get:
+      operationId: getRiskStatus
+      tags: [risk]
+      summary: Get current risk manager state
+      responses:
+        "200":
+          description: Risk status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskStatus"
+
+  /settings:
+    get:
+      operationId: getSettings
+      tags: [settings]
+      summary: Get all configurable platform settings
+      description: Returns all trading parameters with their current values (or defaults if not yet set)
+      responses:
+        "200":
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformSettings"
+    post:
+      operationId: updateSettings
+      tags: [settings]
+      summary: Update one or more platform settings
+      description: Saves changed settings to the database. Changes take effect on the next scheduler cycle.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformSettings"
+      responses:
+        "200":
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /account/info:
+    get:
+      operationId: getAccountInfo
+      tags: [account]
+      summary: Get Deriv account info including balance, equity, margin
+      responses:
+        "200":
+          description: Account info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountInfo"
+
+  /account/balance:
+    get:
+      operationId: getAccountBalance
+      tags: [account]
+      summary: Get Deriv account balance and margin data
+      responses:
+        "200":
+          description: Account balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountInfo"
+
+  /account/set-mode:
+    post:
+      operationId: setTradingMode
+      tags: [account]
+      summary: Set trading mode (paper/live/idle)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetTradingModeRequest"
+      responses:
+        "200":
+          description: Mode changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+        "400":
+          description: Confirmation required or invalid mode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetModeErrorResponse"
+
+  /settings/api-key-status:
+    get:
+      operationId: getApiKeyStatus
+      tags: [settings]
+      summary: Check which API keys are configured
+      responses:
+        "200":
+          description: API key status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyStatus"
+
+  /risk/kill-switch:
+    post:
+      operationId: triggerKillSwitch
+      tags: [risk]
+      summary: Trigger portfolio-wide kill switch
+      responses:
+        "200":
+          description: Kill switch triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
+  /overview:
+    get:
+      operationId: getOverview
+      tags: [portfolio]
+      summary: Get platform overview stats
+      responses:
+        "200":
+          description: Platform overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformOverview"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    ActionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+        - message
+
+    BackfillRequest:
+      type: object
+      properties:
+        symbol:
+          type: string
+        days:
+          type: integer
+          default: 30
+      required:
+        - symbol
+
+    StreamRequest:
+      type: object
+      properties:
+        symbols:
+          type: array
+          items:
+            type: string
+      required:
+        - symbols
+
+    DataStatus:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [idle, collecting, paper, live]
+        streaming:
+          type: boolean
+        lastSyncAt:
+          type: ["string", "null"]
+        tickCount:
+          type: integer
+        symbols:
+          type: array
+          items:
+            type: string
+      required:
+        - mode
+        - streaming
+        - lastSyncAt
+        - tickCount
+        - symbols
+
+    Tick:
+      type: object
+      properties:
+        id:
+          type: integer
+        symbol:
+          type: string
+        epochTs:
+          type: number
+        quote:
+          type: number
+        createdAt:
+          type: string
+      required:
+        - id
+        - symbol
+        - epochTs
+        - quote
+        - createdAt
+
+    Candle:
+      type: object
+      properties:
+        id:
+          type: integer
+        symbol:
+          type: string
+        timeframe:
+          type: string
+        openTs:
+          type: number
+        closeTs:
+          type: number
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        tickCount:
+          type: integer
+      required:
+        - id
+        - symbol
+        - timeframe
+        - openTs
+        - closeTs
+        - open
+        - high
+        - low
+        - close
+        - tickCount
+
+    SpikeEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+        symbol:
+          type: string
+        eventTs:
+          type: number
+        direction:
+          type: string
+          enum: [up, down]
+        spikeSize:
+          type: number
+        ticksSincePreviousSpike:
+          type: ["integer", "null"]
+      required:
+        - id
+        - symbol
+        - eventTs
+        - direction
+        - spikeSize
+        - ticksSincePreviousSpike
+
+    FeatureBuildRequest:
+      type: object
+      properties:
+        symbol:
+          type: string
+        fromTs:
+          type: ["number", "null"]
+      required:
+        - symbol
+
+    TrainModelRequest:
+      type: object
+      properties:
+        modelName:
+          type: string
+        symbol:
+          type: string
+        trainingWindowDays:
+          type: integer
+          default: 90
+      required:
+        - modelName
+        - symbol
+
+    ModelRun:
+      type: object
+      properties:
+        id:
+          type: integer
+        modelName:
+          type: string
+        symbol:
+          type: string
+        trainingWindow:
+          type: integer
+        accuracy:
+          type: ["number", "null"]
+        precision:
+          type: ["number", "null"]
+        recall:
+          type: ["number", "null"]
+        f1Score:
+          type: ["number", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - modelName
+        - symbol
+        - trainingWindow
+        - accuracy
+        - precision
+        - recall
+        - f1Score
+        - createdAt
+
+    ScoreRequest:
+      type: object
+      properties:
+        symbol:
+          type: string
+        strategyName:
+          type: string
+      required:
+        - symbol
+        - strategyName
+
+    ScoreResult:
+      type: object
+      properties:
+        symbol:
+          type: string
+        strategyName:
+          type: string
+        score:
+          type: number
+        signalType:
+          type: string
+        confidence:
+          type: number
+        expectedValue:
+          type: number
+        regimeCompatible:
+          type: boolean
+        suggestedDirection:
+          type: string
+        suggestedSl:
+          type: ["number", "null"]
+        suggestedTp:
+          type: ["number", "null"]
+      required:
+        - symbol
+        - strategyName
+        - score
+        - signalType
+        - confidence
+        - expectedValue
+        - regimeCompatible
+        - suggestedDirection
+        - suggestedSl
+        - suggestedTp
+
+    BacktestRunRequest:
+      type: object
+      properties:
+        strategyName:
+          type: string
+        symbol:
+          type: string
+        fromTs:
+          type: ["number", "null"]
+        toTs:
+          type: ["number", "null"]
+        initialCapital:
+          type: number
+          default: 10000
+        allocationMode:
+          type: string
+          enum: [conservative, balanced, aggressive]
+          default: balanced
+      required:
+        - strategyName
+        - symbol
+
+    BacktestRun:
+      type: object
+      properties:
+        id:
+          type: integer
+        strategyName:
+          type: string
+        symbol:
+          type: string
+        initialCapital:
+          type: number
+        totalReturn:
+          type: ["number", "null"]
+        netProfit:
+          type: ["number", "null"]
+        winRate:
+          type: ["number", "null"]
+        profitFactor:
+          type: ["number", "null"]
+        maxDrawdown:
+          type: ["number", "null"]
+        tradeCount:
+          type: ["integer", "null"]
+        avgHoldingHours:
+          type: ["number", "null"]
+        expectancy:
+          type: ["number", "null"]
+        sharpeRatio:
+          type: ["number", "null"]
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        createdAt:
+          type: string
+      required:
+        - id
+        - strategyName
+        - symbol
+        - initialCapital
+        - totalReturn
+        - netProfit
+        - winRate
+        - profitFactor
+        - maxDrawdown
+        - tradeCount
+        - avgHoldingHours
+        - expectancy
+        - sharpeRatio
+        - status
+        - createdAt
+
+    SignalLog:
+      type: object
+      properties:
+        id:
+          type: integer
+        ts:
+          type: string
+        symbol:
+          type: string
+        strategyName:
+          type: string
+        score:
+          type: number
+        expectedValue:
+          type: number
+        allowedFlag:
+          type: boolean
+        rejectionReason:
+          type: ["string", "null"]
+        direction:
+          type: ["string", "null"]
+        suggestedSl:
+          type: ["number", "null"]
+        suggestedTp:
+          type: ["number", "null"]
+        aiVerdict:
+          type: ["string", "null"]
+        aiReasoning:
+          type: ["string", "null"]
+        aiConfidenceAdj:
+          type: ["number", "null"]
+      required:
+        - id
+        - ts
+        - symbol
+        - strategyName
+        - score
+        - expectedValue
+        - allowedFlag
+        - rejectionReason
+        - direction
+        - suggestedSl
+        - suggestedTp
+        - aiVerdict
+        - aiReasoning
+        - aiConfidenceAdj
+
+    BacktestAnalysis:
+      type: object
+      properties:
+        summary:
+          type: string
+        whatWorked:
+          type: string
+        whatDidNot:
+          type: string
+        suggestions:
+          type: array
+          items:
+            type: string
+      required:
+        - summary
+        - whatWorked
+        - whatDidNot
+        - suggestions
+
+    Trade:
+      type: object
+      properties:
+        id:
+          type: integer
+        brokerTradeId:
+          type: ["string", "null"]
+        symbol:
+          type: string
+        strategyName:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        entryTs:
+          type: string
+        exitTs:
+          type: ["string", "null"]
+        entryPrice:
+          type: number
+        exitPrice:
+          type: ["number", "null"]
+        sl:
+          type: number
+        tp:
+          type: number
+        size:
+          type: number
+        pnl:
+          type: ["number", "null"]
+        status:
+          type: string
+          enum: [open, closed, cancelled]
+        mode:
+          type: string
+          enum: [paper, live]
+        notes:
+          type: ["string", "null"]
+        confidence:
+          type: ["number", "null"]
+        trailingStopPct:
+          type: ["number", "null"]
+        peakPrice:
+          type: ["number", "null"]
+        maxExitTs:
+          type: ["string", "null"]
+        exitReason:
+          type: ["string", "null"]
+        currentPrice:
+          type: ["number", "null"]
+      required:
+        - id
+        - brokerTradeId
+        - symbol
+        - strategyName
+        - side
+        - entryTs
+        - exitTs
+        - entryPrice
+        - exitPrice
+        - sl
+        - tp
+        - size
+        - pnl
+        - status
+        - mode
+        - notes
+        - confidence
+        - trailingStopPct
+        - peakPrice
+        - maxExitTs
+        - exitReason
+        - currentPrice
+
+    LivePosition:
+      type: object
+      properties:
+        id:
+          type: integer
+        symbol:
+          type: string
+        strategyName:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        entryTs:
+          type: string
+        entryPrice:
+          type: number
+        currentPrice:
+          type: number
+        sl:
+          type: number
+        tp:
+          type: number
+        size:
+          type: number
+        floatingPnl:
+          type: number
+        floatingPnlPct:
+          type: number
+        hoursRemaining:
+          type: number
+        maxExitTs:
+          type: ["string", "null"]
+        peakPrice:
+          type: ["number", "null"]
+        confidence:
+          type: ["number", "null"]
+        mode:
+          type: string
+          enum: [paper, live]
+      required:
+        - id
+        - symbol
+        - strategyName
+        - side
+        - entryTs
+        - entryPrice
+        - currentPrice
+        - sl
+        - tp
+        - size
+        - floatingPnl
+        - floatingPnlPct
+        - hoursRemaining
+        - maxExitTs
+        - peakPrice
+        - confidence
+        - mode
+
+    PortfolioStatus:
+      type: object
+      properties:
+        allocationMode:
+          type: string
+          enum: [conservative, balanced, aggressive]
+        totalCapital:
+          type: number
+        availableCapital:
+          type: number
+        openRisk:
+          type: number
+        openTradeCount:
+          type: integer
+        realisedPnl:
+          type: number
+        unrealisedPnl:
+          type: number
+        dailyPnl:
+          type: number
+        weeklyPnl:
+          type: number
+        drawdownPct:
+          type: number
+        withdrawalThreshold:
+          type: number
+        suggestWithdrawal:
+          type: boolean
+      required:
+        - allocationMode
+        - totalCapital
+        - availableCapital
+        - openRisk
+        - openTradeCount
+        - realisedPnl
+        - unrealisedPnl
+        - dailyPnl
+        - weeklyPnl
+        - drawdownPct
+        - withdrawalThreshold
+        - suggestWithdrawal
+
+    SetPortfolioModeRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [conservative, balanced, aggressive]
+      required:
+        - mode
+
+    RiskStatus:
+      type: object
+      properties:
+        killSwitchActive:
+          type: boolean
+        dailyLossBreached:
+          type: boolean
+        weeklyLossBreached:
+          type: boolean
+        maxDrawdownBreached:
+          type: boolean
+        dailyLossPct:
+          type: number
+        weeklyLossPct:
+          type: number
+        drawdownPct:
+          type: number
+        activeCooldowns:
+          type: array
+          items:
+            type: string
+        disabledStrategies:
+          type: array
+          items:
+            type: string
+        openRiskPct:
+          type: number
+      required:
+        - killSwitchActive
+        - dailyLossBreached
+        - weeklyLossBreached
+        - maxDrawdownBreached
+        - dailyLossPct
+        - weeklyLossPct
+        - drawdownPct
+        - activeCooldowns
+        - disabledStrategies
+        - openRiskPct
+
+    AccountInfo:
+      type: object
+      properties:
+        connected:
+          type: boolean
+        balance:
+          type: ["number", "null"]
+        currency:
+          type: ["string", "null"]
+        equity:
+          type: ["number", "null"]
+        margin:
+          type: ["number", "null"]
+        free_margin:
+          type: ["number", "null"]
+        margin_level_pct:
+          type: ["number", "null"]
+        loginid:
+          type: ["string", "null"]
+        account_type:
+          type: ["string", "null"]
+        error:
+          type: ["string", "null"]
+      required:
+        - connected
+        - balance
+        - currency
+        - error
+
+    SetTradingModeRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [paper, live, idle]
+        confirmed:
+          type: boolean
+      required:
+        - mode
+
+    SetModeErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        requiresConfirmation:
+          type: boolean
+      required:
+        - success
+        - message
+
+    ApiKeyStatus:
+      type: object
+      properties:
+        deriv_api_token_set:
+          type: boolean
+        openai_api_key_set:
+          type: boolean
+      required:
+        - deriv_api_token_set
+        - openai_api_key_set
+
+    PlatformSettings:
+      type: object
+      properties:
+        max_open_trades:
+          type: string
+        equity_pct_per_trade:
+          type: string
+        tp_multiplier_strong:
+          type: string
+        tp_multiplier_medium:
+          type: string
+        tp_multiplier_weak:
+          type: string
+        sl_ratio:
+          type: string
+        trailing_stop_buffer_pct:
+          type: string
+        time_exit_window_hours:
+          type: string
+        max_daily_loss_pct:
+          type: string
+        max_weekly_loss_pct:
+          type: string
+        max_drawdown_pct:
+          type: string
+        kill_switch:
+          type: string
+        allocation_mode:
+          type: string
+        total_capital:
+          type: string
+        scan_interval_seconds:
+          type: string
+        paper_equity_pct_per_trade:
+          type: string
+        live_equity_pct_per_trade:
+          type: string
+        paper_max_open_trades:
+          type: string
+        live_max_open_trades:
+          type: string
+        ai_verification_enabled:
+          type: string
+        deriv_api_token:
+          type: string
+        openai_api_key:
+          type: string
+        deriv_api_token_set:
+          type: string
+        openai_api_key_set:
+          type: string
+        trading_mode:
+          type: string
+        enabled_symbols:
+          type: string
+        paper_max_daily_loss_pct:
+          type: string
+        live_max_daily_loss_pct:
+          type: string
+        paper_max_weekly_loss_pct:
+          type: string
+        live_max_weekly_loss_pct:
+          type: string
+        paper_max_drawdown_pct:
+          type: string
+        live_max_drawdown_pct:
+          type: string
+
+    PlatformOverview:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [idle, collecting, paper, live]
+        openPositions:
+          type: integer
+        availableCapital:
+          type: number
+        openRisk:
+          type: number
+        modelStatus:
+          type: string
+        lastDataSyncAt:
+          type: ["string", "null"]
+        totalTrades:
+          type: integer
+        winRate:
+          type: number
+        realisedPnl:
+          type: number
+        activeStrategies:
+          type: integer
+        killSwitchActive:
+          type: boolean
+      required:
+        - mode
+        - openPositions
+        - availableCapital
+        - openRisk
+        - modelStatus
+        - lastDataSyncAt
+        - totalTrades
+        - winRate
+        - realisedPnl
+        - activeStrategies
+        - killSwitchActive

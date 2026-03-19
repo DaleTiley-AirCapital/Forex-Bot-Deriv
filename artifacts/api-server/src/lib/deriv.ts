@@ -1,0 +1,738 @@
+import WebSocket from "ws";
+import { db, ticksTable, candlesTable, spikeEventsTable, platformStateTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { createDecipheriv, scryptSync } from "crypto";
+
+const DERIV_WS_URL = "wss://ws.binaryws.com/websockets/v3?app_id=1089";
+
+const SUPPORTED_SYMBOLS = [
+  "BOOM1000", "CRASH1000", "BOOM500", "CRASH500",
+  "R_75", "R_100", "JD75", "STPIDX", "RDBEAR"
+];
+
+const TIMEFRAMES: Record<string, number> = {
+  "1m": 60,
+  "5m": 300,
+  "15m": 900,
+  "1h": 3600,
+};
+
+interface DerivTick {
+  epoch: number;
+  quote: number;
+  symbol: string;
+}
+
+interface DerivCandle {
+  epoch: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+interface DerivTickHistory {
+  prices: number[];
+  times: number[];
+}
+
+interface BuyContractResponse {
+  buy: {
+    contract_id: number;
+    transaction_id: number;
+    buy_price: number;
+    start_time: number;
+    longcode: string;
+  };
+  error?: { message: string; code: string };
+}
+
+interface SellContractResponse {
+  sell: {
+    transaction_id: number;
+    sold_for: number;
+    balance_after: number;
+  };
+  error?: { message: string; code: string };
+}
+
+interface AccountBalanceResponse {
+  balance: {
+    balance: number;
+    currency: string;
+    loginid: string;
+  };
+  error?: { message: string; code: string };
+}
+
+interface ProposalResponse {
+  proposal: {
+    id: string;
+    ask_price: number;
+    spot: number;
+    spot_time: number;
+  };
+  error?: { message: string; code: string };
+}
+
+const symbolState: Record<string, {
+  lastTickPrice: number | null;
+  tickChanges: number[];
+  ticksSinceLastSpike: number;
+  openCandles: Record<string, { open: number; high: number; low: number; close: number; openTs: number; tickCount: number }>;
+}> = {};
+
+function getSymbolState(symbol: string) {
+  if (!symbolState[symbol]) {
+    symbolState[symbol] = {
+      lastTickPrice: null,
+      tickChanges: [],
+      ticksSinceLastSpike: 0,
+      openCandles: {},
+    };
+  }
+  return symbolState[symbol];
+}
+
+async function detectAndStoreSpike(symbol: string, quote: number, epochTs: number) {
+  const state = getSymbolState(symbol);
+
+  if (state.lastTickPrice === null) {
+    state.lastTickPrice = quote;
+    return;
+  }
+
+  const change = Math.abs(quote - state.lastTickPrice);
+  state.tickChanges.push(change);
+  state.ticksSinceLastSpike++;
+
+  if (state.tickChanges.length > 500) {
+    state.tickChanges.shift();
+  }
+
+  if (state.tickChanges.length >= 50) {
+    const mean = state.tickChanges.reduce((a, b) => a + b, 0) / state.tickChanges.length;
+    const variance = state.tickChanges.reduce((a, b) => a + (b - mean) ** 2, 0) / state.tickChanges.length;
+    const stdDev = Math.sqrt(variance);
+
+    const zScore = stdDev > 0 ? (change - mean) / stdDev : 0;
+
+    if (zScore > 4.0) {
+      const direction = quote > state.lastTickPrice ? "up" : "down";
+      const prevSpikeTicks = state.ticksSinceLastSpike;
+
+      console.log(`[Deriv] SPIKE detected on ${symbol}: ${direction} by ${change.toFixed(4)} (z=${zScore.toFixed(2)}) after ${prevSpikeTicks} ticks`);
+
+      await db.insert(spikeEventsTable).values({
+        symbol,
+        eventTs: epochTs,
+        direction,
+        spikeSize: change,
+        ticksSincePreviousSpike: prevSpikeTicks,
+      });
+
+      state.ticksSinceLastSpike = 0;
+    }
+  }
+
+  state.lastTickPrice = quote;
+}
+
+async function updateOpenCandles(symbol: string, quote: number, epochTs: number) {
+  const state = getSymbolState(symbol);
+
+  for (const [tf, seconds] of Object.entries(TIMEFRAMES)) {
+    const candleOpenTs = Math.floor(epochTs / seconds) * seconds;
+    const key = `${tf}:${candleOpenTs}`;
+    const prevKey = Object.keys(state.openCandles).find(k => k.startsWith(`${tf}:`) && k !== key);
+
+    if (!state.openCandles[key]) {
+      if (prevKey && state.openCandles[prevKey]) {
+        const prev = state.openCandles[prevKey];
+        const prevOpenTs = parseInt(prevKey.split(":")[1]);
+        try {
+          await db.insert(candlesTable).values({
+            symbol,
+            timeframe: tf,
+            openTs: prevOpenTs,
+            closeTs: prevOpenTs + seconds,
+            open: prev.open,
+            high: prev.high,
+            low: prev.low,
+            close: prev.close,
+            tickCount: prev.tickCount,
+          }).onConflictDoNothing();
+        } catch {
+          // ignore duplicate
+        }
+        delete state.openCandles[prevKey];
+      }
+
+      state.openCandles[key] = {
+        open: quote,
+        high: quote,
+        low: quote,
+        close: quote,
+        openTs: candleOpenTs,
+        tickCount: 1,
+      };
+    } else {
+      const c = state.openCandles[key];
+      c.high = Math.max(c.high, quote);
+      c.low = Math.min(c.low, quote);
+      c.close = quote;
+      c.tickCount++;
+    }
+  }
+}
+
+class DerivClient {
+  private ws: WebSocket | null = null;
+  private apiToken: string;
+  private authorized = false;
+  private streaming = false;
+  private subscribedSymbols: Set<string> = new Set();
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingRequests: Map<string, (data: unknown) => void> = new Map();
+  private reqId = 1;
+  private latestQuotes: Map<string, number> = new Map();
+
+  constructor(apiToken: string) {
+    this.apiToken = apiToken;
+  }
+
+  private nextReqId(): number {
+    return this.reqId++;
+  }
+
+  connect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+        resolve();
+        return;
+      }
+
+      console.log("[Deriv] Connecting to Deriv WebSocket API...");
+      this.ws = new WebSocket(DERIV_WS_URL);
+
+      this.ws.on("open", async () => {
+        console.log("[Deriv] Connected. Authorizing...");
+        try {
+          await this.authorize();
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      this.ws.on("message", (raw: Buffer) => {
+        try {
+          const data = JSON.parse(raw.toString());
+          this.handleMessage(data);
+        } catch {
+          // ignore parse errors
+        }
+      });
+
+      this.ws.on("error", (err) => {
+        console.error("[Deriv] WebSocket error:", err.message);
+      });
+
+      this.ws.on("close", (code, reason) => {
+        console.log(`[Deriv] Connection closed (${code}: ${reason}). Reconnecting in 5s...`);
+        this.authorized = false;
+        this.ws = null;
+        if (this.streaming) {
+          this.reconnectTimer = setTimeout(() => this.reconnect(), 5000);
+        }
+      });
+    });
+  }
+
+  private async reconnect() {
+    try {
+      await this.connect();
+      for (const symbol of this.subscribedSymbols) {
+        await this.subscribeToTicks(symbol);
+      }
+    } catch (err) {
+      console.error("[Deriv] Reconnect failed:", err);
+      this.reconnectTimer = setTimeout(() => this.reconnect(), 10000);
+    }
+  }
+
+  private send(payload: object): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        reject(new Error("WebSocket not connected"));
+        return;
+      }
+
+      const reqId = this.nextReqId();
+      const message = { ...payload, req_id: reqId };
+      this.pendingRequests.set(String(reqId), resolve);
+
+      this.ws.send(JSON.stringify(message), (err) => {
+        if (err) {
+          this.pendingRequests.delete(String(reqId));
+          reject(err);
+        }
+      });
+
+      setTimeout(() => {
+        if (this.pendingRequests.has(String(reqId))) {
+          this.pendingRequests.delete(String(reqId));
+          reject(new Error(`Request ${reqId} timed out`));
+        }
+      }, 30000);
+    });
+  }
+
+  private handleMessage(data: Record<string, unknown>) {
+    const reqId = data.req_id as string | undefined;
+
+    if (reqId && this.pendingRequests.has(String(reqId))) {
+      const resolve = this.pendingRequests.get(String(reqId))!;
+      this.pendingRequests.delete(String(reqId));
+      resolve(data);
+    }
+
+    if (data.msg_type === "tick" && data.tick) {
+      const tick = data.tick as DerivTick;
+      this.latestQuotes.set(tick.symbol, tick.quote);
+      this.processTick(tick).catch(console.error);
+    }
+  }
+
+  private async processTick(tick: DerivTick) {
+    const { symbol, epoch, quote } = tick;
+
+    await db.insert(ticksTable).values({
+      symbol,
+      epochTs: epoch,
+      quote,
+    }).onConflictDoNothing();
+
+    await detectAndStoreSpike(symbol, quote, epoch);
+    await updateOpenCandles(symbol, quote, epoch);
+  }
+
+  public authData: Record<string, unknown> | null = null;
+
+  private async authorize(): Promise<void> {
+    const response = await this.send({ authorize: this.apiToken }) as Record<string, unknown>;
+    if (response.error) {
+      const err = response.error as Record<string, unknown>;
+      throw new Error(`Deriv auth failed: ${err.message}`);
+    }
+    this.authorized = true;
+    this.authData = (response.authorize || null) as Record<string, unknown> | null;
+    console.log("[Deriv] Authorized successfully.");
+  }
+
+  async subscribeToTicks(symbol: string): Promise<void> {
+    if (!this.authorized) throw new Error("Not authorized");
+    console.log(`[Deriv] Subscribing to ticks for ${symbol}...`);
+    await this.send({ ticks: symbol, subscribe: 1 });
+    this.subscribedSymbols.add(symbol);
+  }
+
+  async getTickHistory(symbol: string, count = 5000): Promise<DerivTickHistory | null> {
+    if (!this.authorized) throw new Error("Not authorized");
+    console.log(`[Deriv] Fetching ${count} historical ticks for ${symbol}...`);
+    const response = await this.send({
+      ticks_history: symbol,
+      count,
+      end: "latest",
+      style: "ticks",
+    }) as Record<string, unknown>;
+
+    if (response.error) {
+      const err = response.error as Record<string, unknown>;
+      console.error(`[Deriv] Tick history error for ${symbol}:`, err.message);
+      return null;
+    }
+
+    return response.history as DerivTickHistory;
+  }
+
+  async getCandleHistory(symbol: string, granularity: number, count = 1000): Promise<DerivCandle[] | null> {
+    if (!this.authorized) throw new Error("Not authorized");
+    const tf = Object.entries(TIMEFRAMES).find(([, s]) => s === granularity)?.[0] || `${granularity}s`;
+    console.log(`[Deriv] Fetching ${count} candles (${tf}) for ${symbol}...`);
+    const response = await this.send({
+      ticks_history: symbol,
+      count,
+      end: "latest",
+      style: "candles",
+      granularity,
+    }) as Record<string, unknown>;
+
+    if (response.error) {
+      const err = response.error as Record<string, unknown>;
+      console.error(`[Deriv] Candle history error for ${symbol}:`, err.message);
+      return null;
+    }
+
+    return response.candles as DerivCandle[];
+  }
+
+  async getAccountBalance(): Promise<{ balance: number; currency: string } | null> {
+    if (!this.authorized) throw new Error("Not authorized");
+    const response = await this.send({ balance: 1 }) as AccountBalanceResponse;
+    if (response.error) {
+      console.error("[Deriv] Balance error:", response.error.message);
+      return null;
+    }
+    return { balance: response.balance.balance, currency: response.balance.currency };
+  }
+
+  async getPortfolio(): Promise<{ contracts: Array<{ contract_id: number; buy_price: number; payout: number; symbol: string; contract_type: string; currency: string }> } | null> {
+    if (!this.authorized) throw new Error("Not authorized");
+    const response = await this.send({ portfolio: 1 }) as Record<string, unknown>;
+    if ((response as Record<string, unknown>).error) {
+      console.error("[Deriv] Portfolio error:", ((response as Record<string, unknown>).error as Record<string, string>).message);
+      return null;
+    }
+    const portfolio = (response as Record<string, unknown>).portfolio as Record<string, unknown>;
+    const contracts = (portfolio?.contracts || []) as Array<{ contract_id: number; buy_price: number; payout: number; symbol: string; contract_type: string; currency: string }>;
+    return { contracts };
+  }
+
+  async getOpenContractPnl(): Promise<{ totalBuyPrice: number; totalPayout: number; unrealizedPnl: number }> {
+    const portfolio = await this.getPortfolio();
+    if (!portfolio || portfolio.contracts.length === 0) {
+      return { totalBuyPrice: 0, totalPayout: 0, unrealizedPnl: 0 };
+    }
+    let totalBuyPrice = 0;
+    let totalPayout = 0;
+    for (const c of portfolio.contracts) {
+      totalBuyPrice += c.buy_price;
+      totalPayout += c.payout;
+    }
+    return { totalBuyPrice, totalPayout, unrealizedPnl: totalPayout - totalBuyPrice };
+  }
+
+  async getSpotPrice(symbol: string): Promise<number | null> {
+    const cached = this.latestQuotes.get(symbol);
+    if (cached) return cached;
+    if (!this.authorized) throw new Error("Not authorized");
+    const response = await this.send({
+      proposal: 1,
+      amount: 1,
+      basis: "stake",
+      contract_type: "CALL",
+      currency: "USD",
+      duration: 1,
+      duration_unit: "m",
+      symbol,
+    }) as ProposalResponse;
+    if (response.error) {
+      console.error(`[Deriv] Spot price error for ${symbol}:`, response.error.message);
+      return null;
+    }
+    const spot = response.proposal.spot;
+    this.latestQuotes.set(symbol, spot);
+    return spot;
+  }
+
+  async buyContract(params: {
+    symbol: string;
+    contractType: "CALL" | "PUT";
+    amount: number;
+    duration: number;
+    durationUnit: string;
+    limitOrder?: { stopLoss?: number; takeProfit?: number };
+  }): Promise<{ contractId: number; buyPrice: number; entrySpot: number } | null> {
+    if (!this.authorized) throw new Error("Not authorized");
+    console.log(`[Deriv] Opening ${params.contractType} on ${params.symbol} for $${params.amount}`);
+
+    const proposal: Record<string, unknown> = {
+      proposal: 1,
+      amount: params.amount,
+      basis: "stake",
+      contract_type: params.contractType,
+      currency: "USD",
+      duration: params.duration,
+      duration_unit: params.durationUnit,
+      symbol: params.symbol,
+    };
+
+    if (params.limitOrder?.stopLoss) {
+      proposal.limit_order = proposal.limit_order || {};
+      (proposal.limit_order as Record<string, unknown>).stop_loss = params.limitOrder.stopLoss;
+    }
+    if (params.limitOrder?.takeProfit) {
+      proposal.limit_order = proposal.limit_order || {};
+      (proposal.limit_order as Record<string, unknown>).take_profit = params.limitOrder.takeProfit;
+    }
+
+    const proposalResp = await this.send(proposal) as ProposalResponse;
+    if (proposalResp.error) {
+      console.error(`[Deriv] Proposal error:`, proposalResp.error.message);
+      return null;
+    }
+
+    const buyResp = await this.send({
+      buy: proposalResp.proposal.id,
+      price: params.amount,
+    }) as BuyContractResponse;
+
+    if (buyResp.error) {
+      console.error(`[Deriv] Buy error:`, buyResp.error.message);
+      return null;
+    }
+
+    const entrySpot = proposalResp.proposal.spot;
+    this.latestQuotes.set(params.symbol, entrySpot);
+
+    return {
+      contractId: buyResp.buy.contract_id,
+      buyPrice: buyResp.buy.buy_price,
+      entrySpot,
+    };
+  }
+
+  async sellContract(contractId: number, price?: number): Promise<{ soldFor: number; balanceAfter: number } | null> {
+    if (!this.authorized) throw new Error("Not authorized");
+    console.log(`[Deriv] Closing contract ${contractId}`);
+
+    const response = await this.send({
+      sell: contractId,
+      price: price ?? 0,
+    }) as SellContractResponse;
+
+    if (response.error) {
+      console.error(`[Deriv] Sell error:`, response.error.message);
+      return null;
+    }
+
+    return {
+      soldFor: response.sell.sold_for,
+      balanceAfter: response.sell.balance_after,
+    };
+  }
+
+  async updateStopLoss(contractId: number, stopLoss: number): Promise<boolean> {
+    if (!this.authorized) throw new Error("Not authorized");
+    const response = await this.send({
+      contract_update: 1,
+      contract_id: contractId,
+      limit_order: { stop_loss: stopLoss },
+    }) as Record<string, unknown>;
+
+    if (response.error) {
+      const err = response.error as Record<string, unknown>;
+      console.error(`[Deriv] Update SL error:`, err.message);
+      return false;
+    }
+    return true;
+  }
+
+  async updateTakeProfit(contractId: number, takeProfit: number): Promise<boolean> {
+    if (!this.authorized) throw new Error("Not authorized");
+    const response = await this.send({
+      contract_update: 1,
+      contract_id: contractId,
+      limit_order: { take_profit: takeProfit },
+    }) as Record<string, unknown>;
+
+    if (response.error) {
+      const err = response.error as Record<string, unknown>;
+      console.error(`[Deriv] Update TP error:`, err.message);
+      return false;
+    }
+    return true;
+  }
+
+  getLatestQuote(symbol: string): number | null {
+    return this.latestQuotes.get(symbol) ?? null;
+  }
+
+  async backfill(symbol: string, tickCount = 5000): Promise<{ ticks: number; candles: number }> {
+    let storedTicks = 0;
+    let storedCandles = 0;
+
+    const history = await this.getTickHistory(symbol, tickCount);
+    if (history && history.prices && history.times) {
+      const values = history.prices.map((price, i) => ({
+        symbol,
+        epochTs: history.times[i],
+        quote: price,
+      }));
+
+      for (let i = 0; i < values.length; i += 500) {
+        const chunk = values.slice(i, i + 500);
+        await db.insert(ticksTable).values(chunk).onConflictDoNothing();
+        storedTicks += chunk.length;
+      }
+      console.log(`[Deriv] Stored ${storedTicks} historical ticks for ${symbol}`);
+
+      let prevPrice: number | null = null;
+      const changes: number[] = [];
+      let ticksSince = 0;
+      for (let i = 0; i < values.length; i++) {
+        const { quote: price, epochTs } = values[i];
+        if (prevPrice !== null) {
+          const change = Math.abs(price - prevPrice);
+          changes.push(change);
+          ticksSince++;
+          if (changes.length >= 50) {
+            const mean = changes.reduce((a, b) => a + b, 0) / changes.length;
+            const variance = changes.reduce((a, b) => a + (b - mean) ** 2, 0) / changes.length;
+            const stdDev = Math.sqrt(variance);
+            if (stdDev > 0 && (change - mean) / stdDev > 4.0) {
+              const direction = price > prevPrice ? "up" : "down";
+              await db.insert(spikeEventsTable).values({
+                symbol, eventTs: epochTs, direction,
+                spikeSize: change, ticksSincePreviousSpike: ticksSince,
+              }).onConflictDoNothing();
+              ticksSince = 0;
+            }
+          }
+          if (changes.length > 500) changes.shift();
+        }
+        prevPrice = price;
+      }
+    }
+
+    for (const [tf, granularity] of [["1m", 60], ["5m", 300]] as [string, number][]) {
+      const candles = await this.getCandleHistory(symbol, granularity, 1000);
+      if (candles) {
+        const values = candles.map(c => ({
+          symbol,
+          timeframe: tf,
+          openTs: c.epoch,
+          closeTs: c.epoch + granularity,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          tickCount: 0,
+        }));
+        for (let i = 0; i < values.length; i += 200) {
+          const chunk = values.slice(i, i + 200);
+          await db.insert(candlesTable).values(chunk).onConflictDoNothing();
+          storedCandles += chunk.length;
+        }
+        console.log(`[Deriv] Stored ${values.length} ${tf} candles for ${symbol}`);
+      }
+    }
+
+    return { ticks: storedTicks, candles: storedCandles };
+  }
+
+  async startStreaming(symbols: string[]): Promise<void> {
+    this.streaming = true;
+    await this.connect();
+    for (const symbol of symbols) {
+      await this.subscribeToTicks(symbol);
+    }
+    await db.insert(platformStateTable).values({ key: "streaming", value: "true" })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: "true", updatedAt: new Date() } });
+    await db.insert(platformStateTable).values({ key: "mode", value: "collecting" })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: "collecting", updatedAt: new Date() } });
+    await db.insert(platformStateTable).values({ key: "streaming_symbols", value: symbols.join(",") })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: symbols.join(","), updatedAt: new Date() } });
+    await db.insert(platformStateTable).values({ key: "last_sync_at", value: new Date().toISOString() })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: new Date().toISOString(), updatedAt: new Date() } });
+  }
+
+  async stopStreaming(): Promise<void> {
+    this.streaming = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.subscribedSymbols.clear();
+    this.authorized = false;
+    await db.insert(platformStateTable).values({ key: "streaming", value: "false" })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: "false", updatedAt: new Date() } });
+    await db.insert(platformStateTable).values({ key: "mode", value: "idle" })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: "idle", updatedAt: new Date() } });
+  }
+
+  isStreaming(): boolean {
+    return this.streaming;
+  }
+
+  getSubscribedSymbols(): string[] {
+    return Array.from(this.subscribedSymbols);
+  }
+}
+
+let derivClient: DerivClient | null = null;
+let lastToken: string | null = null;
+
+export async function getDbApiToken(): Promise<string | null> {
+  try {
+    const rows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "deriv_api_token"));
+    const raw = rows[0]?.value || null;
+    if (!raw) return null;
+    return decryptStoredSecret(raw);
+  } catch {
+    return null;
+  }
+}
+
+const ENC_KEY_SOURCE = process.env["DATABASE_URL"] || process.env["ENCRYPTION_SECRET"];
+if (!ENC_KEY_SOURCE) {
+  throw new Error("DATABASE_URL or ENCRYPTION_SECRET environment variable is required for secret decryption.");
+}
+const ENC_DERIVED_KEY = scryptSync(ENC_KEY_SOURCE, "deriv-quant-salt", 32);
+
+function decryptStoredSecret(stored: string): string {
+  if (!stored.startsWith("enc:")) return stored;
+  const parts = stored.split(":");
+  if (parts.length !== 3) return stored;
+  const iv = Buffer.from(parts[1], "hex");
+  const decipher = createDecipheriv("aes-256-cbc", ENC_DERIVED_KEY, iv);
+  let decrypted = decipher.update(parts[2], "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
+
+export function getDerivClient(): DerivClient {
+  const token = process.env["Deriv_Api_Token"];
+  if (!token) {
+    throw new Error("Deriv_Api_Token environment variable is not set");
+  }
+  if (!derivClient) {
+    derivClient = new DerivClient(token);
+  }
+  return derivClient;
+}
+
+export async function getDerivClientWithDbToken(): Promise<DerivClient> {
+  const dbToken = await getDbApiToken();
+  const envToken = process.env["Deriv_Api_Token"];
+  const token = dbToken || envToken;
+  if (!token) {
+    throw new Error("No Deriv API token configured. Set it in Settings or as Deriv_Api_Token environment variable.");
+  }
+  if (!derivClient || lastToken !== token) {
+    if (derivClient) {
+      derivClient.stopStreaming();
+    }
+    derivClient = new DerivClient(token);
+    lastToken = token;
+  }
+  return derivClient;
+}
+
+async function getEnabledSymbols(): Promise<string[]> {
+  try {
+    const rows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "enabled_symbols"));
+    if (rows.length > 0 && rows[0].value) {
+      const symbols = rows[0].value.split(",").filter((s: string) => SUPPORTED_SYMBOLS.includes(s));
+      if (symbols.length > 0) return symbols;
+    }
+  } catch {}
+  return [...SUPPORTED_SYMBOLS];
+}
+
+export { DerivClient, SUPPORTED_SYMBOLS, getEnabledSymbols };

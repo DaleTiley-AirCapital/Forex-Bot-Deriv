@@ -1,0 +1,12 @@
+packages:
+  "recharts": "For PnL and equity curve charts"
+  "framer-motion": "For page transitions and micro-interactions"
+  "date-fns": "For formatting timestamps"
+  "clsx": "Utility for constructing className strings conditionally"
+  "tailwind-merge": "Utility function to efficiently merge Tailwind CSS classes"
+
+images: []
+
+notes:
+  - "Using dark mode theme exclusively for the professional quant terminal look."
+  - "Importing API hooks from @workspace/api-client-react as instructed."

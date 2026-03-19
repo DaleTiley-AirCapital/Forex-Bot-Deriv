@@ -1,0 +1,67 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deriv Quant Research & Execution Platform
+#
+# HOW TO DEPLOY ON SYNOLOGY NAS
+# ──────────────────────────────
+# 1. Open Container Manager → Projects → Create
+# 2. Set source to "Repository" and paste your GitHub repo URL
+# 3. Fill in the environment variables below (click the ✏ icon)
+# 4. Click Deploy — everything builds and starts automatically
+#
+# Required variables you MUST set:
+#   Deriv_Api_Token  →  your token from app.deriv.com/account/api-token
+#   PGPASSWORD       →  any strong password you choose
+#
+# The database schema is created automatically on first start.
+# Access the dashboard at  http://your-nas-ip
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: deriv-quant-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       deriv_quant
+      POSTGRES_USER:     quantuser
+      POSTGRES_PASSWORD: ${PGPASSWORD:?Set PGPASSWORD in the environment variables}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quantuser -d deriv_quant"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: deriv-quant-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    environment:
+      NODE_ENV:             production
+      PORT:                 80
+      DATABASE_URL:         postgresql://quantuser:${PGPASSWORD}@db:5432/deriv_quant
+      Deriv_Api_Token:      ${Deriv_Api_Token:?Set Deriv_Api_Token in the environment variables}
+      LIVE_TRADING_ENABLED: ${LIVE_TRADING_ENABLED:-false}
+      SERVE_FRONTEND:       "true"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/api/overview || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  pgdata:
+    driver: local

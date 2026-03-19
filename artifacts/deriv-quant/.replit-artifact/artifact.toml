@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Deriv Quant Research Platform"
+version = "1.0.0"
+id = "artifacts/deriv-quant"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+localPort = 21907
+name = "web"
+paths = ["/"]
+
+[services.development]
+run = "pnpm --filter @workspace/deriv-quant run dev"
+
+[services.env]
+PORT = "21907"
+BASE_PATH = "/"
+
+[services.production]
+build = ["pnpm", "--filter", "@workspace/deriv-quant", "run", "build"]
+publicDir = "artifacts/deriv-quant/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"

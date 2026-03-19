@@ -662,6 +662,57 @@ paths:
               schema:
                 $ref: "#/components/schemas/SetModeErrorResponse"
 
+  /settings/ai-status:
+    get:
+      operationId: getAiOptimisationStatus
+      tags: [settings]
+      summary: Get AI optimisation status and locked values
+      responses:
+        "200":
+          description: AI optimisation status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiOptimisationStatus"
+
+  /settings/ai-optimise:
+    post:
+      operationId: runAiOptimisation
+      tags: [settings]
+      summary: Run AI optimisation across all symbol × strategy combinations
+      description: Streams progress via SSE (text/event-stream). Each event contains type, message, progress, and final settings.
+      responses:
+        "200":
+          description: Optimisation progress stream (SSE)
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /settings/ai-override:
+    post:
+      operationId: overrideAiSetting
+      tags: [settings]
+      summary: Override a single AI-locked setting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+                  description: The setting key to unlock
+      responses:
+        "200":
+          description: Override applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResponse"
+
   /settings/api-key-status:
     get:
       operationId: getApiKeyStatus
@@ -1505,6 +1556,22 @@ components:
           type: string
         live_max_drawdown_pct:
           type: string
+
+    AiOptimisationStatus:
+      type: object
+      properties:
+        locked:
+          type: boolean
+        optimisedAt:
+          type: ["string", "null"]
+        aiValues:
+          type: object
+          additionalProperties:
+            type: string
+        lockedKeys:
+          type: array
+          items:
+            type: string
 
     PlatformOverview:
       type: object

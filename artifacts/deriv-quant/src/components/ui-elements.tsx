@@ -209,10 +209,10 @@ export function KpiCard({
   }[accentColor];
 
   const iconBgClass = {
-    blue: "bg-blue-500/10 text-blue-400",
-    green: "bg-emerald-500/10 text-emerald-400",
-    red: "bg-red-500/10 text-red-400",
-    amber: "bg-amber-500/10 text-amber-400",
+    blue: "bg-primary/10 text-primary",
+    green: "bg-success/10 text-success",
+    red: "bg-destructive/10 text-destructive",
+    amber: "bg-warning/10 text-warning",
     purple: "bg-purple-500/10 text-purple-400",
   }[accentColor];
 

@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { 
   useGetDataStatus, 
-  useStartBackfill, 
   useStartStream, 
   useStopStream,
   useGetTicks,
@@ -9,10 +8,10 @@ import {
   getGetDataStatusQueryKey,
   useGetSpikeEvents
 } from "@workspace/api-client-react";
-import { Card, CardContent, CardHeader, CardTitle, Badge, Button, Input, Select, Label } from "@/components/ui-elements";
+import { Card, CardContent, CardHeader, CardTitle, Badge, Button, Select } from "@/components/ui-elements";
 import { formatNumber, cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
-import { Database, Play, Square, DownloadCloud } from "lucide-react";
+import { Database, Play, Square } from "lucide-react";
 
 const ALL_SYMBOLS = [
   { value: "BOOM1000", label: "Boom 1000" },
@@ -32,14 +31,6 @@ const ALL_SYMBOLS = [
 
 const ALL_STREAM_SYMBOLS = ALL_SYMBOLS.map(s => s.value);
 
-const MONTH_OPTIONS = [
-  { value: 1, label: "1 month" },
-  { value: 3, label: "3 months" },
-  { value: 6, label: "6 months" },
-  { value: 12, label: "12 months" },
-  { value: 24, label: "24 months" },
-];
-
 export default function DataManager() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'ticks' | 'candles' | 'spikes'>('ticks');
@@ -53,14 +44,10 @@ export default function DataManager() {
 
   const { mutate: startStream, isPending: startingStream } = useStartStream({ mutation: invalidator });
   const { mutate: stopStream, isPending: stoppingStream } = useStopStream({ mutation: invalidator });
-  const { mutate: startBackfill, isPending: backfilling } = useStartBackfill({ mutation: invalidator });
 
   const { data: ticks } = useGetTicks({ symbol, limit: 15 }, { query: { enabled: tab === 'ticks', refetchInterval: 2000 } });
   const { data: candles } = useGetCandles({ symbol, timeframe: 'M1', limit: 15 }, { query: { enabled: tab === 'candles' } });
   const { data: spikes } = useGetSpikeEvents({ symbol, limit: 15 }, { query: { enabled: tab === 'spikes' } });
-
-  const [backfillForm, setBackfillForm] = useState({ symbol: "BOOM1000", months: 12 });
-  const [backfillResult, setBackfillResult] = useState<string | null>(null);
 
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
@@ -71,97 +58,48 @@ export default function DataManager() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle>
-              <Database className="w-4 h-4 text-primary" />
-              Stream Control
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex justify-between items-center py-2.5 border-b border-border/40">
-              <span className="text-sm text-muted-foreground">Status</span>
-              <Badge variant={status?.streaming ? "success" : "outline"}>
-                {status?.streaming ? "Streaming" : "Offline"}
-              </Badge>
-            </div>
-            <div className="flex justify-between items-center py-2.5 border-b border-border/40">
-              <span className="text-sm text-muted-foreground">Tick Count</span>
-              <span className="font-mono tabular-nums text-sm font-semibold">{formatNumber(status?.tickCount, 0)}</span>
-            </div>
-            <div className="pt-2 flex gap-2">
-              <Button 
-                variant="outline" 
-                className="flex-1 text-success border-success/40 hover:bg-success/8 hover:border-success/60"
-                disabled={status?.streaming}
-                onClick={() => startStream({ data: { symbols: ALL_STREAM_SYMBOLS }})}
-                isLoading={startingStream}
-              >
-                <Play className="w-3.5 h-3.5" />
-                Start
-              </Button>
-              <Button 
-                variant="outline" 
-                className="flex-1 text-destructive border-destructive/40 hover:bg-destructive/8 hover:border-destructive/60"
-                disabled={!status?.streaming}
-                onClick={() => stopStream()}
-                isLoading={stoppingStream}
-              >
-                <Square className="w-3.5 h-3.5" />
-                Stop
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>
-              <DownloadCloud className="w-4 h-4 text-primary" />
-              Historical Backfill
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col md:flex-row gap-4 items-end">
-              <div className="space-y-1.5 flex-1 w-full">
-                <Label>Target Symbol</Label>
-                <Select value={backfillForm.symbol} onChange={e => setBackfillForm({...backfillForm, symbol: e.target.value})}>
-                  {ALL_SYMBOLS.map(s => (
-                    <option key={s.value} value={s.value}>{s.value} — {s.label}</option>
-                  ))}
-                </Select>
-              </div>
-              <div className="space-y-1.5 flex-1 w-full">
-                <Label>History Depth</Label>
-                <Select value={String(backfillForm.months)} onChange={e => setBackfillForm({...backfillForm, months: Number(e.target.value)})}>
-                  {MONTH_OPTIONS.map(m => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
-                </Select>
-              </div>
-              <Button 
-                variant="primary"
-                onClick={() => {
-                  setBackfillResult(null);
-                  startBackfill(
-                    { data: backfillForm },
-                    { onSuccess: (data: { message?: string }) => setBackfillResult(data?.message ?? "Backfill complete.") }
-                  );
-                }}
-                isLoading={backfilling}
-                className="w-full md:w-auto"
-              >
-                <DownloadCloud className="w-3.5 h-3.5" />
-                Start Backfill
-              </Button>
-            </div>
-            {backfillResult && (
-              <p className="mt-3 text-sm text-success">{backfillResult}</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <Card className="max-w-sm">
+        <CardHeader>
+          <CardTitle>
+            <Database className="w-4 h-4 text-primary" />
+            Stream Control
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex justify-between items-center py-2.5 border-b border-border/40">
+            <span className="text-sm text-muted-foreground">Status</span>
+            <Badge variant={status?.streaming ? "success" : "outline"}>
+              {status?.streaming ? "Streaming" : "Offline"}
+            </Badge>
+          </div>
+          <div className="flex justify-between items-center py-2.5 border-b border-border/40">
+            <span className="text-sm text-muted-foreground">Tick Count</span>
+            <span className="font-mono tabular-nums text-sm font-semibold">{formatNumber(status?.tickCount, 0)}</span>
+          </div>
+          <div className="pt-2 flex gap-2">
+            <Button 
+              variant="outline" 
+              className="flex-1 text-success border-success/40 hover:bg-success/8 hover:border-success/60"
+              disabled={status?.streaming}
+              onClick={() => startStream({ data: { symbols: ALL_STREAM_SYMBOLS }})}
+              isLoading={startingStream}
+            >
+              <Play className="w-3.5 h-3.5" />
+              Start
+            </Button>
+            <Button 
+              variant="outline" 
+              className="flex-1 text-destructive border-destructive/40 hover:bg-destructive/8 hover:border-destructive/60"
+              disabled={!status?.streaming}
+              onClick={() => stopStream()}
+              isLoading={stoppingStream}
+            >
+              <Square className="w-3.5 h-3.5" />
+              Stop
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <div className="flex flex-col sm:flex-row justify-between border-b border-border/50">

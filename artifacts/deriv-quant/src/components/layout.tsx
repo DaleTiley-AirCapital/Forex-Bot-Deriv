@@ -127,9 +127,9 @@ function DesktopLayout({ children, location }: { children: React.ReactNode; loca
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative bg-background">
         <TradingBanner isLive={isLive} isPaper={isPaper} />
-        <div className="flex-1 overflow-y-auto p-6 md:p-8 relative">{children}</div>
+        <div className="flex-1 overflow-y-auto p-6 md:p-8 relative bg-background">{children}</div>
       </main>
     </div>
   );
@@ -225,9 +225,9 @@ function TabletLayout({ children, location }: { children: React.ReactNode; locat
         </aside>
 
         {/* Page content */}
-        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-background">
           <TradingBanner isLive={isLive} isPaper={isPaper} />
-          <div className="flex-1 overflow-y-auto p-5 relative">{children}</div>
+          <div className="flex-1 overflow-y-auto p-5 relative bg-background">{children}</div>
         </main>
       </div>
     </div>
@@ -280,9 +280,9 @@ function MobileLayout({ children, location }: { children: React.ReactNode; locat
       </header>
 
       {/* Page content */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative bg-background">
         <TradingBanner isLive={isLive} isPaper={isPaper} />
-        <div className="flex-1 overflow-y-auto p-4 relative">{children}</div>
+        <div className="flex-1 overflow-y-auto p-4 relative bg-background">{children}</div>
       </main>
 
       {/* More drawer */}

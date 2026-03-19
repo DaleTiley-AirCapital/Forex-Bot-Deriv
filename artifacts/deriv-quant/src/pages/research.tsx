@@ -114,10 +114,10 @@ export default function Research() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Quantitative Research</h1>
-          <p className="text-muted-foreground font-mono mt-1 text-sm">Strategy Backtesting Engine</p>
+          <h1 className="page-title">Research</h1>
+          <p className="page-subtitle">Multi-strategy backtesting engine with AI analysis</p>
         </div>
       </div>
 
@@ -235,7 +235,7 @@ export default function Research() {
                           <td>
                             <Badge variant={
                               run.status === 'failed' ? 'destructive' : 
-                              run.status === 'running' ? 'secondary' : 'default'
+                              run.status === 'running' ? 'warning' : 'default'
                             }>
                               {run.status}
                             </Badge>

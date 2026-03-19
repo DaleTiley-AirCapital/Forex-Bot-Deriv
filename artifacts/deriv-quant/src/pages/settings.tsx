@@ -328,10 +328,10 @@ export default function Settings() {
         )}
       </AnimatePresence>
 
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Settings</h1>
-          <p className="text-muted-foreground font-mono mt-1 text-sm">Configure trading parameters, API keys, and risk controls</p>
+          <h1 className="page-title">Settings</h1>
+          <p className="page-subtitle">Configure trading parameters, API keys, and risk controls</p>
         </div>
         <div className="flex items-center gap-3">
           {hasChanges && (

@@ -1,74 +1,74 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme inline {
   --font-sans: 'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 
-  /* Deep space dark mode theme for a premium terminal feel */
-  --color-background: 224 71% 4%;
-  --color-foreground: 213 31% 91%;
+  /* Premium dark trading platform theme */
+  --color-background: 220 20% 6%;
+  --color-foreground: 220 15% 92%;
   
-  --color-card: 222 47% 7%;
-  --color-card-foreground: 213 31% 91%;
+  --color-card: 220 16% 9%;
+  --color-card-foreground: 220 15% 92%;
   
-  --color-popover: 224 71% 4%;
-  --color-popover-foreground: 215 20.2% 65.1%;
+  --color-popover: 220 20% 6%;
+  --color-popover-foreground: 220 13% 65%;
   
-  --color-primary: 217.2 91.2% 59.8%;
-  --color-primary-foreground: 222.2 47.4% 11.2%;
+  --color-primary: 213 90% 62%;
+  --color-primary-foreground: 220 20% 6%;
   
-  --color-secondary: 222.2 47.4% 11.2%;
-  --color-secondary-foreground: 210 40% 98%;
+  --color-secondary: 220 13% 15%;
+  --color-secondary-foreground: 220 15% 85%;
   
-  --color-muted: 223 47% 11%;
-  --color-muted-foreground: 215.4 16.3% 56.9%;
+  --color-muted: 220 13% 13%;
+  --color-muted-foreground: 220 10% 52%;
   
-  --color-accent: 216 34% 17%;
-  --color-accent-foreground: 210 40% 98%;
+  --color-accent: 220 13% 15%;
+  --color-accent-foreground: 220 15% 92%;
   
-  --color-destructive: 350 89% 60%;
-  --color-destructive-foreground: 210 40% 98%;
+  --color-destructive: 0 80% 60%;
+  --color-destructive-foreground: 0 0% 98%;
 
-  --color-success: 142 71% 45%;
+  --color-success: 152 65% 45%;
   --color-success-foreground: 144 100% 11%;
 
-  --color-warning: 38 92% 50%;
+  --color-warning: 36 88% 52%;
   --color-warning-foreground: 48 96% 12%;
   
-  --color-border: 216 34% 17%;
-  --color-input: 216 34% 17%;
-  --color-ring: 212.7 26.8% 83.9%;
+  --color-border: 220 13% 15%;
+  --color-input: 220 13% 15%;
+  --color-ring: 213 90% 62%;
   
-  --radius: 0.5rem;
+  --radius: 0.75rem;
 }
 
 @layer base {
   :root {
-    --background: 224 71% 4%;
-    --foreground: 213 31% 91%;
-    --card: 222 47% 7%;
-    --card-foreground: 213 31% 91%;
-    --popover: 224 71% 4%;
-    --popover-foreground: 215 20.2% 65.1%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 222.2 47.4% 11.2%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 223 47% 11%;
-    --muted-foreground: 215.4 16.3% 56.9%;
-    --accent: 216 34% 17%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 350 89% 60%;
-    --destructive-foreground: 210 40% 98%;
-    --success: 142 71% 45%;
+    --background: 220 20% 6%;
+    --foreground: 220 15% 92%;
+    --card: 220 16% 9%;
+    --card-foreground: 220 15% 92%;
+    --popover: 220 20% 6%;
+    --popover-foreground: 220 13% 65%;
+    --primary: 213 90% 62%;
+    --primary-foreground: 220 20% 6%;
+    --secondary: 220 13% 15%;
+    --secondary-foreground: 220 15% 85%;
+    --muted: 220 13% 13%;
+    --muted-foreground: 220 10% 52%;
+    --accent: 220 13% 15%;
+    --accent-foreground: 220 15% 92%;
+    --destructive: 0 80% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 152 65% 45%;
     --success-foreground: 144 100% 11%;
-    --warning: 38 92% 50%;
+    --warning: 36 88% 52%;
     --warning-foreground: 48 96% 12%;
-    --border: 216 34% 17%;
-    --input: 216 34% 17%;
-    --ring: 212.7 26.8% 83.9%;
-    --radius: 0.5rem;
+    --border: 220 13% 15%;
+    --input: 220 13% 15%;
+    --ring: 213 90% 62%;
+    --radius: 0.75rem;
   }
 
   * {
@@ -76,22 +76,21 @@
   }
 
   body {
-    @apply bg-background text-foreground font-sans antialiased selection:bg-primary/30;
+    @apply bg-background text-foreground font-sans antialiased selection:bg-primary/25;
   }
 
-  /* Custom scrollbar for terminal feel */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-muted-foreground/30 rounded-full;
+    @apply bg-muted-foreground/20 rounded-full;
   }
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-muted-foreground/50;
+    @apply bg-muted-foreground/40;
   }
 
   table {
@@ -99,20 +98,23 @@
   }
   
   th {
-    @apply px-4 py-3 font-medium text-muted-foreground border-b border-border/50 uppercase tracking-wider text-xs bg-muted/20;
+    @apply px-4 py-3 font-medium text-muted-foreground border-b border-border/60 text-xs tracking-wide bg-muted/30;
   }
   
   td {
-    @apply px-4 py-3 border-b border-border/50 whitespace-nowrap;
+    @apply px-4 py-3 border-b border-border/40 whitespace-nowrap text-sm;
+  }
+
+  tr:last-child td {
+    @apply border-b-0;
   }
 
   tr:hover td {
     @apply bg-muted/20;
   }
   
-  /* Number formatting utility classes */
   .mono-num {
-    @apply font-mono tracking-tight;
+    @apply font-mono tabular-nums;
   }
   
   .profit {
@@ -126,6 +128,40 @@
 
 @layer utilities {
   .glass-panel {
-    @apply bg-card/80 backdrop-blur-md border border-border shadow-xl shadow-black/50;
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    box-shadow: 0 4px 24px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+
+  .card-accent-blue {
+    border-left: 3px solid hsl(213 90% 62%);
+  }
+  .card-accent-green {
+    border-left: 3px solid hsl(152 65% 45%);
+  }
+  .card-accent-red {
+    border-left: 3px solid hsl(0 80% 60%);
+  }
+  .card-accent-amber {
+    border-left: 3px solid hsl(36 88% 52%);
+  }
+  .card-accent-purple {
+    border-left: 3px solid hsl(262 80% 65%);
+  }
+
+  .glow-primary {
+    box-shadow: 0 0 20px rgba(59,130,246,0.2), 0 4px 24px rgba(0,0,0,0.4);
+  }
+
+  .page-title {
+    @apply text-2xl font-semibold tracking-tight text-foreground;
+  }
+
+  .page-subtitle {
+    @apply text-sm text-muted-foreground mt-0.5;
+  }
+
+  .section-label {
+    @apply text-xs font-medium text-muted-foreground uppercase tracking-wider;
   }
 }

@@ -12,7 +12,7 @@ export function Card({ className, children, ...props }: React.HTMLAttributes<HTM
 
 export function CardHeader({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn("px-6 py-4 border-b border-border/50 flex flex-row items-center justify-between", className)} {...props}>
+    <div className={cn("px-5 py-4 border-b border-border/50 flex flex-row items-center justify-between gap-3", className)} {...props}>
       {children}
     </div>
   );
@@ -20,7 +20,7 @@ export function CardHeader({ className, children, ...props }: React.HTMLAttribut
 
 export function CardTitle({ className, children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
-    <h3 className={cn("text-sm font-medium text-muted-foreground uppercase tracking-wider", className)} {...props}>
+    <h3 className={cn("text-sm font-semibold text-foreground flex items-center gap-2", className)} {...props}>
       {children}
     </h3>
   );
@@ -28,7 +28,7 @@ export function CardTitle({ className, children, ...props }: React.HTMLAttribute
 
 export function CardContent({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn("p-6 flex-1", className)} {...props}>
+    <div className={cn("p-5 flex-1", className)} {...props}>
       {children}
     </div>
   );
@@ -41,7 +41,7 @@ export function MetricValue({
   prefix = "", 
   suffix = "",
   mono = true,
-  isCurrency = false
+  size = "default"
 }: { 
   value: React.ReactNode; 
   label?: string; 
@@ -49,17 +49,26 @@ export function MetricValue({
   prefix?: string;
   suffix?: string;
   mono?: boolean;
-  isCurrency?: boolean;
+  size?: "sm" | "default" | "lg";
 }) {
   return (
     <div className="flex flex-col gap-1">
-      {label && <span className="text-xs text-muted-foreground uppercase tracking-wider">{label}</span>}
-      <div className="flex items-baseline gap-1">
+      {label && (
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          {label}
+        </span>
+      )}
+      <div className="flex items-baseline gap-0.5">
         <span className={cn(
-          "text-2xl lg:text-3xl font-bold tracking-tight text-foreground",
-          mono && "font-mono",
+          "font-bold tracking-tight",
+          size === "sm" && "text-xl",
+          size === "default" && "text-2xl lg:text-3xl",
+          size === "lg" && "text-4xl",
+          mono && "font-mono tabular-nums",
+          !trend && "text-foreground",
           trend === "up" && "text-success",
-          trend === "down" && "text-destructive"
+          trend === "down" && "text-destructive",
+          trend === "neutral" && "text-foreground"
         )}>
           {prefix}{value}{suffix}
         </span>
@@ -79,12 +88,12 @@ export function Badge({
 }) {
   return (
     <span className={cn(
-      "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium uppercase tracking-wider",
-      variant === "default" && "bg-primary/10 text-primary border border-primary/20",
-      variant === "success" && "bg-success/10 text-success border border-success/20",
-      variant === "destructive" && "bg-destructive/10 text-destructive border border-destructive/20",
-      variant === "warning" && "bg-warning/10 text-warning border border-warning/20",
-      variant === "outline" && "border border-border text-muted-foreground",
+      "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide leading-tight",
+      variant === "default" && "bg-primary/15 text-primary border border-primary/25",
+      variant === "success" && "bg-success/15 text-success border border-success/25",
+      variant === "destructive" && "bg-destructive/15 text-destructive border border-destructive/25",
+      variant === "warning" && "bg-warning/15 text-warning border border-warning/25",
+      variant === "outline" && "border border-border/80 text-muted-foreground",
       className
     )}>
       {children}
@@ -108,21 +117,21 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed",
-        size === "sm" && "px-3 py-1.5 text-xs",
-        size === "md" && "px-4 py-2 text-sm",
-        size === "lg" && "px-6 py-3 text-base",
-        variant === "default" && "bg-accent text-accent-foreground hover:bg-accent/80",
-        variant === "primary" && "bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:bg-primary/90",
-        variant === "destructive" && "bg-destructive text-destructive-foreground shadow-lg shadow-destructive/20 hover:bg-destructive/90",
-        variant === "outline" && "border border-border hover:bg-muted/50 text-foreground",
+        "inline-flex items-center justify-center font-medium rounded-lg transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-40 disabled:cursor-not-allowed select-none",
+        size === "sm" && "px-3 py-1.5 text-xs gap-1.5",
+        size === "md" && "px-4 py-2 text-sm gap-2",
+        size === "lg" && "px-6 py-3 text-base gap-2",
+        variant === "default" && "bg-secondary text-secondary-foreground hover:bg-secondary/70 border border-border/60",
+        variant === "primary" && "bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 hover:shadow-primary/40",
+        variant === "destructive" && "bg-destructive text-destructive-foreground shadow-md shadow-destructive/25 hover:bg-destructive/90",
+        variant === "outline" && "border border-border bg-transparent hover:bg-muted/50 text-foreground",
         variant === "ghost" && "hover:bg-muted text-muted-foreground hover:text-foreground",
         className
       )}
       disabled={props.disabled || isLoading}
       {...props}
     >
-      {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+      {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
       {children}
     </button>
   );
@@ -132,7 +141,7 @@ export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInp
   return (
     <input
       className={cn(
-        "flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+        "flex h-9 w-full rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm font-sans text-foreground ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50 transition-colors",
         className
       )}
       {...props}
@@ -144,7 +153,7 @@ export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLab
   return (
     <label
       className={cn(
-        "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-muted-foreground",
+        "text-xs font-medium leading-none text-muted-foreground uppercase tracking-wide peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
         className
       )}
       {...props}
@@ -156,12 +165,80 @@ export function Select({ className, children, ...props }: React.SelectHTMLAttrib
   return (
     <select
       className={cn(
-        "flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 appearance-none",
+        "flex h-9 w-full rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground font-sans ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50 appearance-none transition-colors cursor-pointer",
         className
       )}
       {...props}
     >
       {children}
     </select>
+  );
+}
+
+export function Divider({ className }: { className?: string }) {
+  return <div className={cn("border-t border-border/50", className)} />;
+}
+
+export function KpiCard({
+  label,
+  value,
+  trend,
+  prefix = "",
+  suffix = "",
+  detail,
+  accentColor = "blue",
+  icon,
+  className
+}: {
+  label: string;
+  value: React.ReactNode;
+  trend?: "up" | "down" | "neutral";
+  prefix?: string;
+  suffix?: string;
+  detail?: React.ReactNode;
+  accentColor?: "blue" | "green" | "red" | "amber" | "purple";
+  icon?: React.ReactNode;
+  className?: string;
+}) {
+  const accentClass = {
+    blue: "card-accent-blue",
+    green: "card-accent-green",
+    red: "card-accent-red",
+    amber: "card-accent-amber",
+    purple: "card-accent-purple",
+  }[accentColor];
+
+  const iconBgClass = {
+    blue: "bg-blue-500/10 text-blue-400",
+    green: "bg-emerald-500/10 text-emerald-400",
+    red: "bg-red-500/10 text-red-400",
+    amber: "bg-amber-500/10 text-amber-400",
+    purple: "bg-purple-500/10 text-purple-400",
+  }[accentColor];
+
+  return (
+    <div className={cn("glass-panel rounded-xl p-5 flex flex-col gap-3", accentClass, className)}>
+      <div className="flex items-start justify-between">
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
+        {icon && (
+          <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center text-sm", iconBgClass)}>
+            {icon}
+          </div>
+        )}
+      </div>
+      <div className={cn(
+        "text-2xl font-bold font-mono tabular-nums tracking-tight",
+        trend === "up" && "text-success",
+        trend === "down" && "text-destructive",
+        (!trend || trend === "neutral") && "text-foreground"
+      )}>
+        {prefix}{value}{suffix}
+      </div>
+      {detail && (
+        <div className="text-xs text-muted-foreground border-t border-border/40 pt-2.5 mt-auto">
+          {detail}
+        </div>
+      )}
+    </div>
   );
 }

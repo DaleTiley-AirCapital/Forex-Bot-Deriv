@@ -36,51 +36,53 @@ export default function DataManager() {
   const [backfillForm, setBackfillForm] = useState({ symbol: "BOOM1000", days: 30 });
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
+    <div className="space-y-5 max-w-7xl mx-auto">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Data Pipeline</h1>
-          <p className="text-muted-foreground font-mono mt-1 text-sm">Tick ingestion, derived candles, and event labelling</p>
+          <h1 className="page-title">Data Pipeline</h1>
+          <p className="page-subtitle">Tick ingestion, derived candles, and event labelling</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <Card className="lg:col-span-1">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Database className="w-4 h-4" />
+            <CardTitle>
+              <Database className="w-4 h-4 text-primary" />
               Stream Control
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex justify-between items-center py-2 border-b border-border/30">
-              <span className="text-muted-foreground text-sm">Status</span>
+          <CardContent className="space-y-3">
+            <div className="flex justify-between items-center py-2.5 border-b border-border/40">
+              <span className="text-sm text-muted-foreground">Status</span>
               <Badge variant={status?.streaming ? "success" : "outline"}>
-                {status?.streaming ? "STREAMING" : "OFFLINE"}
+                {status?.streaming ? "Streaming" : "Offline"}
               </Badge>
             </div>
-            <div className="flex justify-between items-center py-2 border-b border-border/30">
-              <span className="text-muted-foreground text-sm">Tick Count</span>
-              <span className="font-mono">{formatNumber(status?.tickCount, 0)}</span>
+            <div className="flex justify-between items-center py-2.5 border-b border-border/40">
+              <span className="text-sm text-muted-foreground">Tick Count</span>
+              <span className="font-mono tabular-nums text-sm font-semibold">{formatNumber(status?.tickCount, 0)}</span>
             </div>
-            <div className="pt-4 flex gap-3">
+            <div className="pt-2 flex gap-2">
               <Button 
                 variant="outline" 
-                className="flex-1 text-success border-success/50 hover:bg-success/10"
+                className="flex-1 text-success border-success/40 hover:bg-success/8 hover:border-success/60"
                 disabled={status?.streaming}
                 onClick={() => startStream({ data: { symbols: ["BOOM1000", "CRASH1000"] }})}
                 isLoading={startingStream}
               >
-                <Play className="w-4 h-4 mr-2" /> Start
+                <Play className="w-3.5 h-3.5" />
+                Start
               </Button>
               <Button 
                 variant="outline" 
-                className="flex-1 text-destructive border-destructive/50 hover:bg-destructive/10"
+                className="flex-1 text-destructive border-destructive/40 hover:bg-destructive/8 hover:border-destructive/60"
                 disabled={!status?.streaming}
                 onClick={() => stopStream()}
                 isLoading={stoppingStream}
               >
-                <Square className="w-4 h-4 mr-2" /> Stop
+                <Square className="w-3.5 h-3.5" />
+                Stop
               </Button>
             </div>
           </CardContent>
@@ -88,14 +90,14 @@ export default function DataManager() {
 
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <DownloadCloud className="w-4 h-4" />
+            <CardTitle>
+              <DownloadCloud className="w-4 h-4 text-primary" />
               Historical Backfill
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-col md:flex-row gap-4 items-end">
-              <div className="space-y-2 flex-1 w-full">
+              <div className="space-y-1.5 flex-1 w-full">
                 <Label>Target Symbol</Label>
                 <Select value={backfillForm.symbol} onChange={e => setBackfillForm({...backfillForm, symbol: e.target.value})}>
                   <option value="BOOM1000">BOOM1000</option>
@@ -104,16 +106,22 @@ export default function DataManager() {
                   <option value="CRASH500">CRASH500</option>
                 </Select>
               </div>
-              <div className="space-y-2 flex-1 w-full">
+              <div className="space-y-1.5 flex-1 w-full">
                 <Label>Days of History</Label>
-                <Input type="number" value={backfillForm.days} onChange={e => setBackfillForm({...backfillForm, days: Number(e.target.value)})} />
+                <Input
+                  type="number"
+                  value={backfillForm.days}
+                  onChange={e => setBackfillForm({...backfillForm, days: Number(e.target.value)})}
+                />
               </div>
               <Button 
+                variant="primary"
                 onClick={() => startBackfill({ data: backfillForm })} 
                 isLoading={backfilling}
                 className="w-full md:w-auto"
               >
-                Start Backfill Task
+                <DownloadCloud className="w-3.5 h-3.5" />
+                Start Backfill
               </Button>
             </div>
           </CardContent>
@@ -123,9 +131,20 @@ export default function DataManager() {
       <Card>
         <div className="flex flex-col sm:flex-row justify-between border-b border-border/50">
           <div className="flex">
-            <button className={cn("px-6 py-3 text-sm font-medium uppercase tracking-wider transition-colors", tab === 'ticks' ? "text-primary border-b-2 border-primary bg-primary/5" : "text-muted-foreground hover:text-foreground")} onClick={() => setTab('ticks')}>Raw Ticks</button>
-            <button className={cn("px-6 py-3 text-sm font-medium uppercase tracking-wider transition-colors", tab === 'candles' ? "text-primary border-b-2 border-primary bg-primary/5" : "text-muted-foreground hover:text-foreground")} onClick={() => setTab('candles')}>M1 Candles</button>
-            <button className={cn("px-6 py-3 text-sm font-medium uppercase tracking-wider transition-colors", tab === 'spikes' ? "text-primary border-b-2 border-primary bg-primary/5" : "text-muted-foreground hover:text-foreground")} onClick={() => setTab('spikes')}>Spike Events</button>
+            {(['ticks', 'candles', 'spikes'] as const).map(t => (
+              <button
+                key={t}
+                className={cn(
+                  "px-5 py-3 text-sm font-medium tracking-wide transition-colors capitalize",
+                  tab === t
+                    ? "text-primary border-b-2 border-primary bg-primary/5"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                onClick={() => setTab(t)}
+              >
+                {t === 'ticks' ? 'Raw Ticks' : t === 'candles' ? 'M1 Candles' : 'Spike Events'}
+              </button>
+            ))}
           </div>
           <div className="p-2 flex items-center border-t sm:border-t-0 border-border/50">
             <Select className="h-8 w-32 text-xs" value={symbol} onChange={(e) => setSymbol(e.target.value)}>
@@ -137,48 +156,74 @@ export default function DataManager() {
         
         <div className="overflow-x-auto">
           {tab === 'ticks' && (
-            <table className="w-full">
-              <thead><tr><th>Time</th><th>Quote</th><th>Epoch</th></tr></thead>
+            <table>
+              <thead><tr><th>Time</th><th>Symbol</th><th className="text-right">Quote</th><th className="text-right">Epoch</th></tr></thead>
               <tbody>
-                {ticks?.map(t => (
-                  <tr key={t.id}>
-                    <td className="mono-num text-muted-foreground">{new Date(t.createdAt).toLocaleTimeString()}</td>
-                    <td className="mono-num font-bold">{formatNumber(t.quote, 4)}</td>
-                    <td className="mono-num text-xs text-muted-foreground/50">{t.epochTs}</td>
-                  </tr>
-                ))}
+                {!ticks?.length
+                  ? <tr><td colSpan={4} className="text-center py-8 text-muted-foreground">No tick data</td></tr>
+                  : ticks.map(t => (
+                    <tr key={t.id}>
+                      <td className="mono-num text-muted-foreground text-xs">{new Date(t.createdAt).toLocaleTimeString()}</td>
+                      <td className="text-sm font-medium text-foreground">{symbol}</td>
+                      <td className="text-right mono-num font-semibold">{formatNumber(t.quote, 4)}</td>
+                      <td className="text-right mono-num text-xs text-muted-foreground/50">{t.epochTs}</td>
+                    </tr>
+                  ))
+                }
               </tbody>
             </table>
           )}
           {tab === 'candles' && (
-            <table className="w-full">
-              <thead><tr><th>Time</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Ticks</th></tr></thead>
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th className="text-right">Open</th>
+                  <th className="text-right">High</th>
+                  <th className="text-right">Low</th>
+                  <th className="text-right">Close</th>
+                  <th className="text-right">Ticks</th>
+                </tr>
+              </thead>
               <tbody>
-                {candles?.map(c => (
-                  <tr key={c.id}>
-                    <td className="mono-num text-muted-foreground">{new Date(c.openTs * 1000).toLocaleTimeString()}</td>
-                    <td className="mono-num">{formatNumber(c.open, 3)}</td>
-                    <td className="mono-num text-success">{formatNumber(c.high, 3)}</td>
-                    <td className="mono-num text-destructive">{formatNumber(c.low, 3)}</td>
-                    <td className="mono-num font-bold">{formatNumber(c.close, 3)}</td>
-                    <td className="mono-num text-muted-foreground">{c.tickCount}</td>
-                  </tr>
-                ))}
+                {!candles?.length
+                  ? <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">No candle data</td></tr>
+                  : candles.map(c => (
+                    <tr key={c.id}>
+                      <td className="mono-num text-muted-foreground text-xs">{new Date(c.openTs * 1000).toLocaleTimeString()}</td>
+                      <td className="text-right mono-num">{formatNumber(c.open, 3)}</td>
+                      <td className="text-right mono-num text-success">{formatNumber(c.high, 3)}</td>
+                      <td className="text-right mono-num text-destructive">{formatNumber(c.low, 3)}</td>
+                      <td className="text-right mono-num font-semibold">{formatNumber(c.close, 3)}</td>
+                      <td className="text-right mono-num text-muted-foreground">{c.tickCount}</td>
+                    </tr>
+                  ))
+                }
               </tbody>
             </table>
           )}
           {tab === 'spikes' && (
-            <table className="w-full">
-              <thead><tr><th>Time</th><th>Dir</th><th>Size</th><th>Ticks Since Last</th></tr></thead>
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Direction</th>
+                  <th className="text-right">Size</th>
+                  <th className="text-right">Ticks Since Last</th>
+                </tr>
+              </thead>
               <tbody>
-                {spikes?.map(s => (
-                  <tr key={s.id}>
-                    <td className="mono-num text-muted-foreground">{new Date(s.eventTs * 1000).toLocaleTimeString()}</td>
-                    <td><Badge variant={s.direction === 'up' ? 'success' : 'destructive'}>{s.direction}</Badge></td>
-                    <td className="mono-num font-bold">{formatNumber(s.spikeSize, 2)}</td>
-                    <td className="mono-num">{s.ticksSincePreviousSpike || '-'}</td>
-                  </tr>
-                ))}
+                {!spikes?.length
+                  ? <tr><td colSpan={4} className="text-center py-8 text-muted-foreground">No spike events</td></tr>
+                  : spikes.map(s => (
+                    <tr key={s.id}>
+                      <td className="mono-num text-muted-foreground text-xs">{new Date(s.eventTs * 1000).toLocaleTimeString()}</td>
+                      <td><Badge variant={s.direction === 'up' ? 'success' : 'destructive'}>{s.direction}</Badge></td>
+                      <td className="text-right mono-num font-semibold">{formatNumber(s.spikeSize, 2)}</td>
+                      <td className="text-right mono-num text-muted-foreground">{s.ticksSincePreviousSpike || '—'}</td>
+                    </tr>
+                  ))
+                }
               </tbody>
             </table>
           )}

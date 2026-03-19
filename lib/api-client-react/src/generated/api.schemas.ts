@@ -163,6 +163,16 @@ export const BacktestRunStatus = {
   failed: "failed",
 } as const;
 
+/**
+ * @nullable
+ */
+export type BacktestRunConfigJson = { [key: string]: unknown } | null;
+
+/**
+ * @nullable
+ */
+export type BacktestRunMetricsJson = { [key: string]: unknown } | null;
+
 export interface BacktestRun {
   id: number;
   strategyName: string;
@@ -188,6 +198,10 @@ export interface BacktestRun {
   sharpeRatio: number | null;
   status: BacktestRunStatus;
   createdAt: string;
+  /** @nullable */
+  configJson?: BacktestRunConfigJson;
+  /** @nullable */
+  metricsJson?: BacktestRunMetricsJson;
 }
 
 export interface SignalLog {
@@ -219,6 +233,30 @@ export interface BacktestAnalysis {
   whatWorked: string;
   whatDidNot: string;
   suggestions: string[];
+}
+
+export interface BacktestTrade {
+  id: number;
+  backtestRunId: number;
+  entryTs: string;
+  /** @nullable */
+  exitTs: string | null;
+  direction: string;
+  entryPrice: number;
+  /** @nullable */
+  exitPrice: number | null;
+  /** @nullable */
+  pnl: number | null;
+  /** @nullable */
+  exitReason: string | null;
+}
+
+export interface OhlcCandle {
+  ts: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
 }
 
 export type TradeSide = (typeof TradeSide)[keyof typeof TradeSide];

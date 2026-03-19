@@ -4,6 +4,7 @@ export * from "./spikeEvents";
 export * from "./features";
 export * from "./modelRuns";
 export * from "./backtestRuns";
+export * from "./backtestTrades";
 export * from "./trades";
 export * from "./signalLog";
 export * from "./platformState";

@@ -357,6 +357,60 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /backtest/{id}/trades:
+    get:
+      operationId: getBacktestTrades
+      tags: [backtest]
+      summary: Get individual trades for a backtest run
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of trades
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BacktestTrade"
+        "404":
+          description: Backtest not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /backtest/{id}/candles:
+    get:
+      operationId: getBacktestCandles
+      tags: [backtest]
+      summary: Get OHLC candles for a backtest run period
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of candles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OhlcCandle"
+        "404":
+          description: Backtest not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /signals/latest:
     get:
       operationId: getLatestSignals
@@ -959,6 +1013,10 @@ components:
           enum: [pending, running, completed, failed]
         createdAt:
           type: string
+        configJson:
+          type: ["object", "null"]
+        metricsJson:
+          type: ["object", "null"]
       required:
         - id
         - strategyName
@@ -1041,6 +1099,58 @@ components:
         - whatWorked
         - whatDidNot
         - suggestions
+
+    BacktestTrade:
+      type: object
+      properties:
+        id:
+          type: integer
+        backtestRunId:
+          type: integer
+        entryTs:
+          type: string
+        exitTs:
+          type: ["string", "null"]
+        direction:
+          type: string
+        entryPrice:
+          type: number
+        exitPrice:
+          type: ["number", "null"]
+        pnl:
+          type: ["number", "null"]
+        exitReason:
+          type: ["string", "null"]
+      required:
+        - id
+        - backtestRunId
+        - entryTs
+        - exitTs
+        - direction
+        - entryPrice
+        - exitPrice
+        - pnl
+        - exitReason
+
+    OhlcCandle:
+      type: object
+      properties:
+        ts:
+          type: string
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+      required:
+        - ts
+        - open
+        - high
+        - low
+        - close
 
     Trade:
       type: object

@@ -48,6 +48,7 @@ artifacts-monorepo/
 - `spike_events` — detected boom/crash spike events
 - `features` — engineered feature vectors with regime labels
 - `model_runs` — ML model training results and metrics
+- `backtest_trades` — individual trade records per backtest run (entry/exit timestamps, prices, direction, P&L, exit reason)
 - `backtest_runs` — backtesting results per strategy/symbol
 - `trades` — paper and live trade records
 - `signal_log` — all generated signals with allowed/rejected flags, AI verdict/reasoning/confidence adjustment

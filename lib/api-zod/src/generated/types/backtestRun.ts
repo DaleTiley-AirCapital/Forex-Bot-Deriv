@@ -5,6 +5,8 @@
  * Deriv Quant Research & Execution Platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { BacktestRunConfigJson } from "./backtestRunConfigJson";
+import type { BacktestRunMetricsJson } from "./backtestRunMetricsJson";
 import type { BacktestRunStatus } from "./backtestRunStatus";
 
 export interface BacktestRun {
@@ -32,4 +34,8 @@ export interface BacktestRun {
   sharpeRatio: number | null;
   status: BacktestRunStatus;
   createdAt: string;
+  /** @nullable */
+  configJson?: BacktestRunConfigJson;
+  /** @nullable */
+  metricsJson?: BacktestRunMetricsJson;
 }

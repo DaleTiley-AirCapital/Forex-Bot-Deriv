@@ -24,6 +24,7 @@ import type {
   BacktestAnalysis,
   BacktestRun,
   BacktestRunRequest,
+  BacktestTrade,
   Candle,
   DataStatus,
   ErrorResponse,
@@ -37,6 +38,7 @@ import type {
   HealthStatus,
   LivePosition,
   ModelRun,
+  OhlcCandle,
   PlatformOverview,
   PlatformSettings,
   PortfolioStatus,
@@ -1435,6 +1437,180 @@ export const useAnalyseBacktest = <
 > => {
   return useMutation(getAnalyseBacktestMutationOptions(options));
 };
+
+/**
+ * @summary Get individual trades for a backtest run
+ */
+export const getGetBacktestTradesUrl = (id: number) => {
+  return `/api/backtest/${id}/trades`;
+};
+
+export const getBacktestTrades = async (
+  id: number,
+  options?: RequestInit,
+): Promise<BacktestTrade[]> => {
+  return customFetch<BacktestTrade[]>(getGetBacktestTradesUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetBacktestTradesQueryKey = (id: number) => {
+  return [`/api/backtest/${id}/trades`] as const;
+};
+
+export const getGetBacktestTradesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBacktestTrades>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBacktestTrades>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetBacktestTradesQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBacktestTrades>>
+  > = ({ signal }) => getBacktestTrades(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBacktestTrades>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBacktestTradesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBacktestTrades>>
+>;
+export type GetBacktestTradesQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get individual trades for a backtest run
+ */
+
+export function useGetBacktestTrades<
+  TData = Awaited<ReturnType<typeof getBacktestTrades>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBacktestTrades>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBacktestTradesQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get OHLC candles for a backtest run period
+ */
+export const getGetBacktestCandlesUrl = (id: number) => {
+  return `/api/backtest/${id}/candles`;
+};
+
+export const getBacktestCandles = async (
+  id: number,
+  options?: RequestInit,
+): Promise<OhlcCandle[]> => {
+  return customFetch<OhlcCandle[]>(getGetBacktestCandlesUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetBacktestCandlesQueryKey = (id: number) => {
+  return [`/api/backtest/${id}/candles`] as const;
+};
+
+export const getGetBacktestCandlesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBacktestCandles>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBacktestCandles>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetBacktestCandlesQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBacktestCandles>>
+  > = ({ signal }) => getBacktestCandles(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBacktestCandles>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBacktestCandlesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBacktestCandles>>
+>;
+export type GetBacktestCandlesQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get OHLC candles for a backtest run period
+ */
+
+export function useGetBacktestCandles<
+  TData = Awaited<ReturnType<typeof getBacktestCandles>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBacktestCandles>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBacktestCandlesQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Get latest trade signals

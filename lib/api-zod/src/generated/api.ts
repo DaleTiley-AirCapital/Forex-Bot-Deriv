@@ -240,6 +240,8 @@ export const GetBacktestResultsResponseItem = zod.object({
   sharpeRatio: zod.number().nullable(),
   status: zod.enum(["pending", "running", "completed", "failed"]),
   createdAt: zod.string(),
+  configJson: zod.object({}).passthrough().nullish(),
+  metricsJson: zod.object({}).passthrough().nullish(),
 });
 export const GetBacktestResultsResponse = zod.array(
   GetBacktestResultsResponseItem,
@@ -268,6 +270,8 @@ export const GetBacktestByIdResponse = zod.object({
   sharpeRatio: zod.number().nullable(),
   status: zod.enum(["pending", "running", "completed", "failed"]),
   createdAt: zod.string(),
+  configJson: zod.object({}).passthrough().nullish(),
+  metricsJson: zod.object({}).passthrough().nullish(),
 });
 
 /**
@@ -283,6 +287,46 @@ export const AnalyseBacktestResponse = zod.object({
   whatDidNot: zod.string(),
   suggestions: zod.array(zod.string()),
 });
+
+/**
+ * @summary Get individual trades for a backtest run
+ */
+export const GetBacktestTradesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetBacktestTradesResponseItem = zod.object({
+  id: zod.number(),
+  backtestRunId: zod.number(),
+  entryTs: zod.string(),
+  exitTs: zod.string().nullable(),
+  direction: zod.string(),
+  entryPrice: zod.number(),
+  exitPrice: zod.number().nullable(),
+  pnl: zod.number().nullable(),
+  exitReason: zod.string().nullable(),
+});
+export const GetBacktestTradesResponse = zod.array(
+  GetBacktestTradesResponseItem,
+);
+
+/**
+ * @summary Get OHLC candles for a backtest run period
+ */
+export const GetBacktestCandlesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetBacktestCandlesResponseItem = zod.object({
+  ts: zod.string(),
+  open: zod.number(),
+  high: zod.number(),
+  low: zod.number(),
+  close: zod.number(),
+});
+export const GetBacktestCandlesResponse = zod.array(
+  GetBacktestCandlesResponseItem,
+);
 
 /**
  * @summary Get latest trade signals

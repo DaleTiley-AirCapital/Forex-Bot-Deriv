@@ -1,84 +1,86 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { 
-  Activity, 
-  BarChart2, 
-  Radio, 
-  History, 
-  ShieldAlert, 
+import {
+  Activity,
+  BarChart2,
+  Radio,
+  History,
+  ShieldAlert,
   Database,
   Settings,
-  TrendingUp
+  TrendingUp,
+  MoreHorizontal,
+  X,
 } from "lucide-react";
 import { useGetDataStatus } from "@workspace/api-client-react";
 
 const NAV_ITEMS = [
-  { name: "Overview", href: "/", icon: Activity },
-  { name: "Research", href: "/research", icon: BarChart2 },
-  { name: "Signals", href: "/signals", icon: Radio },
-  { name: "Trades", href: "/trades", icon: History },
-  { name: "Risk", href: "/risk", icon: ShieldAlert },
-  { name: "Data", href: "/data", icon: Database },
-  { name: "Settings", href: "/settings", icon: Settings },
+  { name: "Overview",  href: "/",          icon: Activity },
+  { name: "Research",  href: "/research",  icon: BarChart2 },
+  { name: "Signals",   href: "/signals",   icon: Radio },
+  { name: "Trades",    href: "/trades",    icon: History },
+  { name: "Risk",      href: "/risk",      icon: ShieldAlert },
+  { name: "Data",      href: "/data",      icon: Database },
+  { name: "Settings",  href: "/settings",  icon: Settings },
 ];
 
-export function AppLayout({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
-  
+const MOBILE_PRIMARY = NAV_ITEMS.slice(0, 4);
+const MOBILE_MORE    = NAV_ITEMS.slice(4);
+
+type Breakpoint = "mobile" | "tablet" | "desktop";
+
+function useBreakpoint(): Breakpoint {
+  const get = (): Breakpoint => {
+    if (typeof window === "undefined") return "desktop";
+    if (window.innerWidth < 768)  return "mobile";
+    if (window.innerWidth < 1024) return "tablet";
+    return "desktop";
+  };
+  const [bp, setBp] = useState<Breakpoint>(get);
+  useEffect(() => {
+    const handler = () => setBp(get());
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return bp;
+}
+
+function useModeInfo() {
   const { data: statusData } = useGetDataStatus({
-    query: { refetchInterval: 5000, retry: false }
+    query: { refetchInterval: 5000, retry: false },
   });
-
   const mode = statusData?.mode || "idle";
+  const isLive      = mode === "live";
+  const isPaper     = mode === "paper";
+  const isCollect   = mode === "collecting";
+  const isActive    = isLive || isPaper || isCollect;
 
-  const isLive = mode === "live";
-  const isPaper = mode === "paper";
-  const isActive = isLive || isPaper || mode === "collecting";
+  const modeColor   = isLive ? "text-destructive" : isPaper ? "text-warning" : isCollect ? "text-primary" : "text-muted-foreground";
+  const modeDot     = isLive ? "bg-destructive"   : isPaper ? "bg-warning"   : isCollect ? "bg-primary"   : "bg-muted-foreground/50";
+  const logoAccent  = isLive ? "bg-destructive/20 text-destructive" : isPaper ? "bg-warning/20 text-warning" : "bg-primary/20 text-primary";
+  const sidebarBorder = isLive ? "border-destructive/30" : isPaper ? "border-warning/30" : "border-border";
 
-  const modeColor = isLive
-    ? "text-destructive"
-    : isPaper
-    ? "text-warning"
-    : mode === "collecting"
-    ? "text-primary"
-    : "text-muted-foreground";
+  return { mode, isLive, isPaper, isActive, modeColor, modeDot, logoAccent, sidebarBorder };
+}
 
-  const modeDot = isLive
-    ? "bg-destructive"
-    : isPaper
-    ? "bg-warning"
-    : mode === "collecting"
-    ? "bg-primary"
-    : "bg-muted-foreground/50";
-
-  const sidebarBorder = isLive
-    ? "border-destructive/30"
-    : isPaper
-    ? "border-warning/30"
-    : "border-border";
+/* ─── Desktop: full labeled sidebar ─────────────────────────────────────── */
+function DesktopLayout({ children, location }: { children: React.ReactNode; location: string }) {
+  const { mode, isLive, isPaper, isActive, modeColor, modeDot, logoAccent, sidebarBorder } = useModeInfo();
 
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
-      <aside className={cn(
-        "w-60 border-r flex flex-col z-20 relative",
-        sidebarBorder
-      )}
+      <aside
+        className={cn("w-60 border-r flex flex-col z-20 relative", sidebarBorder)}
         style={{
           background: "linear-gradient(180deg, hsl(228 45% 11%) 0%, hsl(228 42% 9%) 100%)",
-          boxShadow: "2px 0 20px rgba(0,0,0,0.5), inset -1px 0 0 rgba(255,255,255,0.04)"
+          boxShadow: "2px 0 20px rgba(0,0,0,0.5), inset -1px 0 0 rgba(255,255,255,0.04)",
         }}
       >
         <div className="h-14 flex items-center px-5 border-b border-border/50">
           <div className="flex items-center gap-2.5">
-            <div className={cn(
-              "w-7 h-7 rounded-lg flex items-center justify-center",
-              isLive ? "bg-destructive/20" : isPaper ? "bg-warning/20" : "bg-primary/20"
-            )}>
-              <TrendingUp className={cn(
-                "w-4 h-4",
-                isLive ? "text-destructive" : isPaper ? "text-warning" : "text-primary"
-              )} />
+            <div className={cn("w-7 h-7 rounded-lg flex items-center justify-center", logoAccent)}>
+              <TrendingUp className="w-4 h-4" />
             </div>
             <div>
               <h1 className="font-semibold text-sm text-foreground leading-none">Deriv Quant</h1>
@@ -92,10 +94,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">System</span>
             <div className={cn("flex items-center gap-1.5 text-[11px] font-semibold", modeColor)}>
               <span className="relative flex h-1.5 w-1.5">
-                {isActive && (
-                  <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-75", modeDot)}></span>
-                )}
-                <span className={cn("relative inline-flex rounded-full h-1.5 w-1.5", modeDot)}></span>
+                {isActive && <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-75", modeDot)} />}
+                <span className={cn("relative inline-flex rounded-full h-1.5 w-1.5", modeDot)} />
               </span>
               {mode.toUpperCase()}
             </div>
@@ -106,19 +106,16 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           {NAV_ITEMS.map((item) => {
             const isActiveLink = location === item.href;
             return (
-              <Link key={item.name} href={item.href} className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group relative",
-                isActiveLink 
-                  ? "bg-primary/12 text-primary" 
-                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-              )}>
-                {isActiveLink && (
-                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary rounded-r-full" />
+              <Link
+                key={item.name}
+                href={item.href}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group relative",
+                  isActiveLink ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
                 )}
-                <item.icon className={cn(
-                  "w-4 h-4 flex-shrink-0 transition-colors",
-                  isActiveLink ? "text-primary" : "text-muted-foreground group-hover:text-foreground"
-                )} />
+              >
+                {isActiveLink && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary rounded-r-full" />}
+                <item.icon className={cn("w-4 h-4 flex-shrink-0 transition-colors", isActiveLink ? "text-primary" : "text-muted-foreground group-hover:text-foreground")} />
                 <span>{item.name}</span>
               </Link>
             );
@@ -131,31 +128,267 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-        {(isLive || isPaper) && (
-          <div className={cn(
-            "flex items-center justify-center gap-2 py-2 text-xs font-bold uppercase tracking-widest z-20 relative",
-            isLive 
-              ? "bg-destructive/10 text-destructive border-b border-destructive/20" 
-              : "bg-warning/10 text-warning border-b border-warning/20"
-          )}>
-            <span className="relative flex h-1.5 w-1.5">
-              <span className={cn(
-                "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
-                isLive ? "bg-destructive" : "bg-warning"
-              )}></span>
-              <span className={cn(
-                "relative inline-flex rounded-full h-1.5 w-1.5",
-                isLive ? "bg-destructive" : "bg-warning"
-              )}></span>
-            </span>
-            {isLive ? "LIVE TRADING — REAL MONEY AT RISK" : "PAPER TRADING — SIMULATED POSITIONS"}
-          </div>
-        )}
-
-        <div className="flex-1 overflow-y-auto p-6 md:p-8 relative">
-          {children}
-        </div>
+        <TradingBanner isLive={isLive} isPaper={isPaper} />
+        <div className="flex-1 overflow-y-auto p-6 md:p-8 relative">{children}</div>
       </main>
     </div>
   );
+}
+
+/* ─── Tablet: icon rail + top bar ───────────────────────────────────────── */
+function TabletLayout({ children, location }: { children: React.ReactNode; location: string }) {
+  const { isLive, isPaper, isActive, modeColor, modeDot, logoAccent, sidebarBorder } = useModeInfo();
+
+  const modeLabel  = isLive ? "LIVE" : isPaper ? "PAPER" : isActive ? "ON" : "IDLE";
+  const modeBadge  = isLive
+    ? "bg-destructive/15 border-destructive/30 text-destructive"
+    : isPaper
+    ? "bg-warning/15 border-warning/30 text-warning"
+    : isActive
+    ? "bg-primary/15 border-primary/30 text-primary"
+    : "bg-muted/20 border-border text-muted-foreground";
+  const modeDotColor = isLive ? "bg-destructive" : isPaper ? "bg-warning" : isActive ? "bg-primary" : "bg-muted-foreground/50";
+
+  return (
+    <div className="flex h-screen w-full bg-background overflow-hidden flex-col">
+
+      {/* Top bar */}
+      <header
+        className={cn("flex items-center border-b shrink-0 z-20", sidebarBorder)}
+        style={{
+          height: 50,
+          background: "linear-gradient(180deg, hsl(228 45% 11%) 0%, hsl(228 42% 9%) 100%)",
+        }}
+      >
+        {/* Logo cell — same width as rail so they visually align */}
+        <div className="flex items-center justify-center border-r border-border/50 shrink-0" style={{ width: 68, height: "100%" }}>
+          <div className={cn("w-7 h-7 rounded-lg flex items-center justify-center", logoAccent)}>
+            <TrendingUp className="w-4 h-4" />
+          </div>
+        </div>
+
+        {/* App name */}
+        <div className="px-4 flex-1 min-w-0">
+          <p className="text-sm font-semibold text-foreground leading-none">Deriv Quant</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Research Platform</p>
+        </div>
+
+        {/* Mode badge */}
+        <div className={cn("flex items-center gap-1.5 border rounded-full px-2.5 py-1 mr-4 text-[10px] font-bold", modeBadge)}>
+          <span className="relative flex h-1.5 w-1.5">
+            {isActive && <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-75", modeDotColor)} />}
+            <span className={cn("relative inline-flex rounded-full h-1.5 w-1.5", modeDotColor)} />
+          </span>
+          {modeLabel}
+        </div>
+
+        {/* Balance */}
+        <div className="border-l border-border/50 px-4 py-2 text-right shrink-0">
+          <p className="text-[9px] text-muted-foreground uppercase tracking-widest">Balance</p>
+          <p className="text-sm font-bold text-foreground font-mono mt-0.5">USD 10,000.00</p>
+        </div>
+      </header>
+
+      {/* Body */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Icon rail */}
+        <aside
+          className={cn("border-r flex flex-col shrink-0 pt-2 overflow-y-auto", sidebarBorder)}
+          style={{
+            width: 68,
+            background: "linear-gradient(180deg, hsl(228 45% 11%) 0%, hsl(228 42% 9%) 100%)",
+          }}
+        >
+          {NAV_ITEMS.map((item) => {
+            const isActiveLink = location === item.href;
+            return (
+              <Link
+                key={item.name}
+                href={item.href}
+                title={item.name}
+                className={cn(
+                  "flex flex-col items-center gap-1 py-3 w-full relative transition-all duration-150",
+                  isActiveLink
+                    ? "text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                style={{
+                  background: isActiveLink ? "hsl(var(--primary) / 0.1)" : "transparent",
+                  borderLeft: isActiveLink ? "3px solid hsl(var(--primary))" : "3px solid transparent",
+                }}
+              >
+                <item.icon className="w-4 h-4 shrink-0" />
+                <span className="text-[9px] font-medium leading-none">{item.name}</span>
+              </Link>
+            );
+          })}
+        </aside>
+
+        {/* Page content */}
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <TradingBanner isLive={isLive} isPaper={isPaper} />
+          <div className="flex-1 overflow-y-auto p-5 relative">{children}</div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Mobile: header + bottom tabs ──────────────────────────────────────── */
+function MobileLayout({ children, location }: { children: React.ReactNode; location: string }) {
+  const [showMore, setShowMore] = useState(false);
+  const { isLive, isPaper, isActive, logoAccent, sidebarBorder, modeDot } = useModeInfo();
+
+  const modeLabel = isLive ? "LIVE" : isPaper ? "PAPER" : isActive ? "ON" : "IDLE";
+  const modeBadge = isLive
+    ? "bg-destructive/15 border-destructive/30 text-destructive"
+    : isPaper
+    ? "bg-warning/15 border-warning/30 text-warning"
+    : isActive
+    ? "bg-primary/15 border-primary/30 text-primary"
+    : "bg-muted/20 border-border text-muted-foreground";
+
+  const isMoreActive = MOBILE_MORE.some((m) => m.href === location);
+
+  return (
+    <div className="flex flex-col h-screen w-full bg-background overflow-hidden">
+
+      {/* Mobile top bar */}
+      <header
+        className={cn("flex items-center justify-between px-4 shrink-0 border-b", sidebarBorder)}
+        style={{
+          height: 52,
+          background: "linear-gradient(180deg, hsl(228 45% 11%) 0%, hsl(228 42% 9%) 100%)",
+        }}
+      >
+        <div className="flex items-center gap-2.5">
+          <div className={cn("w-7 h-7 rounded-lg flex items-center justify-center", logoAccent)}>
+            <TrendingUp className="w-4 h-4" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground leading-none">Deriv Quant</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Research Platform</p>
+          </div>
+        </div>
+        <div className={cn("flex items-center gap-1.5 border rounded-full px-2.5 py-1 text-[10px] font-bold", modeBadge)}>
+          <span className="relative flex h-1.5 w-1.5">
+            {isActive && <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-75", modeDot)} />}
+            <span className={cn("relative inline-flex rounded-full h-1.5 w-1.5", modeDot)} />
+          </span>
+          {modeLabel}
+        </div>
+      </header>
+
+      {/* Page content */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        <TradingBanner isLive={isLive} isPaper={isPaper} />
+        <div className="flex-1 overflow-y-auto p-4 relative">{children}</div>
+      </main>
+
+      {/* More drawer */}
+      {showMore && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setShowMore(false)} />
+          <div
+            className="fixed left-0 right-0 z-40 rounded-t-2xl border-t border-border"
+            style={{
+              bottom: 60,
+              background: "hsl(220 18% 14%)",
+              boxShadow: "0 -8px 32px rgba(0,0,0,0.6)",
+            }}
+          >
+            <div className="flex items-center justify-between px-5 pt-4 pb-3">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">More</p>
+              <button onClick={() => setShowMore(false)} className="text-muted-foreground p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {MOBILE_MORE.map((item) => {
+              const isActiveLink = location === item.href;
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  onClick={() => setShowMore(false)}
+                  className={cn(
+                    "flex items-center gap-4 w-full px-5 py-3.5 text-left transition-colors",
+                    isActiveLink ? "text-primary bg-primary/8" : "text-foreground hover:bg-muted/30",
+                  )}
+                >
+                  <item.icon className={cn("w-5 h-5", isActiveLink ? "text-primary" : "text-muted-foreground")} />
+                  <span className="text-[15px] font-medium">{item.name}</span>
+                  {isActiveLink && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />}
+                </Link>
+              );
+            })}
+            <div className="h-4" />
+          </div>
+        </>
+      )}
+
+      {/* Bottom tab bar */}
+      <nav
+        className={cn("flex items-center shrink-0 border-t z-20", sidebarBorder)}
+        style={{ height: 60, background: "hsl(220 18% 14%)", paddingBottom: 2 }}
+      >
+        {MOBILE_PRIMARY.map((tab) => {
+          const isActiveLink = location === tab.href;
+          return (
+            <Link
+              key={tab.name}
+              href={tab.href}
+              onClick={() => setShowMore(false)}
+              className="flex-1 flex flex-col items-center gap-1 py-2 relative"
+            >
+              <tab.icon className={cn("w-5 h-5", isActiveLink ? "text-primary" : "text-muted-foreground")} />
+              <span className={cn("text-[9.5px] font-medium", isActiveLink ? "text-primary" : "text-muted-foreground")}>
+                {tab.name}
+              </span>
+              {isActiveLink && <span className="absolute bottom-0 w-5 h-0.5 bg-primary rounded-t-full" />}
+            </Link>
+          );
+        })}
+
+        {/* More button */}
+        <button
+          onClick={() => setShowMore((s) => !s)}
+          className="flex-1 flex flex-col items-center gap-1 py-2 relative"
+        >
+          <MoreHorizontal className={cn("w-5 h-5", (isMoreActive || showMore) ? "text-primary" : "text-muted-foreground")} />
+          <span className={cn("text-[9.5px] font-medium", (isMoreActive || showMore) ? "text-primary" : "text-muted-foreground")}>
+            More
+          </span>
+        </button>
+      </nav>
+    </div>
+  );
+}
+
+/* ─── Shared trading banner ──────────────────────────────────────────────── */
+function TradingBanner({ isLive, isPaper }: { isLive: boolean; isPaper: boolean }) {
+  if (!isLive && !isPaper) return null;
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-center gap-2 py-2 text-xs font-bold uppercase tracking-widest z-10 shrink-0",
+        isLive ? "bg-destructive/10 text-destructive border-b border-destructive/20" : "bg-warning/10 text-warning border-b border-warning/20",
+      )}
+    >
+      <span className="relative flex h-1.5 w-1.5">
+        <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-75", isLive ? "bg-destructive" : "bg-warning")} />
+        <span className={cn("relative inline-flex rounded-full h-1.5 w-1.5", isLive ? "bg-destructive" : "bg-warning")} />
+      </span>
+      {isLive ? "LIVE TRADING — REAL MONEY AT RISK" : "PAPER TRADING — SIMULATED POSITIONS"}
+    </div>
+  );
+}
+
+/* ─── Root layout — picks the right layout per screen size ──────────────── */
+export function AppLayout({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+  const bp = useBreakpoint();
+
+  if (bp === "mobile")  return <MobileLayout  location={location}>{children}</MobileLayout>;
+  if (bp === "tablet")  return <TabletLayout  location={location}>{children}</TabletLayout>;
+  return                       <DesktopLayout location={location}>{children}</DesktopLayout>;
 }

@@ -452,8 +452,8 @@ function BacktestDetailPanel({ run, onClose }: { run: BacktestRun; onClose: () =
                     </div>
                   </div>
                   <div className="bg-muted/30 rounded px-3 py-2">
-                    <div className="text-muted-foreground text-xs">Max Holding</div>
-                    <div className="font-medium">10–30 candles</div>
+                    <div className="text-muted-foreground text-xs">Hold Logic</div>
+                    <div className="font-medium">Hold until SL/TP hit (max 120 h)</div>
                   </div>
                 </div>
               </CardContent>

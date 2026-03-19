@@ -219,21 +219,11 @@ async function runBacktestForOptimisation(
     .limit(600);
 
   if (candles.length < 60) {
-    const tradeCount = Math.floor(12 + Math.random() * 18);
-    const winRate = 0.47 + Math.random() * 0.25;
-    const avgWin = 180 + Math.random() * 150;
-    const avgLoss = -(70 + Math.random() * 60);
-    const netProfit = (winRate * tradeCount * avgWin) + ((1 - winRate) * tradeCount * avgLoss);
-    const totalReturn = netProfit / initialCapital;
-    const profitFactor = (winRate * avgWin) / Math.max(0.01, Math.abs((1 - winRate) * avgLoss));
-    const maxDrawdown = -(0.04 + Math.random() * 0.14);
-    const avgHoldingHours = 5 + Math.random() * 20;
-    const sharpeRatio = totalReturn / (0.06 + Math.random() * 0.1);
-    return { totalReturn, winRate, profitFactor, maxDrawdown, avgHoldingHours, sharpeRatio, tradeCount };
+    return { totalReturn: 0, winRate: 0, profitFactor: 0, maxDrawdown: 0, avgHoldingHours: 0, sharpeRatio: 0, tradeCount: 0 };
   }
 
   candles.reverse();
-  const trades: { pnl: number; holdingCandles: number }[] = [];
+  const trades: { pnl: number; holdingMs: number }[] = [];
   let equity = initialCapital;
   let peak = initialCapital;
   let maxDrawdown = 0;
@@ -277,16 +267,45 @@ async function runBacktestForOptimisation(
     }
     if (!signal) continue;
 
-    const holdCandles = 10 + Math.floor(Math.random() * 20);
-    const exitIdx = Math.min(i + holdCandles, candles.length - 1);
-    const exitPrice = candles[exitIdx].close;
-    const priceDiff = (exitPrice - price) / price * direction;
-    const edgeBoost = 0.04 + Math.random() * 0.06;
-    const tradeReturn = priceDiff + edgeBoost * direction * (Math.random() > 0.42 ? 1 : -1);
+    const recentPrices = closes.slice(-20);
+    const atrPct = recentPrices.length >= 2
+      ? recentPrices.map((c, idx, arr) => idx > 0 ? Math.abs(c - arr[idx - 1]) / arr[idx - 1] : 0).slice(1).reduce((a, b) => a + b, 0) / (recentPrices.length - 1)
+      : 0.005;
+    const slPct = atrPct * 1.5;
+    const tpPct = atrPct * 2.0;
+    const sl = direction === 1 ? price * (1 - slPct) : price * (1 + slPct);
+    const tp = direction === 1 ? price * (1 + tpPct) : price * (1 - tpPct);
+
+    const candleDurationMs = i > 0
+      ? Math.abs(candles[i].openTs - candles[i - 1].openTs) * 1000
+      : 3600000;
+    const maxHoldMs = 120 * 3600000;
+    const maxHoldCandles = Math.ceil(maxHoldMs / Math.max(candleDurationMs, 1000));
+
+    let exitPrice = candles[Math.min(i + maxHoldCandles, candles.length - 1)].close;
+    let holdingMs = maxHoldMs;
+
+    for (let j = i + 1; j <= Math.min(i + maxHoldCandles, candles.length - 1); j++) {
+      const c = candles[j];
+      const slHit = direction === 1 ? c.low <= sl : c.high >= sl;
+      const tpHit = direction === 1 ? c.high >= tp : c.low <= tp;
+      if (tpHit) {
+        exitPrice = tp;
+        holdingMs = (j - i) * candleDurationMs;
+        break;
+      }
+      if (slHit) {
+        exitPrice = sl;
+        holdingMs = (j - i) * candleDurationMs;
+        break;
+      }
+    }
+
     const sizePct = 0.25;
     const positionSize = equity * sizePct;
-    const pnl = positionSize * tradeReturn;
-    trades.push({ pnl, holdingCandles: holdCandles });
+    const priceDiff = (exitPrice - price) / price * direction;
+    const pnl = positionSize * priceDiff;
+    trades.push({ pnl, holdingMs });
     equity += pnl;
     if (equity > peak) peak = equity;
     const dd = (equity - peak) / peak;
@@ -304,7 +323,7 @@ async function runBacktestForOptimisation(
   const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
   const grossLoss = Math.abs(losses2.reduce((s, t) => s + t.pnl, 0));
   const netProfit = equity - initialCapital;
-  const avgHoldingHours = (trades.reduce((s, t) => s + t.holdingCandles, 0) / trades.length) / 60;
+  const avgHoldingHours = trades.reduce((s, t) => s + t.holdingMs / 3600000, 0) / trades.length;
   const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit;
   const totalReturn = netProfit / initialCapital;
   const returns = equityCurve.slice(1).map((v, i) => (v - equityCurve[i]) / equityCurve[i]);

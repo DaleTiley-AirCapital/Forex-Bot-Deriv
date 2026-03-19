@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useGetLatestSignals, useScoreSignal, getGetLatestSignalsQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, Badge, Button, Select, Label } from "@/components/ui-elements";
 import { formatNumber, cn } from "@/lib/utils";
-import { Zap, Target, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, ChevronUp } from "lucide-react";
+import { Zap, Target, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, ChevronUp, Clock } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -75,6 +75,14 @@ export default function Signals() {
           <h1 className="page-title">Live Signals</h1>
           <p className="page-subtitle">Real-time model scoring and AI-verified signal generation</p>
         </div>
+      </div>
+
+      <div className="mb-2 px-1 py-2 rounded-lg bg-muted/30 border border-border/40 text-xs text-muted-foreground flex items-center gap-2">
+        <Clock className="w-3.5 h-3.5 shrink-0 text-primary" />
+        <span>
+          <span className="font-medium text-foreground">Expected hold:</span>{" "}
+          ~24–72 h (position held until Stop Loss or Take Profit is hit, hard cap 120 h)
+        </span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">

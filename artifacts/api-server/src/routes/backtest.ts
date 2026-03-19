@@ -35,48 +35,10 @@ async function runBacktestSimulation(
     .limit(600);
 
   if (candles.length < 60) {
-    const tradeCount = Math.floor(12 + Math.random() * 18);
-    const winRate = 0.47 + Math.random() * 0.25;
-    const avgWin = 180 + Math.random() * 150;
-    const avgLoss = -(70 + Math.random() * 60);
-    const netProfit = (winRate * tradeCount * avgWin) + ((1 - winRate) * tradeCount * avgLoss);
-    const totalReturn = netProfit / initialCapital;
-    const profitFactor = (winRate * avgWin) / Math.max(0.01, Math.abs((1 - winRate) * avgLoss));
-    const maxDrawdown = -(0.04 + Math.random() * 0.14);
-
-    const now = new Date();
-    const simulatedTrades: TradeRecord[] = Array.from({ length: tradeCount }, (_, i) => {
-      const entryTs = new Date(now.getTime() - (tradeCount - i) * 3600000 * 4);
-      const holdingCandles = 10 + Math.floor(Math.random() * 20);
-      const exitTs = new Date(entryTs.getTime() + holdingCandles * 60000);
-      const isWin = Math.random() < winRate;
-      const direction = Math.random() > 0.5 ? "long" : "short";
-      const entryPrice = 1000 + Math.random() * 100;
-      const pnl = isWin ? Math.random() * avgWin : Math.random() * avgLoss;
-      const exitPrice = entryPrice + (pnl / (initialCapital * 0.25)) * entryPrice * (direction === "long" ? 1 : -1);
-      return {
-        pnl,
-        holdingCandles,
-        entryTs,
-        exitTs,
-        direction,
-        entryPrice,
-        exitPrice,
-        exitReason: isWin ? "TP" : Math.random() > 0.3 ? "SL" : "TIME",
-      };
-    });
-
-    return {
-      totalReturn, netProfit, winRate, profitFactor,
-      maxDrawdown, tradeCount, avgHoldingHours: 5 + Math.random() * 20,
-      expectancy: (winRate * avgWin) + ((1 - winRate) * avgLoss),
-      sharpeRatio: totalReturn / (0.06 + Math.random() * 0.1),
-      trades: simulatedTrades,
-      equityCurve: simulatedTrades.map((t, i) => ({
-        ts: t.entryTs.toISOString(),
-        equity: initialCapital + simulatedTrades.slice(0, i + 1).reduce((s, tr) => s + tr.pnl, 0),
-      })),
-    };
+    throw new Error(
+      `Insufficient candle data for ${symbol}: only ${candles.length} candles available (minimum 60 required). ` +
+      `Start the data stream and wait for historical candles to accumulate before running a backtest.`
+    );
   }
 
   candles.reverse();
@@ -135,33 +97,56 @@ async function runBacktestSimulation(
 
     if (!signal) continue;
 
-    const holdCandles = 10 + Math.floor(Math.random() * 20);
-    const exitIdx = Math.min(i + holdCandles, candles.length - 1);
-    const exitCandle = candles[exitIdx];
-    const exitPrice = exitCandle.close;
-    const priceDiff = (exitPrice - price) / price * direction;
+    const recentPrices = closes.slice(-20);
+    const atrPct = recentPrices.length >= 2
+      ? recentPrices.map((c, idx, arr) => idx > 0 ? Math.abs(c - arr[idx - 1]) / arr[idx - 1] : 0).slice(1).reduce((a, b) => a + b, 0) / (recentPrices.length - 1)
+      : 0.005;
+    const slPct = atrPct * 1.5;
+    const tpPct = atrPct * 2.0;
+    const sl = direction === 1 ? price * (1 - slPct) : price * (1 + slPct);
+    const tp = direction === 1 ? price * (1 + tpPct) : price * (1 - tpPct);
 
-    const edgeBoost = 0.04 + Math.random() * 0.06;
-    const tradeReturn = priceDiff + edgeBoost * direction * (Math.random() > 0.42 ? 1 : -1);
+    const entryCandle = last;
+    const candleDurationMs = i > 0
+      ? Math.abs(candles[i].openTs - candles[i - 1].openTs) * 1000
+      : 3600000;
+    const maxHoldMs = 120 * 3600000;
+    const maxHoldCandles = Math.ceil(maxHoldMs / Math.max(candleDurationMs, 1000));
+
+    let exitCandle = candles[Math.min(i + maxHoldCandles, candles.length - 1)];
+    let exitPrice = exitCandle.close;
+    let exitReason = "TIME";
+    let holdingCandles = maxHoldCandles;
+
+    for (let j = i + 1; j <= Math.min(i + maxHoldCandles, candles.length - 1); j++) {
+      const c = candles[j];
+      const slHit = direction === 1 ? c.low <= sl : c.high >= sl;
+      const tpHit = direction === 1 ? c.high >= tp : c.low <= tp;
+      if (tpHit) {
+        exitCandle = c;
+        exitPrice = tp;
+        exitReason = "TP";
+        holdingCandles = j - i;
+        break;
+      }
+      if (slHit) {
+        exitCandle = c;
+        exitPrice = sl;
+        exitReason = "SL";
+        holdingCandles = j - i;
+        break;
+      }
+    }
 
     const sizePct = allocationMode === "aggressive" ? 0.4 : allocationMode === "conservative" ? 0.15 : 0.25;
     const positionSize = equity * sizePct;
-    const pnl = positionSize * tradeReturn;
-
-    const isWin = pnl > 0;
-    let exitReason: string;
-    if (isWin) {
-      exitReason = "TP";
-    } else if (Math.abs(pnl / positionSize) > 0.02) {
-      exitReason = "SL";
-    } else {
-      exitReason = "TIME";
-    }
+    const priceDiff = (exitPrice - price) / price * direction;
+    const pnl = positionSize * priceDiff;
 
     trades.push({
       pnl,
-      holdingCandles: holdCandles,
-      entryTs: new Date(last.openTs * 1000),
+      holdingCandles,
+      entryTs: new Date(entryCandle.openTs * 1000),
       exitTs: new Date(exitCandle.openTs * 1000),
       direction: directionStr,
       entryPrice: price,
@@ -191,7 +176,7 @@ async function runBacktestSimulation(
   const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
   const grossLoss = Math.abs(lossTrades.reduce((s, t) => s + t.pnl, 0));
   const netProfit = equity - initialCapital;
-  const avgHoldingHours = (trades.reduce((s, t) => s + t.holdingCandles, 0) / trades.length) / 60;
+  const avgHoldingHours = trades.reduce((s, t) => s + (t.exitTs.getTime() - t.entryTs.getTime()) / 3600000, 0) / trades.length;
   const expectancy = netProfit / trades.length;
   const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit;
   const totalReturn = netProfit / initialCapital;

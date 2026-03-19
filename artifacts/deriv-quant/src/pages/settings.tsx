@@ -180,6 +180,10 @@ const ALL_INSTRUMENTS = [
   { symbol: "CRASH1000", label: "Crash 1000", category: "Boom/Crash" },
   { symbol: "BOOM500", label: "Boom 500", category: "Boom/Crash" },
   { symbol: "CRASH500", label: "Crash 500", category: "Boom/Crash" },
+  { symbol: "BOOM300", label: "Boom 300", category: "Boom/Crash" },
+  { symbol: "CRASH300", label: "Crash 300", category: "Boom/Crash" },
+  { symbol: "BOOM200", label: "Boom 200", category: "Boom/Crash" },
+  { symbol: "CRASH200", label: "Crash 200", category: "Boom/Crash" },
   { symbol: "R_75", label: "Volatility 75", category: "Volatility" },
   { symbol: "R_100", label: "Volatility 100", category: "Volatility" },
   { symbol: "JD75", label: "Jump Diffusion 75", category: "Exotic" },
@@ -770,13 +774,23 @@ export default function Settings() {
               />
               <SettingField
                 label="Scan Interval"
-                description="How often the scheduler runs to scan for new signals"
+                description="How often the scheduler cycle fires (controls config refresh frequency)"
                 value={form.scan_interval_seconds || "30"}
                 onChange={(v) => update("scan_interval_seconds", v)}
                 suffix="sec"
                 min={5}
                 max={300}
                 step={5}
+              />
+              <SettingField
+                label="Symbol Scan Stagger"
+                description="Delay between scanning each symbol — symbols are cycled one at a time to avoid rate limits"
+                value={form.scan_stagger_seconds || "10"}
+                onChange={(v) => update("scan_stagger_seconds", v)}
+                suffix="sec"
+                min={1}
+                max={60}
+                step={1}
               />
             </CardContent>
           </Card>

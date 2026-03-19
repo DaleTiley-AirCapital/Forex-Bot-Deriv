@@ -175,10 +175,19 @@ export default function Research() {
                     value={form.symbol}
                     onChange={e => setForm({...form, symbol: e.target.value})}
                   >
-                    <option value="BOOM1000">BOOM1000</option>
-                    <option value="CRASH1000">CRASH1000</option>
-                    <option value="BOOM500">BOOM500</option>
-                    <option value="CRASH500">CRASH500</option>
+                    <option value="BOOM1000">BOOM1000 — Boom 1000</option>
+                    <option value="CRASH1000">CRASH1000 — Crash 1000</option>
+                    <option value="BOOM500">BOOM500 — Boom 500</option>
+                    <option value="CRASH500">CRASH500 — Crash 500</option>
+                    <option value="BOOM300">BOOM300 — Boom 300</option>
+                    <option value="CRASH300">CRASH300 — Crash 300</option>
+                    <option value="BOOM200">BOOM200 — Boom 200</option>
+                    <option value="CRASH200">CRASH200 — Crash 200</option>
+                    <option value="R_75">R_75 — Volatility 75</option>
+                    <option value="R_100">R_100 — Volatility 100</option>
+                    <option value="JD75">JD75 — Jump 75</option>
+                    <option value="STPIDX">STPIDX — Step Index</option>
+                    <option value="RDBEAR">RDBEAR — Bear Market</option>
                   </Select>
                 </div>
 

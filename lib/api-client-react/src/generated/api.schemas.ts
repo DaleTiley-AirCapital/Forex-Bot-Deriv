@@ -20,7 +20,7 @@ export interface ActionResponse {
 
 export interface BackfillRequest {
   symbol: string;
-  days?: number;
+  months?: number;
 }
 
 export interface StreamRequest {
@@ -431,6 +431,7 @@ export interface PlatformSettings {
   allocation_mode?: string;
   total_capital?: string;
   scan_interval_seconds?: string;
+  scan_stagger_seconds?: string;
   paper_equity_pct_per_trade?: string;
   live_equity_pct_per_trade?: string;
   paper_max_open_trades?: string;

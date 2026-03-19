@@ -5,8 +5,9 @@ import { createDecipheriv, scryptSync } from "crypto";
 
 const DERIV_WS_URL = "wss://ws.binaryws.com/websockets/v3?app_id=1089";
 
-const SUPPORTED_SYMBOLS = [
+export const SUPPORTED_SYMBOLS = [
   "BOOM1000", "CRASH1000", "BOOM500", "CRASH500",
+  "BOOM300", "CRASH300", "BOOM200", "CRASH200",
   "R_75", "R_100", "JD75", "STPIDX", "RDBEAR"
 ];
 
@@ -735,4 +736,4 @@ async function getEnabledSymbols(): Promise<string[]> {
   return [...SUPPORTED_SYMBOLS];
 }
 
-export { DerivClient, SUPPORTED_SYMBOLS, getEnabledSymbols };
+export { DerivClient, getEnabledSymbols };

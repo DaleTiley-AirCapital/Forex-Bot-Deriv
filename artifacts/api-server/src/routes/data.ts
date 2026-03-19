@@ -6,15 +6,15 @@ import { getDerivClientWithDbToken, SUPPORTED_SYMBOLS, getEnabledSymbols } from 
 const router: IRouter = Router();
 
 router.post("/data/backfill", async (req, res): Promise<void> => {
-  const { symbol = "BOOM1000", days = 30 } = req.body ?? {};
+  const { symbol = "BOOM1000", months = 12 } = req.body ?? {};
 
   if (!SUPPORTED_SYMBOLS.includes(symbol)) {
     res.status(400).json({ error: `Symbol '${symbol}' not supported. Use: ${SUPPORTED_SYMBOLS.join(", ")}` });
     return;
   }
 
-  // Estimate tick count from days (Boom/Crash generate ~2-5 ticks/sec)
-  const tickCount = Math.min(days * 24 * 3600 * 3, 5000);
+  const monthsNum = Math.min(Math.max(Number(months) || 12, 1), 24);
+  const tickCount = 5000;
 
   try {
     const client = await getDerivClientWithDbToken();
@@ -26,7 +26,7 @@ router.post("/data/backfill", async (req, res): Promise<void> => {
 
     res.json({
       success: true,
-      message: `Backfill complete for ${symbol}: ${result.ticks} ticks and ${result.candles} candles stored.`,
+      message: `Backfill complete for ${symbol} (${monthsNum}mo requested): ${result.ticks} ticks and ${result.candles} candles stored.`,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";

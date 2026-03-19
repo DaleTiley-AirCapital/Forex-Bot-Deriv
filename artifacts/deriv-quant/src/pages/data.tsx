@@ -14,6 +14,32 @@ import { formatNumber, cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { Database, Play, Square, DownloadCloud } from "lucide-react";
 
+const ALL_SYMBOLS = [
+  { value: "BOOM1000", label: "Boom 1000" },
+  { value: "CRASH1000", label: "Crash 1000" },
+  { value: "BOOM500", label: "Boom 500" },
+  { value: "CRASH500", label: "Crash 500" },
+  { value: "BOOM300", label: "Boom 300" },
+  { value: "CRASH300", label: "Crash 300" },
+  { value: "BOOM200", label: "Boom 200" },
+  { value: "CRASH200", label: "Crash 200" },
+  { value: "R_75", label: "Volatility 75" },
+  { value: "R_100", label: "Volatility 100" },
+  { value: "JD75", label: "Jump 75" },
+  { value: "STPIDX", label: "Step Index" },
+  { value: "RDBEAR", label: "Bear Market" },
+];
+
+const ALL_STREAM_SYMBOLS = ALL_SYMBOLS.map(s => s.value);
+
+const MONTH_OPTIONS = [
+  { value: 1, label: "1 month" },
+  { value: 3, label: "3 months" },
+  { value: 6, label: "6 months" },
+  { value: 12, label: "12 months" },
+  { value: 24, label: "24 months" },
+];
+
 export default function DataManager() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'ticks' | 'candles' | 'spikes'>('ticks');
@@ -33,7 +59,8 @@ export default function DataManager() {
   const { data: candles } = useGetCandles({ symbol, timeframe: 'M1', limit: 15 }, { query: { enabled: tab === 'candles' } });
   const { data: spikes } = useGetSpikeEvents({ symbol, limit: 15 }, { query: { enabled: tab === 'spikes' } });
 
-  const [backfillForm, setBackfillForm] = useState({ symbol: "BOOM1000", days: 30 });
+  const [backfillForm, setBackfillForm] = useState({ symbol: "BOOM1000", months: 12 });
+  const [backfillResult, setBackfillResult] = useState<string | null>(null);
 
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
@@ -68,7 +95,7 @@ export default function DataManager() {
                 variant="outline" 
                 className="flex-1 text-success border-success/40 hover:bg-success/8 hover:border-success/60"
                 disabled={status?.streaming}
-                onClick={() => startStream({ data: { symbols: ["BOOM1000", "CRASH1000"] }})}
+                onClick={() => startStream({ data: { symbols: ALL_STREAM_SYMBOLS }})}
                 isLoading={startingStream}
               >
                 <Play className="w-3.5 h-3.5" />
@@ -100,23 +127,28 @@ export default function DataManager() {
               <div className="space-y-1.5 flex-1 w-full">
                 <Label>Target Symbol</Label>
                 <Select value={backfillForm.symbol} onChange={e => setBackfillForm({...backfillForm, symbol: e.target.value})}>
-                  <option value="BOOM1000">BOOM1000</option>
-                  <option value="CRASH1000">CRASH1000</option>
-                  <option value="BOOM500">BOOM500</option>
-                  <option value="CRASH500">CRASH500</option>
+                  {ALL_SYMBOLS.map(s => (
+                    <option key={s.value} value={s.value}>{s.value} — {s.label}</option>
+                  ))}
                 </Select>
               </div>
               <div className="space-y-1.5 flex-1 w-full">
-                <Label>Days of History</Label>
-                <Input
-                  type="number"
-                  value={backfillForm.days}
-                  onChange={e => setBackfillForm({...backfillForm, days: Number(e.target.value)})}
-                />
+                <Label>History Depth</Label>
+                <Select value={String(backfillForm.months)} onChange={e => setBackfillForm({...backfillForm, months: Number(e.target.value)})}>
+                  {MONTH_OPTIONS.map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </Select>
               </div>
               <Button 
                 variant="primary"
-                onClick={() => startBackfill({ data: backfillForm })} 
+                onClick={() => {
+                  setBackfillResult(null);
+                  startBackfill(
+                    { data: backfillForm },
+                    { onSuccess: (data: { message?: string }) => setBackfillResult(data?.message ?? "Backfill complete.") }
+                  );
+                }}
                 isLoading={backfilling}
                 className="w-full md:w-auto"
               >
@@ -124,6 +156,9 @@ export default function DataManager() {
                 Start Backfill
               </Button>
             </div>
+            {backfillResult && (
+              <p className="mt-3 text-sm text-success">{backfillResult}</p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -147,9 +182,10 @@ export default function DataManager() {
             ))}
           </div>
           <div className="p-2 flex items-center border-t sm:border-t-0 border-border/50">
-            <Select className="h-8 w-32 text-xs" value={symbol} onChange={(e) => setSymbol(e.target.value)}>
-              <option value="BOOM1000">BOOM1000</option>
-              <option value="CRASH1000">CRASH1000</option>
+            <Select className="h-8 w-44 text-xs" value={symbol} onChange={(e) => setSymbol(e.target.value)}>
+              {ALL_SYMBOLS.map(s => (
+                <option key={s.value} value={s.value}>{s.value}</option>
+              ))}
             </Select>
           </div>
         </div>

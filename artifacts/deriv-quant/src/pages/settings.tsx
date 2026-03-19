@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   useGetSettings,
   useUpdateSettings,
@@ -29,7 +29,9 @@ interface SettingFieldProps {
   placeholder?: string;
   aiLocked?: boolean;
   aiValue?: string;
+  aiSuggestion?: string;
   onOverride?: () => void;
+  onRevert?: () => void;
 }
 
 function AiBadge() {
@@ -41,7 +43,7 @@ function AiBadge() {
   );
 }
 
-function SettingField({ label, description, value, onChange, type = "number", options, suffix, min, max, step, placeholder, aiLocked, aiValue, onOverride }: SettingFieldProps) {
+function SettingField({ label, description, value, onChange, type = "number", options, suffix, min, max, step, placeholder, aiLocked, aiValue, aiSuggestion, onOverride, onRevert }: SettingFieldProps) {
   const [showPassword, setShowPassword] = useState(false);
 
   if (type === "toggle") {
@@ -149,23 +151,37 @@ function SettingField({ label, description, value, onChange, type = "number", op
   }
 
   return (
-    <div className="flex items-center justify-between py-4 border-b border-border/30 last:border-0">
-      <div className="flex-1 pr-4">
-        <p className="text-sm font-medium text-foreground">{label}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+    <div className="py-4 border-b border-border/30 last:border-0">
+      <div className="flex items-center justify-between">
+        <div className="flex-1 pr-4">
+          <p className="text-sm font-medium text-foreground">{label}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            min={min}
+            max={max}
+            step={step ?? 0.1}
+            className="w-24 h-9 rounded-md border border-primary/40 bg-background/50 px-3 text-sm font-mono text-right text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors"
+          />
+          {suffix && <span className="text-xs text-muted-foreground font-mono w-6">{suffix}</span>}
+        </div>
       </div>
-      <div className="flex items-center gap-2">
-        <input
-          type="number"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          min={min}
-          max={max}
-          step={step ?? 0.1}
-          className="w-24 h-9 rounded-md border border-border bg-background/50 px-3 text-sm font-mono text-right text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors"
-        />
-        {suffix && <span className="text-xs text-muted-foreground font-mono w-6">{suffix}</span>}
-      </div>
+      {onRevert && aiSuggestion !== undefined && (
+        <div className="flex items-center justify-end gap-2 mt-1.5">
+          <span className="text-xs text-muted-foreground">AI suggestion: <span className="font-mono text-emerald-500">{aiSuggestion}</span></span>
+          <button
+            onClick={onRevert}
+            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 transition-colors"
+          >
+            <RotateCcw className="w-3 h-3" />
+            Revert to AI
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -281,18 +297,13 @@ interface AiStatus {
   locked: boolean;
   optimisedAt: string | null;
   aiValues: Record<string, string>;
+  aiSuggestions: Record<string, string>;
   lockedKeys: string[];
+  overriddenKeys: string[];
+  lastMonthlyOptimise: string | null;
+  nextScheduled: string;
 }
 
-interface OptimisationProgress {
-  type: "start" | "progress" | "complete" | "error";
-  completed?: number;
-  total?: number;
-  message: string;
-  estimatedSecondsRemaining?: number;
-  paramCount?: number;
-  settings?: Record<string, number>;
-}
 
 function OverrideConfirmDialog({
   settingLabel,
@@ -590,11 +601,8 @@ export default function Settings() {
   const [aiHealthLoading, setAiHealthLoading] = useState(false);
 
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
-  const [aiOptimising, setAiOptimising] = useState(false);
-  const [aiProgress, setAiProgress] = useState<OptimisationProgress | null>(null);
   const [overrideKey, setOverrideKey] = useState<string | null>(null);
   const [overrideLabel, setOverrideLabel] = useState<string>("");
-  const eventSourceRef = useRef<EventSource | null>(null);
 
   const fetchAiStatus = async () => {
     try {
@@ -624,83 +632,19 @@ export default function Settings() {
     fetchAiStatus();
   }, []);
 
-  const handleRunAiOptimise = () => {
-    if (aiOptimising) return;
-    setAiOptimising(true);
-    setAiProgress({ type: "start", message: "Initialising optimisation..." });
-
-    const base = import.meta.env.BASE_URL || "/";
-    const es = new EventSource(`${base}api/settings/ai-optimise-stream`);
-    eventSourceRef.current = es;
-
-    es.onmessage = (event) => {
-      try {
-        const data: OptimisationProgress = JSON.parse(event.data);
-        setAiProgress(data);
-        if (data.type === "complete") {
-          es.close();
-          setAiOptimising(false);
-          fetchAiStatus();
-          queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() });
-          toast({ title: "AI Optimisation Complete", description: data.message });
-        }
-      } catch {
-        // ignore parse errors
-      }
-    };
-
-    es.onerror = () => {
-      es.close();
-      setAiOptimising(false);
-      setAiProgress(prev => prev?.type === "complete" ? prev : { type: "error", message: "Optimisation failed or connection lost." });
-    };
-  };
-
-  const handleRunAiOptimisePost = async () => {
-    if (aiOptimising) return;
-    setAiOptimising(true);
-    setAiProgress({ type: "start", message: "Initialising optimisation..." });
-
+  const handleRevertToAi = async (key: string) => {
     try {
       const base = import.meta.env.BASE_URL || "/";
-      const response = await fetch(`${base}api/settings/ai-optimise`, {
+      await fetch(`${base}api/settings/ai-revert`, {
         method: "POST",
-        headers: { "Accept": "text/event-stream", "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
       });
-
-      if (!response.body) throw new Error("No response body");
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data: OptimisationProgress = JSON.parse(line.slice(6));
-              setAiProgress(data);
-              if (data.type === "complete") {
-                setAiOptimising(false);
-                fetchAiStatus();
-                queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() });
-                toast({ title: "AI Optimisation Complete", description: data.message });
-              }
-            } catch {
-              // ignore
-            }
-          }
-        }
-      }
-    } catch (err) {
-      setAiOptimising(false);
-      setAiProgress({ type: "error", message: err instanceof Error ? err.message : "Optimisation failed" });
-      toast({ title: "Optimisation failed", variant: "destructive" });
+      await fetchAiStatus();
+      queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() });
+      toast({ title: "Reverted to AI suggestion", description: `${key.replace(/_/g, " ")} restored.` });
+    } catch {
+      toast({ title: "Revert failed", variant: "destructive" });
     }
   };
 
@@ -820,7 +764,7 @@ export default function Settings() {
         {overrideKey && (
           <OverrideConfirmDialog
             settingLabel={overrideLabel}
-            totalBacktests={aiProgress?.total ?? 36}
+            totalBacktests={52}
             monthsOfData={6}
             onConfirm={confirmOverride}
             onCancel={() => setOverrideKey(null)}
@@ -881,106 +825,45 @@ export default function Settings() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Bot className="w-4 h-4 text-emerald-500" />
-              AI Parameter Optimisation
+              AI Parameter Status
               {aiStatus?.locked && (
                 <span className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/30">
                   <Lock className="w-3 h-3" />
-                  AI LOCKED
+                  AI ACTIVE
                 </span>
               )}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {aiStatus?.locked && aiStatus.optimisedAt && (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-sm text-emerald-600">
-                  <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-                  <span>AI optimised on {new Date(aiStatus.optimisedAt).toLocaleString()} — {Object.keys(aiStatus.aiValues).length} parameters locked</span>
-                </div>
-              )}
-
-              {aiProgress && (
-                <div className="p-4 rounded-lg border border-border/50 bg-muted/20 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-foreground">
-                      {aiProgress.type === "complete" ? "Optimisation Complete" :
-                       aiProgress.type === "error" ? "Optimisation Failed" :
-                       "Running Optimisation..."}
-                    </p>
-                    {aiProgress.estimatedSecondsRemaining != null && aiProgress.type === "progress" && (
-                      <span className="text-xs text-muted-foreground">
-                        ~{aiProgress.estimatedSecondsRemaining}s remaining
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">{aiProgress.message}</p>
-                  {aiProgress.completed != null && aiProgress.total != null && (
-                    <div className="space-y-1">
-                      <div className="w-full bg-border/40 rounded-full h-1.5">
-                        <div
-                          className="bg-emerald-500 h-1.5 rounded-full transition-all duration-300"
-                          style={{ width: `${(aiProgress.completed / aiProgress.total) * 100}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-muted-foreground text-right">{aiProgress.completed} / {aiProgress.total}</p>
-                    </div>
-                  )}
-                  {aiProgress.type === "complete" && aiProgress.settings && (
-                    <div className="mt-3 grid grid-cols-2 gap-2 pt-3 border-t border-border/30">
-                      {Object.entries(aiProgress.settings).map(([k, v]) => (
-                        <div key={k} className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">{k.replace(/_/g, " ")}</span>
-                          <span className="font-mono text-emerald-500 font-bold">{v}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleRunAiOptimisePost}
-                  disabled={aiOptimising}
-                  className={cn(
-                    "flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all",
-                    aiOptimising
-                      ? "bg-muted text-muted-foreground cursor-not-allowed"
-                      : "bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-500/20"
-                  )}
-                >
-                  {aiOptimising ? (
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current" />
-                  ) : (
-                    <Bot className="w-4 h-4" />
-                  )}
-                  {aiOptimising ? "Running..." : "Run AI Optimisation"}
-                </button>
-                {aiStatus?.locked && (
-                  <button
-                    onClick={async () => {
-                      const base = import.meta.env.BASE_URL || "/";
-                      for (const key of AI_LOCKABLE_KEYS_UI) {
-                        await fetch(`${base}api/settings/ai-override`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ key }),
-                        });
-                      }
-                      await fetchAiStatus();
-                      toast({ title: "AI lock cleared", description: "All fields are now editable." });
-                    }}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm border border-border text-muted-foreground hover:text-foreground hover:border-primary/50 transition-all"
-                  >
-                    <Unlock className="w-4 h-4" />
-                    Clear All AI Locks
-                  </button>
-                )}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="p-3 rounded-lg bg-muted/30 border border-border/40">
+                <p className="text-xs text-muted-foreground mb-1">Last Optimised</p>
+                <p className="text-sm font-semibold text-foreground">
+                  {aiStatus?.optimisedAt
+                    ? new Date(aiStatus.optimisedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                    : "—"}
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Runs a backtest across all enabled symbol × strategy combinations using 6 months of stored candle data. AI-derived parameters will be applied and locked.
-              </p>
+              <div className="p-3 rounded-lg bg-muted/30 border border-border/40">
+                <p className="text-xs text-muted-foreground mb-1">Next Scheduled</p>
+                <p className="text-sm font-semibold text-foreground">
+                  {aiStatus?.nextScheduled
+                    ? new Date(aiStatus.nextScheduled).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                    : "1st of next month"}
+                </p>
+              </div>
+              <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+                <p className="text-xs text-muted-foreground mb-1">AI Locked</p>
+                <p className="text-sm font-semibold text-emerald-500">{aiStatus ? Object.keys(aiStatus.aiValues).length : 0} params</p>
+              </div>
+              <div className="p-3 rounded-lg bg-warning/5 border border-warning/20">
+                <p className="text-xs text-muted-foreground mb-1">Overridden</p>
+                <p className="text-sm font-semibold text-warning">{aiStatus?.overriddenKeys?.length ?? 0} params</p>
+              </div>
             </div>
+            <p className="text-xs text-muted-foreground mt-3">
+              AI parameters are re-optimised automatically on the 1st of each month using the last 24 months of candle data across all enabled symbols and strategies.
+            </p>
           </CardContent>
         </Card>
       </motion.div>
@@ -1140,7 +1023,9 @@ export default function Settings() {
                 step={0.5}
                 aiLocked={isAiLocked("equity_pct_per_trade")}
                 aiValue={getAiValue("equity_pct_per_trade")}
+                aiSuggestion={aiStatus?.aiSuggestions?.["equity_pct_per_trade"]}
                 onOverride={() => handleOverride("equity_pct_per_trade", "Equity % Per Trade")}
+                onRevert={aiStatus?.aiSuggestions?.["equity_pct_per_trade"] !== undefined ? () => handleRevertToAi("equity_pct_per_trade") : undefined}
               />
               <SettingField
                 label="Paper Mode — Equity %"
@@ -1153,7 +1038,9 @@ export default function Settings() {
                 step={0.5}
                 aiLocked={isAiLocked("paper_equity_pct_per_trade")}
                 aiValue={getAiValue("paper_equity_pct_per_trade")}
+                aiSuggestion={aiStatus?.aiSuggestions?.["paper_equity_pct_per_trade"]}
                 onOverride={() => handleOverride("paper_equity_pct_per_trade", "Paper Mode — Equity %")}
+                onRevert={aiStatus?.aiSuggestions?.["paper_equity_pct_per_trade"] !== undefined ? () => handleRevertToAi("paper_equity_pct_per_trade") : undefined}
               />
               <SettingField
                 label="Live Mode — Equity %"
@@ -1166,7 +1053,9 @@ export default function Settings() {
                 step={0.5}
                 aiLocked={isAiLocked("live_equity_pct_per_trade")}
                 aiValue={getAiValue("live_equity_pct_per_trade")}
+                aiSuggestion={aiStatus?.aiSuggestions?.["live_equity_pct_per_trade"]}
                 onOverride={() => handleOverride("live_equity_pct_per_trade", "Live Mode — Equity %")}
+                onRevert={aiStatus?.aiSuggestions?.["live_equity_pct_per_trade"] !== undefined ? () => handleRevertToAi("live_equity_pct_per_trade") : undefined}
               />
               <SettingField
                 label="Paper Mode — Max Trades"
@@ -1231,7 +1120,9 @@ export default function Settings() {
                 step={0.1}
                 aiLocked={isAiLocked("tp_multiplier_strong")}
                 aiValue={getAiValue("tp_multiplier_strong")}
+                aiSuggestion={aiStatus?.aiSuggestions?.["tp_multiplier_strong"]}
                 onOverride={() => handleOverride("tp_multiplier_strong", "TP Multiplier — Strong Signal")}
+                onRevert={aiStatus?.aiSuggestions?.["tp_multiplier_strong"] !== undefined ? () => handleRevertToAi("tp_multiplier_strong") : undefined}
               />
               <SettingField
                 label="TP Multiplier — Medium Signal"
@@ -1244,7 +1135,9 @@ export default function Settings() {
                 step={0.1}
                 aiLocked={isAiLocked("tp_multiplier_medium")}
                 aiValue={getAiValue("tp_multiplier_medium")}
+                aiSuggestion={aiStatus?.aiSuggestions?.["tp_multiplier_medium"]}
                 onOverride={() => handleOverride("tp_multiplier_medium", "TP Multiplier — Medium Signal")}
+                onRevert={aiStatus?.aiSuggestions?.["tp_multiplier_medium"] !== undefined ? () => handleRevertToAi("tp_multiplier_medium") : undefined}
               />
               <SettingField
                 label="TP Multiplier — Weak Signal"
@@ -1257,7 +1150,9 @@ export default function Settings() {
                 step={0.1}
                 aiLocked={isAiLocked("tp_multiplier_weak")}
                 aiValue={getAiValue("tp_multiplier_weak")}
+                aiSuggestion={aiStatus?.aiSuggestions?.["tp_multiplier_weak"]}
                 onOverride={() => handleOverride("tp_multiplier_weak", "TP Multiplier — Weak Signal")}
+                onRevert={aiStatus?.aiSuggestions?.["tp_multiplier_weak"] !== undefined ? () => handleRevertToAi("tp_multiplier_weak") : undefined}
               />
               <SettingField
                 label="Stop Loss Ratio"
@@ -1270,7 +1165,9 @@ export default function Settings() {
                 step={0.1}
                 aiLocked={isAiLocked("sl_ratio")}
                 aiValue={getAiValue("sl_ratio")}
+                aiSuggestion={aiStatus?.aiSuggestions?.["sl_ratio"]}
                 onOverride={() => handleOverride("sl_ratio", "Stop Loss Ratio")}
+                onRevert={aiStatus?.aiSuggestions?.["sl_ratio"] !== undefined ? () => handleRevertToAi("sl_ratio") : undefined}
               />
               <SettingField
                 label="Trailing Stop Buffer"
@@ -1408,7 +1305,9 @@ export default function Settings() {
                 step={0.5}
                 aiLocked={isAiLocked("time_exit_window_hours")}
                 aiValue={getAiValue("time_exit_window_hours")}
+                aiSuggestion={aiStatus?.aiSuggestions?.["time_exit_window_hours"]}
                 onOverride={() => handleOverride("time_exit_window_hours", "Time Exit Window")}
+                onRevert={aiStatus?.aiSuggestions?.["time_exit_window_hours"] !== undefined ? () => handleRevertToAi("time_exit_window_hours") : undefined}
               />
               <SettingField
                 label="Scan Interval"

@@ -3,8 +3,9 @@ import { runAllStrategies } from "./strategies.js";
 import { routeSignals, logSignalDecisions } from "./signalRouter.js";
 import { openPosition, manageOpenPositions } from "./tradeEngine.js";
 import { verifySignal } from "./openai.js";
-import { db, platformStateTable, tradesTable, candlesTable } from "@workspace/db";
+import { db, platformStateTable, tradesTable, candlesTable, backtestRunsTable, backtestTradesTable } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
+import { runBacktestSimulation } from "../routes/backtest.js";
 
 const DEFAULT_SYMBOLS = [
   "BOOM1000", "CRASH1000", "BOOM500", "CRASH500",
@@ -197,6 +198,130 @@ async function positionManagementCycle(): Promise<void> {
   }
 }
 
+const MONTHLY_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const STRATEGIES_LIST = ["trend-pullback", "exhaustion-rebound", "volatility-breakout", "spike-hazard"] as const;
+const AI_LOCKABLE_KEYS = [
+  "equity_pct_per_trade", "paper_equity_pct_per_trade", "live_equity_pct_per_trade",
+  "tp_multiplier_strong", "tp_multiplier_medium", "tp_multiplier_weak",
+  "sl_ratio", "time_exit_window_hours",
+];
+let monthlyHandle: ReturnType<typeof setInterval> | null = null;
+
+async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise<void> {
+  const enabledSymbols = stateMap["enabled_symbols"]
+    ? stateMap["enabled_symbols"].split(",").filter(Boolean)
+    : DEFAULT_SYMBOLS;
+  const initialCapital = parseFloat(stateMap["total_capital"] || "10000");
+
+  const combinations: { strategy: string; symbol: string }[] = [];
+  for (const strategy of STRATEGIES_LIST) {
+    for (const symbol of enabledSymbols) {
+      combinations.push({ strategy, symbol });
+    }
+  }
+
+  const agg: Record<string, { tpSum: number; slSum: number; holdSum: number; equitySum: number; count: number }> = {};
+  for (const s of STRATEGIES_LIST) agg[s] = { tpSum: 0, slSum: 0, holdSum: 0, equitySum: 0, count: 0 };
+
+  let ran = 0;
+  for (const { strategy, symbol } of combinations) {
+    try {
+      const result = await runBacktestSimulation(strategy, symbol, initialCapital, "balanced");
+
+      await db.insert(backtestRunsTable).values({
+        strategyName: strategy,
+        symbol,
+        initialCapital,
+        totalReturn: result.totalReturn,
+        netProfit: result.netProfit,
+        winRate: result.winRate,
+        profitFactor: result.profitFactor,
+        maxDrawdown: result.maxDrawdown,
+        tradeCount: result.tradeCount,
+        avgHoldingHours: result.avgHoldingHours,
+        expectancy: result.expectancy,
+        sharpeRatio: result.sharpeRatio,
+        configJson: { allocationMode: "balanced", symbol, strategyName: strategy, source: "monthly-reoptimise" },
+        metricsJson: { equityCurve: result.equityCurve },
+        status: "completed",
+      });
+
+      const r = agg[strategy];
+      r.count++;
+      r.holdSum += result.avgHoldingHours;
+      const optTp = result.profitFactor > 0 ? Math.min(Math.max(1.5 + result.profitFactor * 0.4, 1.2), 4.0) : 2.0;
+      const optSl = result.profitFactor > 0 ? Math.min(Math.max(1.0 / result.profitFactor, 0.5), 2.0) : 1.0;
+      r.tpSum += optTp;
+      r.slSum += optSl;
+      r.equitySum += Math.min(Math.max(result.winRate * 4, 0.5), 5.0);
+      ran++;
+    } catch { /* skip failed */ }
+  }
+
+  let globalTpStrong = 0, globalTpMed = 0, globalTpWeak = 0, globalSl = 0, globalHold = 0, globalEquity = 0;
+  let sc = 0;
+  for (const r of Object.values(agg)) {
+    const n = Math.max(r.count, 1);
+    globalHold += r.holdSum / n;
+    globalSl += r.slSum / n;
+    globalEquity += r.equitySum / n;
+    const avgTp = r.tpSum / n;
+    globalTpStrong += Math.min(avgTp * 1.15, 4.0);
+    globalTpMed += avgTp;
+    globalTpWeak += Math.max(avgTp * 0.8, 1.0);
+    sc++;
+  }
+
+  const d = Math.max(sc, 1);
+  const nowIso = new Date().toISOString();
+  const currentMonthKey = `${new Date().getFullYear()}-${new Date().getMonth() + 1}`;
+
+  const aiSettings: Record<string, string> = {
+    ai_equity_pct_per_trade: String(parseFloat((globalEquity / d).toFixed(2))),
+    ai_paper_equity_pct_per_trade: String(Math.max(parseFloat((globalEquity / d).toFixed(2)) * 0.6, 0.5).toFixed(2)),
+    ai_live_equity_pct_per_trade: String(parseFloat((globalEquity / d).toFixed(2))),
+    ai_tp_multiplier_strong: String(parseFloat((globalTpStrong / d).toFixed(2))),
+    ai_tp_multiplier_medium: String(parseFloat((globalTpMed / d).toFixed(2))),
+    ai_tp_multiplier_weak: String(parseFloat((globalTpWeak / d).toFixed(2))),
+    ai_sl_ratio: String(parseFloat((globalSl / d).toFixed(2))),
+    ai_time_exit_window_hours: String(parseFloat((globalHold / d).toFixed(1))),
+    ai_settings_locked: "true",
+    ai_optimised_at: nowIso,
+    last_monthly_optimise_month: currentMonthKey,
+    last_monthly_optimise_at: nowIso,
+  };
+
+  for (const [key, value] of Object.entries(aiSettings)) {
+    await db.insert(platformStateTable).values({ key, value })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value, updatedAt: new Date() } });
+  }
+
+  for (const key of AI_LOCKABLE_KEYS) {
+    await db.delete(platformStateTable).where(eq(platformStateTable.key, `ai_suggestion_${key}`));
+  }
+
+  console.log(`[Scheduler] Monthly re-optimisation complete — ${ran} backtests, settings re-locked.`);
+}
+
+async function monthlyOptimisationCycle(): Promise<void> {
+  try {
+    const states = await db.select().from(platformStateTable);
+    const stateMap: Record<string, string> = {};
+    for (const s of states) stateMap[s.key] = s.value;
+
+    if (stateMap["initial_setup_complete"] !== "true") return;
+
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${now.getMonth() + 1}`;
+    if (stateMap["last_monthly_optimise_month"] === currentMonthKey) return;
+
+    console.log(`[Scheduler] New month detected (${currentMonthKey}) — starting rolling re-optimisation...`);
+    await runMonthlyOptimisation(stateMap);
+  } catch (err) {
+    console.error("[Scheduler] Monthly optimisation error:", err instanceof Error ? err.message : err);
+  }
+}
+
 export function startScheduler(): void {
   if (schedulerHandle) return;
   console.log(`[Scheduler] Starting signal scan every ${currentIntervalMs / 1000}s`);
@@ -206,6 +331,10 @@ export function startScheduler(): void {
   console.log(`[Scheduler] Starting position management every ${POSITION_MGMT_INTERVAL_MS / 1000}s`);
   positionMgmtHandle = setInterval(positionManagementCycle, POSITION_MGMT_INTERVAL_MS);
   setTimeout(positionManagementCycle, 8000);
+
+  console.log(`[Scheduler] Starting monthly re-optimisation check (hourly)`);
+  monthlyHandle = setInterval(monthlyOptimisationCycle, MONTHLY_CHECK_INTERVAL_MS);
+  setTimeout(monthlyOptimisationCycle, 15000);
 }
 
 export function stopScheduler(): void {
@@ -218,6 +347,11 @@ export function stopScheduler(): void {
     clearInterval(positionMgmtHandle);
     positionMgmtHandle = null;
     console.log("[Scheduler] Position manager stopped.");
+  }
+  if (monthlyHandle) {
+    clearInterval(monthlyHandle);
+    monthlyHandle = null;
+    console.log("[Scheduler] Monthly optimiser stopped.");
   }
   staggeredScanActive = false;
   if (staggerTimerHandle) {

@@ -342,21 +342,69 @@ router.post("/settings/ai-override", async (req, res): Promise<void> => {
   }
 
   const aiKey = `ai_${key}`;
-  await db.delete(platformStateTable).where(eq(platformStateTable.key, aiKey));
+  const suggestionKey = `ai_suggestion_${key}`;
+
+  const rows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, aiKey));
+  if (rows.length > 0) {
+    await db
+      .insert(platformStateTable)
+      .values({ key: suggestionKey, value: rows[0].value })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: rows[0].value, updatedAt: new Date() } });
+    await db.delete(platformStateTable).where(eq(platformStateTable.key, aiKey));
+  }
 
   const states = await db.select().from(platformStateTable);
-  const remaining = states.some(s => s.key.startsWith("ai_") && !s.key.startsWith("ai_settings_") && !s.key.startsWith("ai_optimised"));
+  const remaining = states.some(s => s.key.startsWith("ai_") && !s.key.startsWith("ai_settings_") && !s.key.startsWith("ai_optimised") && !s.key.startsWith("ai_suggestion_"));
   if (!remaining) {
     await db
       .insert(platformStateTable)
       .values({ key: "ai_settings_locked", value: "false" })
-      .onConflictDoUpdate({
-        target: platformStateTable.key,
-        set: { value: "false", updatedAt: new Date() },
-      });
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: "false", updatedAt: new Date() } });
   }
 
   res.json({ success: true, message: `Override applied for ${key}` });
+});
+
+router.post("/settings/ai-revert", async (req, res): Promise<void> => {
+  const { key } = req.body as { key?: string };
+  if (!key || !AI_LOCKABLE_KEYS.includes(key)) {
+    res.status(400).json({ success: false, message: "Invalid key" });
+    return;
+  }
+
+  const aiKey = `ai_${key}`;
+  const suggestionKey = `ai_suggestion_${key}`;
+
+  const suggestionRows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, suggestionKey));
+  if (suggestionRows.length === 0) {
+    res.status(404).json({ success: false, message: "No AI suggestion found for this key" });
+    return;
+  }
+
+  const suggestedValue = suggestionRows[0].value;
+
+  await db
+    .insert(platformStateTable)
+    .values({ key: aiKey, value: suggestedValue })
+    .onConflictDoUpdate({ target: platformStateTable.key, set: { value: suggestedValue, updatedAt: new Date() } });
+
+  await db
+    .insert(platformStateTable)
+    .values({ key, value: suggestedValue })
+    .onConflictDoUpdate({ target: platformStateTable.key, set: { value: suggestedValue, updatedAt: new Date() } });
+
+  await db.delete(platformStateTable).where(eq(platformStateTable.key, suggestionKey));
+
+  const states = await db.select().from(platformStateTable);
+  const anyLocked = states.some(s => s.key.startsWith("ai_") && !s.key.startsWith("ai_settings_") && !s.key.startsWith("ai_optimised") && !s.key.startsWith("ai_suggestion_"));
+  if (anyLocked) {
+    await db
+      .insert(platformStateTable)
+      .values({ key: "ai_settings_locked", value: "true" })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: "true", updatedAt: new Date() } });
+  }
+
+  res.json({ success: true, message: `Reverted ${key} to AI suggestion (${suggestedValue})`, value: suggestedValue });
 });
 
 router.get("/settings/ai-status", async (_req, res): Promise<void> => {
@@ -368,181 +416,31 @@ router.get("/settings/ai-status", async (_req, res): Promise<void> => {
   const optimisedAt = stateMap["ai_optimised_at"] || null;
 
   const aiValues: Record<string, string> = {};
+  const aiSuggestions: Record<string, string> = {};
   for (const key of AI_LOCKABLE_KEYS) {
     const aiKey = `ai_${key}`;
-    if (stateMap[aiKey] !== undefined) {
-      aiValues[key] = stateMap[aiKey];
-    }
+    const suggestionKey = `ai_suggestion_${key}`;
+    if (stateMap[aiKey] !== undefined) aiValues[key] = stateMap[aiKey];
+    if (stateMap[suggestionKey] !== undefined) aiSuggestions[key] = stateMap[suggestionKey];
   }
+
+  const lastMonthlyOptimise = stateMap["last_monthly_optimise_month"] || null;
+  const nextScheduled = (() => {
+    const now = new Date();
+    const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    return next.toISOString();
+  })();
 
   res.json({
     locked,
     optimisedAt,
     aiValues,
+    aiSuggestions,
     lockedKeys: locked ? Object.keys(aiValues) : [],
+    overriddenKeys: Object.keys(aiSuggestions),
+    lastMonthlyOptimise,
+    nextScheduled,
   });
-});
-
-router.post("/settings/ai-optimise", async (req, res): Promise<void> => {
-  const states = await db.select().from(platformStateTable);
-  const stateMap: Record<string, string> = {};
-  for (const s of states) stateMap[s.key] = s.value;
-
-  const enabledSymbolsRaw = stateMap["enabled_symbols"] || DEFAULT_SYMBOLS.join(",");
-  const symbols = enabledSymbolsRaw.split(",").filter(Boolean);
-  const initialCapital = parseFloat(stateMap["total_capital"] || "10000");
-
-  const combinations: { strategy: string; symbol: string }[] = [];
-  for (const strategy of STRATEGIES) {
-    for (const symbol of symbols) {
-      combinations.push({ strategy, symbol });
-    }
-  }
-  const total = combinations.length;
-
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-
-  const send = (data: object) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  send({ type: "start", total, message: `Starting optimisation: ${total} backtests across ${symbols.length} symbols × ${STRATEGIES.length} strategies` });
-
-  const strategyResults: Record<string, {
-    sharpeSum: number; sharpeCount: number;
-    tpSum: number; slSum: number; holdSum: number; equitySum: number;
-    drawdownSum: number; winRateSum: number;
-  }> = {};
-
-  for (const strat of STRATEGIES) {
-    strategyResults[strat] = { sharpeSum: 0, sharpeCount: 0, tpSum: 0, slSum: 0, holdSum: 0, equitySum: 0, drawdownSum: 0, winRateSum: 0 };
-  }
-
-  let completed = 0;
-  const startTime = Date.now();
-
-  for (const { strategy, symbol } of combinations) {
-    try {
-      const metrics = await runBacktestForOptimisation(strategy, symbol, initialCapital);
-
-      const r = strategyResults[strategy];
-      if (metrics.sharpeRatio > 0 && metrics.tradeCount > 0) {
-        r.sharpeSum += metrics.sharpeRatio;
-        r.sharpeCount += 1;
-      }
-      r.holdSum += metrics.avgHoldingHours;
-      r.drawdownSum += Math.abs(metrics.maxDrawdown);
-      r.winRateSum += metrics.winRate;
-
-      if (metrics.profitFactor > 0) {
-        const optTp = 1.5 + metrics.profitFactor * 0.4;
-        r.tpSum += Math.min(Math.max(optTp, 1.2), 4.0);
-        r.slSum += Math.min(Math.max(1.0 / metrics.profitFactor, 0.5), 2.0);
-      } else {
-        r.tpSum += 2.0;
-        r.slSum += 1.0;
-      }
-      r.equitySum += Math.min(Math.max(metrics.winRate * 4, 0.5), 5.0);
-    } catch {
-      // skip failed backtest
-    }
-
-    completed++;
-    const elapsed = (Date.now() - startTime) / 1000;
-    const rate = completed / elapsed;
-    const remaining = rate > 0 ? Math.ceil((total - completed) / rate) : 0;
-
-    send({
-      type: "progress",
-      completed,
-      total,
-      message: `Running backtest ${completed} of ${total} — ${strategy.replace(/-/g, " ")} on ${symbol}`,
-      estimatedSecondsRemaining: remaining,
-    });
-  }
-
-  const allResults: { strategy: string; symbol: string; metrics: { avgHoldingHours: number; sharpeRatio: number; profitFactor: number; winRate: number; maxDrawdown: number; tradeCount: number } }[] = [];
-
-  let globalSharpeSum = 0;
-  let globalSharpeCount = 0;
-  let globalTpStrongSum = 0;
-  let globalTpMedSum = 0;
-  let globalTpWeakSum = 0;
-  let globalSlSum = 0;
-  let globalHoldSum = 0;
-  let globalEquitySum = 0;
-  let stratCount = 0;
-
-  for (const [, r] of Object.entries(strategyResults)) {
-    const n = Math.max(r.sharpeCount, 1);
-    const symCount = symbols.length;
-    globalSharpeSum += r.sharpeSum;
-    globalSharpeCount += r.sharpeCount;
-    globalHoldSum += r.holdSum / symCount;
-    globalSlSum += r.slSum / symCount;
-    globalEquitySum += r.equitySum / symCount;
-
-    const avgTp = r.tpSum / symCount;
-    globalTpStrongSum += Math.min(avgTp * 1.15, 4.0);
-    globalTpMedSum += avgTp;
-    globalTpWeakSum += Math.max(avgTp * 0.8, 1.0);
-    stratCount++;
-  }
-
-  const sc = Math.max(stratCount, 1);
-  const optEquityPct = parseFloat((globalEquitySum / sc).toFixed(2));
-  const optTpStrong = parseFloat((globalTpStrongSum / sc).toFixed(2));
-  const optTpMed = parseFloat((globalTpMedSum / sc).toFixed(2));
-  const optTpWeak = parseFloat((globalTpWeakSum / sc).toFixed(2));
-  const optSlRatio = parseFloat((globalSlSum / sc).toFixed(2));
-  const optHoldHours = parseFloat((globalHoldSum / sc).toFixed(1));
-
-  const aiSettings: Record<string, string> = {
-    ai_equity_pct_per_trade: String(optEquityPct),
-    ai_paper_equity_pct_per_trade: String(Math.max(optEquityPct * 0.6, 0.5).toFixed(2)),
-    ai_live_equity_pct_per_trade: String(optEquityPct),
-    ai_tp_multiplier_strong: String(optTpStrong),
-    ai_tp_multiplier_medium: String(optTpMed),
-    ai_tp_multiplier_weak: String(optTpWeak),
-    ai_sl_ratio: String(optSlRatio),
-    ai_time_exit_window_hours: String(optHoldHours),
-    ai_settings_locked: "true",
-    ai_optimised_at: new Date().toISOString(),
-  };
-
-  for (const [key, value] of Object.entries(aiSettings)) {
-    await db
-      .insert(platformStateTable)
-      .values({ key, value })
-      .onConflictDoUpdate({
-        target: platformStateTable.key,
-        set: { value, updatedAt: new Date() },
-      });
-  }
-
-  const paramCount = Object.keys(aiSettings).filter(k => !k.startsWith("ai_settings_") && !k.startsWith("ai_optimised")).length;
-
-  send({
-    type: "complete",
-    message: `AI set ${paramCount} parameters based on ${total} backtests (6 months of data)`,
-    total,
-    paramCount,
-    settings: {
-      equity_pct_per_trade: optEquityPct,
-      paper_equity_pct_per_trade: parseFloat((optEquityPct * 0.6).toFixed(2)),
-      live_equity_pct_per_trade: optEquityPct,
-      tp_multiplier_strong: optTpStrong,
-      tp_multiplier_medium: optTpMed,
-      tp_multiplier_weak: optTpWeak,
-      sl_ratio: optSlRatio,
-      time_exit_window_hours: optHoldHours,
-    },
-  });
-
-  res.end();
 });
 
 export default router;

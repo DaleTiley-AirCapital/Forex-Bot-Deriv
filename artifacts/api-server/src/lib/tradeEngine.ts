@@ -211,8 +211,8 @@ export async function openPosition(decision: AllocationDecision, atrPct: number)
     ? parseInt(stateMap["live_max_open_trades"] || String(MAX_OPEN_TRADES))
     : parseInt(stateMap["paper_max_open_trades"] || "4");
   const modeEquityPct = mode === "live"
-    ? parseFloat(stateMap["live_equity_pct_per_trade"] || "2")
-    : parseFloat(stateMap["paper_equity_pct_per_trade"] || "1");
+    ? parseFloat(stateMap["live_equity_pct_per_trade"] || "22")
+    : parseFloat(stateMap["paper_equity_pct_per_trade"] || "13");
 
   const openTrades = await db.select().from(tradesTable).where(eq(tradesTable.status, "open"));
   const totalDeployed = openTrades.reduce((sum, t) => sum + t.size, 0);

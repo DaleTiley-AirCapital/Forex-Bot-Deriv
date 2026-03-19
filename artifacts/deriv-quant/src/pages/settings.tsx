@@ -1015,7 +1015,7 @@ export default function Settings() {
               <SettingField
                 label="Equity % Per Trade"
                 description="Default percentage of total capital risked on each trade"
-                value={form.equity_pct_per_trade || "2"}
+                value={form.equity_pct_per_trade || "22"}
                 onChange={(v) => update("equity_pct_per_trade", v)}
                 suffix="%"
                 min={0.1}
@@ -1030,7 +1030,7 @@ export default function Settings() {
               <SettingField
                 label="Paper Mode — Equity %"
                 description="Position size when trading in paper mode (simulated)"
-                value={form.paper_equity_pct_per_trade || "1"}
+                value={form.paper_equity_pct_per_trade || "13"}
                 onChange={(v) => update("paper_equity_pct_per_trade", v)}
                 suffix="%"
                 min={0.1}
@@ -1045,7 +1045,7 @@ export default function Settings() {
               <SettingField
                 label="Live Mode — Equity %"
                 description="Position size when trading in live mode (real money)"
-                value={form.live_equity_pct_per_trade || "2"}
+                value={form.live_equity_pct_per_trade || "22"}
                 onChange={(v) => update("live_equity_pct_per_trade", v)}
                 suffix="%"
                 min={0.1}
@@ -1297,11 +1297,11 @@ export default function Settings() {
               <SettingField
                 label="Time Exit Window"
                 description="Automatically close positions that have been open longer than this"
-                value={form.time_exit_window_hours || "4"}
+                value={form.time_exit_window_hours || "72"}
                 onChange={(v) => update("time_exit_window_hours", v)}
                 suffix="hrs"
-                min={0.5}
-                max={72}
+                min={1}
+                max={120}
                 step={0.5}
                 aiLocked={isAiLocked("time_exit_window_hours")}
                 aiValue={getAiValue("time_exit_window_hours")}

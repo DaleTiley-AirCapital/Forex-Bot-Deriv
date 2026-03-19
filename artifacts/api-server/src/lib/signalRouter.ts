@@ -58,8 +58,8 @@ export async function getPortfolioContext(): Promise<PortfolioContext> {
   const isLive = currentMode === "live";
 
   const modeEquityPct = isLive
-    ? parseFloat(stateMap["live_equity_pct_per_trade"] || stateMap["equity_pct_per_trade"] || "2")
-    : parseFloat(stateMap["paper_equity_pct_per_trade"] || stateMap["equity_pct_per_trade"] || "1");
+    ? parseFloat(stateMap["live_equity_pct_per_trade"] || stateMap["equity_pct_per_trade"] || "22")
+    : parseFloat(stateMap["paper_equity_pct_per_trade"] || stateMap["equity_pct_per_trade"] || "13");
   const modeMaxTrades = isLive
     ? parseInt(stateMap["live_max_open_trades"] || stateMap["max_open_trades"] || "3")
     : parseInt(stateMap["paper_max_open_trades"] || stateMap["max_open_trades"] || "4");
@@ -94,7 +94,7 @@ export async function getPortfolioContext(): Promise<PortfolioContext> {
     tpMultiplierWeak: parseFloat(stateMap["tp_multiplier_weak"] || "1.5"),
     slRatio: parseFloat(stateMap["sl_ratio"] || "1.0"),
     trailingStopBufferPct: parseFloat(stateMap["trailing_stop_buffer_pct"] || "0.3"),
-    timeExitWindowHours: parseFloat(stateMap["time_exit_window_hours"] || "4"),
+    timeExitWindowHours: parseFloat(stateMap["time_exit_window_hours"] || "72"),
   };
 }
 

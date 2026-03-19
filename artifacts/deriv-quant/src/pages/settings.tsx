@@ -765,7 +765,7 @@ export default function Settings() {
           <OverrideConfirmDialog
             settingLabel={overrideLabel}
             totalBacktests={52}
-            monthsOfData={6}
+            monthsOfData={24}
             onConfirm={confirmOverride}
             onCancel={() => setOverrideKey(null)}
           />

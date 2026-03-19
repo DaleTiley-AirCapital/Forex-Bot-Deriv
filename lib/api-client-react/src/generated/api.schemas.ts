@@ -401,6 +401,9 @@ export interface RiskStatus {
   dailyLossPct: number;
   weeklyLossPct: number;
   drawdownPct: number;
+  maxDailyLossPct: number;
+  maxWeeklyLossPct: number;
+  maxDrawdownPct: number;
   activeCooldowns: string[];
   disabledStrategies: string[];
   openRiskPct: number;

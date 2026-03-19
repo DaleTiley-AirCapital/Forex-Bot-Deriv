@@ -57,19 +57,19 @@ export default function Risk() {
               <RiskGauge
                 label="Daily Loss"
                 value={risk?.dailyLossPct ?? 0}
-                max={5}
+                max={risk?.maxDailyLossPct ?? 5}
                 breached={risk?.dailyLossBreached ?? false}
               />
               <RiskGauge
                 label="Weekly Loss"
                 value={risk?.weeklyLossPct ?? 0}
-                max={10}
+                max={risk?.maxWeeklyLossPct ?? 12}
                 breached={risk?.weeklyLossBreached ?? false}
               />
               <RiskGauge
                 label="Max Drawdown"
                 value={risk?.drawdownPct ?? 0}
-                max={20}
+                max={risk?.maxDrawdownPct ?? 20}
                 breached={risk?.maxDrawdownBreached ?? false}
               />
             </CardContent>

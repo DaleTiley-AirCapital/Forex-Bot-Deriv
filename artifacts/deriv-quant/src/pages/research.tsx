@@ -72,6 +72,13 @@ export default function Research() {
       onSuccess: (data) => {
         queryClient.invalidateQueries({ queryKey: getGetBacktestResultsQueryKey() });
         if (data) {
+          const now = new Date();
+          const fromDate = data.fromTs
+            ? new Date(data.fromTs).toLocaleDateString()
+            : new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toLocaleDateString();
+          const toDate = data.toTs
+            ? new Date(data.toTs).toLocaleDateString()
+            : now.toLocaleDateString();
           setLastRunSummary({
             strategyName:   data.strategyName   ?? form.strategyName,
             symbol:         data.symbol          ?? form.symbol,
@@ -82,6 +89,8 @@ export default function Research() {
             maxDrawdown:    data.maxDrawdown      ?? 0,
             tradeCount:     data.tradeCount       ?? 0,
             sharpeRatio:    data.sharpeRatio      ?? 0,
+            periodFrom:     fromDate,
+            periodTo:       toDate,
           });
         }
       }
@@ -123,6 +132,7 @@ export default function Research() {
     strategyName: string; symbol: string; initialCapital: number;
     allocationMode: string; netProfit: number; winRate: number;
     maxDrawdown: number; tradeCount: number; sharpeRatio: number;
+    periodFrom: string; periodTo: string;
   } | null>(null);
 
   const handleAnalyse = (id: number) => {
@@ -178,7 +188,7 @@ export default function Research() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 pb-4 border-b border-border/40">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-4 pb-4 border-b border-border/40">
                   <div>
                     <p className="section-label mb-1">Strategy</p>
                     <p className="text-sm font-semibold text-foreground">{STRATEGY_INFO[lastRunSummary.strategyName]?.label ?? lastRunSummary.strategyName}</p>
@@ -194,6 +204,14 @@ export default function Research() {
                   <div>
                     <p className="section-label mb-1">Risk Mode</p>
                     <p className="text-sm font-semibold text-foreground capitalize">{lastRunSummary.allocationMode}</p>
+                  </div>
+                  <div>
+                    <p className="section-label mb-1">Period From</p>
+                    <p className="text-sm font-semibold font-mono text-foreground">{lastRunSummary.periodFrom}</p>
+                  </div>
+                  <div>
+                    <p className="section-label mb-1">Period To</p>
+                    <p className="text-sm font-semibold font-mono text-foreground">{lastRunSummary.periodTo}</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 pb-4 border-b border-border/40">

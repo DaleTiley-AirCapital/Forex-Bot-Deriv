@@ -527,7 +527,7 @@ function InitialSetupWizard({ onComplete }: { onComplete: () => void }) {
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 {STEP_LABELS.map(({ key, icon: Icon, label }, i) => {
-                  const isDone = currentStep === "done" || (key === "backfill" && (currentStep === "analyse" || currentStep === "done"));
+                  const isDone = currentStep === "done" || (key === "backfill" && currentStep === "analyse");
                   const isActive = currentStep === key;
                   return (
                     <React.Fragment key={key}>

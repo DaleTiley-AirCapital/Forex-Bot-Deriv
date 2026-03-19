@@ -1,13 +1,9 @@
 import React from "react";
-import { 
-  useGetRiskStatus, 
-  useTriggerKillSwitch, 
-  getGetRiskStatusQueryKey,
-} from "@workspace/api-client-react";
-import { Card, CardContent, CardHeader, CardTitle, Badge, Button } from "@/components/ui-elements";
+import { useGetRiskStatus } from "@workspace/api-client-react";
+import { Card, CardContent, CardHeader, CardTitle, Badge } from "@/components/ui-elements";
 import { formatPercent, cn } from "@/lib/utils";
-import { useQueryClient } from "@tanstack/react-query";
-import { ShieldAlert, AlertOctagon, Lock, Info } from "lucide-react";
+import { ShieldAlert, Lock, Info, ExternalLink } from "lucide-react";
+import { Link } from "wouter";
 import { motion } from "framer-motion";
 
 function RiskGauge({ value, max, breached, label }: { value: number; max: number; breached: boolean; label: string }) {
@@ -32,14 +28,7 @@ function RiskGauge({ value, max, breached, label }: { value: number; max: number
 }
 
 export default function Risk() {
-  const queryClient = useQueryClient();
   const { data: risk } = useGetRiskStatus({ query: { refetchInterval: 3000 } });
-
-  const { mutate: triggerKill, isPending: killing } = useTriggerKillSwitch({
-    mutation: {
-      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetRiskStatusQueryKey() })
-    }
-  });
 
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
@@ -138,30 +127,28 @@ export default function Risk() {
             <CardContent className="p-8 flex flex-col items-center text-center">
               <div className={cn(
                 "w-16 h-16 rounded-2xl flex items-center justify-center mb-5",
-                risk?.killSwitchActive ? "bg-destructive/20 text-destructive animate-pulse" : "bg-muted text-muted-foreground"
+                risk?.killSwitchActive ? "bg-destructive/20 text-destructive animate-pulse" : "bg-muted/40 text-muted-foreground"
               )}>
                 <ShieldAlert className="w-8 h-8" />
               </div>
               <h2 className="text-lg font-semibold mb-2 text-foreground">Global Kill Switch</h2>
-              <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
-                Instantly flattens all open positions and blocks all new entries. Use in an emergency.
+              <div className={cn(
+                "w-full rounded-xl px-5 py-4 mb-5 flex items-center justify-between",
+                risk?.killSwitchActive ? "bg-destructive/10 border border-destructive/25" : "bg-muted/20 border border-border"
+              )}>
+                <span className="text-sm font-medium text-foreground">Current Status</span>
+                <Badge variant={risk?.killSwitchActive ? "destructive" : "outline"}>
+                  {risk?.killSwitchActive ? "ENGAGED — System Halted" : "Off — Trading Active"}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed mb-5">
+                The kill switch instantly flattens all open positions and blocks new entries.
+                This is a read-only view — control it from Settings.
               </p>
-              <Button 
-                variant="destructive"
-                size="lg"
-                className="w-full font-bold"
-                onClick={() => triggerKill()}
-                isLoading={killing}
-                disabled={risk?.killSwitchActive}
-              >
-                <AlertOctagon className="w-5 h-5" />
-                {risk?.killSwitchActive ? "System Halted" : "Engage Kill Switch"}
-              </Button>
-              {risk?.killSwitchActive && (
-                <p className="text-xs text-muted-foreground mt-3">
-                  To resume trading, disable the kill switch from <span className="text-primary">Settings → Risk Controls</span>.
-                </p>
-              )}
+              <Link href="/settings" className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary/10 border border-primary/25 text-primary text-sm font-medium hover:bg-primary/15 transition-colors w-full justify-center">
+                <ExternalLink className="w-4 h-4" />
+                Go to Settings → Risk Controls
+              </Link>
             </CardContent>
           </Card>
         </motion.div>

@@ -1,25 +1,37 @@
 import React from "react";
-import { useGetOverview, useGetPortfolioStatus, useGetAccountInfo, useGetLivePositions, useGetSettings } from "@workspace/api-client-react";
+import {
+  useGetOverview,
+  useGetPortfolioStatus,
+  useGetAccountInfo,
+  useGetLivePositions,
+  useGetSettings,
+  useGetLatestSignals,
+} from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, KpiCard, Badge, InfoTooltip } from "@/components/ui-elements";
 import { cn, formatCurrency, formatNumber, formatPercent } from "@/lib/utils";
-import { AlertTriangle, TrendingUp, Target, Activity, Wallet, ArrowUpDown, Layers, ShieldAlert, Settings } from "lucide-react";
+import {
+  AlertTriangle, TrendingUp, Target, Activity,
+  Wallet, ArrowUpDown, Layers, ShieldAlert,
+  Settings, Zap,
+} from "lucide-react";
 import { motion } from "framer-motion";
 
 const STRATEGY_DESCRIPTIONS = [
-  { name: "Trend Pullback", desc: "Enters on dips within a confirmed strong trend" },
-  { name: "Exhaustion Rebound", desc: "Catches reversals after overstretched moves" },
+  { name: "Trend Pullback",      desc: "Enters on dips within a confirmed strong trend" },
+  { name: "Exhaustion Rebound",  desc: "Catches reversals after overstretched moves" },
   { name: "Volatility Breakout", desc: "Trades Bollinger Band compressions expanding" },
-  { name: "Spike Hazard", desc: "Elevated boom/crash spike probability detection" },
+  { name: "Spike Hazard",        desc: "Elevated boom/crash spike probability detection" },
 ];
 
 const DEFAULT_CAPITAL = 10000;
 
 export default function Overview() {
-  const { data: overview, isLoading: overviewLoading } = useGetOverview({ query: { refetchInterval: 5000 } });
-  const { data: portfolio, isLoading: portfolioLoading } = useGetPortfolioStatus({ query: { refetchInterval: 5000 } });
-  const { data: accountInfo } = useGetAccountInfo({ query: { refetchInterval: 30000 } });
-  const { data: positions } = useGetLivePositions({ query: { refetchInterval: 10000 } });
-  const { data: settings } = useGetSettings({ query: { staleTime: 60000 } });
+  const { data: overview,   isLoading: overviewLoading   } = useGetOverview(        { query: { refetchInterval: 5000 } });
+  const { data: portfolio,  isLoading: portfolioLoading  } = useGetPortfolioStatus( { query: { refetchInterval: 5000 } });
+  const { data: accountInfo }                              = useGetAccountInfo(      { query: { refetchInterval: 30000 } });
+  const { data: positions }                                = useGetLivePositions(    { query: { refetchInterval: 10000 } });
+  const { data: settings }                                 = useGetSettings(         { query: { staleTime: 60000 } });
+  const { data: signals }                                  = useGetLatestSignals(    { query: { refetchInterval: 15000 } });
 
   if (overviewLoading || portfolioLoading) {
     return (
@@ -32,28 +44,80 @@ export default function Overview() {
     );
   }
 
-  const pnlTrend = (overview?.realisedPnl || 0) >= 0 ? "up" : "down";
-  const isLive = overview?.mode === "live";
-  const isPaper = overview?.mode === "paper";
+  const pnlTrend        = (overview?.realisedPnl || 0) >= 0 ? "up" : "down";
+  const isLive          = overview?.mode === "live";
+  const isPaper         = overview?.mode === "paper";
   const isDefaultCapital = !settings?.total_capital || Number(settings.total_capital) === DEFAULT_CAPITAL;
 
+  const accountConnected = accountInfo?.connected && accountInfo.balance != null;
+
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
+    <div className="space-y-5 max-w-7xl mx-auto">
+
+      {/* ── Page header ─────────────────────────────────────────── */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
           <h1 className="page-title">Dashboard</h1>
           <p className="page-subtitle">
-            Last sync: {overview?.lastDataSyncAt ? new Date(overview.lastDataSyncAt).toLocaleTimeString() : 'Never'}
+            Last sync: {overview?.lastDataSyncAt
+              ? new Date(overview.lastDataSyncAt).toLocaleTimeString()
+              : "Never"}
           </p>
         </div>
-        {overview?.killSwitchActive && (
-          <div className="flex items-center gap-2 bg-destructive/10 text-destructive px-4 py-2 rounded-lg border border-destructive/20 animate-pulse">
-            <AlertTriangle className="w-4 h-4" />
-            <span className="font-semibold text-sm">Kill Switch Active</span>
-          </div>
-        )}
+
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {overview?.killSwitchActive && (
+            <div className="flex items-center gap-2 bg-destructive/10 text-destructive px-3 py-2 rounded-lg border border-destructive/20 animate-pulse">
+              <AlertTriangle className="w-4 h-4" />
+              <span className="font-semibold text-sm">Kill Switch Active</span>
+            </div>
+          )}
+
+          {/* Account chip — desktop only, inline in header */}
+          {accountConnected && (
+            <div className={cn(
+              "hidden lg:flex items-center gap-3 px-4 py-2.5 rounded-xl border",
+              isLive ? "border-destructive/30 bg-destructive/5"
+                     : isPaper ? "border-warning/30 bg-warning/5"
+                     : "border-border bg-card",
+            )}>
+              <div className={cn(
+                "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                isLive ? "bg-destructive/15 text-destructive"
+                       : isPaper ? "bg-warning/15 text-warning"
+                       : "bg-primary/15 text-primary",
+              )}>
+                <Wallet className="w-4 h-4" />
+              </div>
+              <div className="pr-3 border-r border-border/60">
+                <p className="text-[9px] text-muted-foreground uppercase tracking-widest">
+                  {accountInfo.loginid || "Account"} · {accountInfo.account_type || "Virtual"}
+                </p>
+                <p className="text-sm font-bold font-mono tabular-nums text-foreground mt-0.5">
+                  {accountInfo.currency} {accountInfo.balance!.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div className="flex gap-4">
+                {[
+                  { label: "Equity",       value: accountInfo.equity },
+                  { label: "Free Margin",  value: accountInfo.free_margin },
+                ].map(({ label, value }) => (
+                  <div key={label} className="text-right">
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-widest">{label}</p>
+                    <p className="text-xs font-semibold font-mono tabular-nums text-foreground mt-0.5">
+                      {typeof value === "number"
+                        ? value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : "—"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
+      {/* Capital prompt */}
       {isDefaultCapital && (
         <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
           <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-primary/8 border border-primary/25 text-sm">
@@ -62,7 +126,9 @@ export default function Overview() {
               <span className="font-semibold">Set your capital:</span>{" "}
               <span className="text-muted-foreground">
                 "Available Capital" is using the default ($10,000). Go to{" "}
-                <a href="/settings" className="text-primary underline underline-offset-2 hover:text-primary/80">Settings → Position Sizing → Total Capital</a>{" "}
+                <a href="/settings" className="text-primary underline underline-offset-2 hover:text-primary/80">
+                  Settings → Position Sizing → Total Capital
+                </a>{" "}
                 and enter the amount you plan to deposit (e.g. $600).
               </span>
             </span>
@@ -70,27 +136,33 @@ export default function Overview() {
         </motion.div>
       )}
 
-      {accountInfo?.connected && accountInfo.balance != null && (
-        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+      {/* Account card — shown on tablet/mobile only (lg hides the chip version above) */}
+      {accountConnected && (
+        <motion.div
+          className="lg:hidden"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
           <Card className={cn(
             "border",
-            isLive ? "border-destructive/30" : isPaper ? "border-warning/30" : "border-primary/20"
+            isLive ? "border-destructive/30" : isPaper ? "border-warning/30" : "border-primary/20",
           )}>
             <CardContent className="p-5">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className={cn(
                     "w-10 h-10 rounded-xl flex items-center justify-center",
-                    isLive ? "bg-destructive/12 text-destructive" : isPaper ? "bg-warning/12 text-warning" : "bg-primary/12 text-primary"
+                    isLive ? "bg-destructive/12 text-destructive" : isPaper ? "bg-warning/12 text-warning" : "bg-primary/12 text-primary",
                   )}>
                     <Wallet className="w-5 h-5" />
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground font-medium">
-                      Deriv Account {accountInfo.loginid ? `· ${accountInfo.loginid}` : ""}
+                      Deriv Account{accountInfo.loginid ? ` · ${accountInfo.loginid}` : ""}
                     </p>
                     <p className="text-2xl font-bold font-mono tabular-nums text-foreground mt-0.5">
-                      {accountInfo.currency} {accountInfo.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {accountInfo.currency}{" "}
+                      {accountInfo.balance!.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
                   </div>
                 </div>
@@ -106,15 +178,19 @@ export default function Overview() {
               {(accountInfo.equity != null || accountInfo.margin != null) && (
                 <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-border/40">
                   {[
-                    { label: "Equity", value: accountInfo.equity },
-                    { label: "Margin", value: accountInfo.margin },
+                    { label: "Equity",      value: accountInfo.equity },
+                    { label: "Margin",      value: accountInfo.margin },
                     { label: "Free Margin", value: accountInfo.free_margin },
                     { label: "Margin Level", value: accountInfo.margin_level_pct != null ? `${accountInfo.margin_level_pct.toFixed(1)}%` : null, raw: true },
                   ].map(({ label, value, raw }) => (
                     <div key={label}>
                       <p className="section-label mb-1">{label}</p>
                       <p className="text-sm font-semibold font-mono tabular-nums">
-                        {raw ? (value ?? "—") : (typeof value === "number" ? value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—")}
+                        {raw
+                          ? (value ?? "—")
+                          : (typeof value === "number"
+                            ? value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                            : "—")}
                       </p>
                     </div>
                   ))}
@@ -125,7 +201,7 @@ export default function Overview() {
         </motion.div>
       )}
 
-      {!accountInfo?.connected && (
+      {!accountConnected && (
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border border-warning/25">
             <CardContent className="p-5">
@@ -145,6 +221,7 @@ export default function Overview() {
         </motion.div>
       )}
 
+      {/* ── KPI Row (4-col) ──────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
           <KpiCard
@@ -162,7 +239,7 @@ export default function Overview() {
             detail={
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Allocation Mode</span>
-                <Badge variant="outline">{portfolio?.allocationMode || 'N/A'}</Badge>
+                <Badge variant="outline">{portfolio?.allocationMode || "N/A"}</Badge>
               </div>
             }
           />
@@ -234,6 +311,7 @@ export default function Overview() {
         </motion.div>
       </div>
 
+      {/* ── Live Positions (when open) ───────────────────────────── */}
       {positions && positions.length > 0 && (
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
           <Card>
@@ -248,27 +326,18 @@ export default function Overview() {
               <table>
                 <thead>
                   <tr>
-                    <th>Symbol</th>
-                    <th>Side</th>
-                    <th className="text-right">Entry</th>
-                    <th className="text-right">Current</th>
-                    <th className="text-right">SL</th>
-                    <th className="text-right">TP</th>
-                    <th className="text-right">Size</th>
-                    <th className="text-right">Float P&L</th>
-                    <th className="text-right">Hrs Left</th>
-                    <th className="text-center">Mode</th>
+                    <th>Symbol</th><th>Side</th>
+                    <th className="text-right">Entry</th><th className="text-right">Current</th>
+                    <th className="text-right">SL</th><th className="text-right">TP</th>
+                    <th className="text-right">Size</th><th className="text-right">Float P&L</th>
+                    <th className="text-right">Hrs Left</th><th className="text-center">Mode</th>
                   </tr>
                 </thead>
                 <tbody>
                   {positions.map((p) => (
                     <tr key={p.id}>
                       <td className="font-semibold text-foreground">{p.symbol}</td>
-                      <td>
-                        <Badge variant={p.side === "buy" ? "success" : "destructive"}>
-                          {p.side}
-                        </Badge>
-                      </td>
+                      <td><Badge variant={p.side === "buy" ? "success" : "destructive"}>{p.side}</Badge></td>
                       <td className="text-right mono-num">{formatNumber(p.entryPrice, 2)}</td>
                       <td className="text-right mono-num">{formatNumber(p.currentPrice, 2)}</td>
                       <td className="text-right mono-num text-destructive">{formatNumber(p.sl, 2)}</td>
@@ -276,15 +345,13 @@ export default function Overview() {
                       <td className="text-right mono-num">${formatNumber(p.size, 0)}</td>
                       <td className={cn(
                         "text-right mono-num font-medium",
-                        p.floatingPnl > 0 ? "text-success" : p.floatingPnl < 0 ? "text-destructive" : ""
+                        p.floatingPnl > 0 ? "text-success" : p.floatingPnl < 0 ? "text-destructive" : "",
                       )}>
                         {p.floatingPnl > 0 ? "+" : ""}{formatNumber(p.floatingPnl, 2)} ({formatNumber(p.floatingPnlPct, 1)}%)
                       </td>
                       <td className="text-right mono-num">{p.hoursRemaining}h</td>
                       <td className="text-center">
-                        <Badge variant={p.mode === "live" ? "destructive" : "warning"}>
-                          {p.mode}
-                        </Badge>
+                        <Badge variant={p.mode === "live" ? "destructive" : "warning"}>{p.mode}</Badge>
                       </td>
                     </tr>
                   ))}
@@ -295,7 +362,10 @@ export default function Overview() {
         </motion.div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      {/* ── Bottom 3-col row ─────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+        {/* Portfolio Status */}
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
           <Card className="h-full">
             <CardHeader>
@@ -308,9 +378,9 @@ export default function Overview() {
               <div className="space-y-0">
                 {[
                   { label: "Account Balance", value: formatCurrency(accountInfo?.balance ?? portfolio?.totalCapital), tooltip: "Your current Deriv account balance. In paper mode this reflects the virtual account." },
-                  { label: "Unrealised P&L", value: formatCurrency(portfolio?.unrealisedPnl), trend: portfolio?.unrealisedPnl, tooltip: "Floating profit or loss across all currently open positions. Not yet locked in." },
-                  { label: "Daily P&L", value: formatCurrency(portfolio?.dailyPnl), trend: portfolio?.dailyPnl, tooltip: "Net profit and loss from all trades opened and closed today (UTC day)." },
-                  { label: "Drawdown", value: formatPercent(portfolio?.drawdownPct), negative: true, tooltip: "Peak-to-trough decline from your highest balance. The risk engine triggers if this exceeds your max drawdown limit." },
+                  { label: "Unrealised P&L",  value: formatCurrency(portfolio?.unrealisedPnl), trend: portfolio?.unrealisedPnl, tooltip: "Floating profit or loss across all currently open positions. Not yet locked in." },
+                  { label: "Daily P&L",       value: formatCurrency(portfolio?.dailyPnl),      trend: portfolio?.dailyPnl, tooltip: "Net profit and loss from all trades opened and closed today (UTC day)." },
+                  { label: "Drawdown",        value: formatPercent(portfolio?.drawdownPct), negative: true, tooltip: "Peak-to-trough decline from your highest balance. The risk engine triggers if this exceeds your max drawdown limit." },
                 ].map(({ label, value, trend, negative, tooltip }) => (
                   <div key={label} className="flex justify-between items-center py-3 border-b border-border/40 last:border-0">
                     <div className="flex items-center gap-1.5">
@@ -321,7 +391,7 @@ export default function Overview() {
                       "text-sm font-medium font-mono tabular-nums",
                       trend != null && trend > 0 && "text-success",
                       trend != null && trend < 0 && "text-destructive",
-                      negative && "text-destructive"
+                      negative && "text-destructive",
                     )}>
                       {value}
                     </span>
@@ -338,6 +408,7 @@ export default function Overview() {
           </Card>
         </motion.div>
 
+        {/* Operational Status */}
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}>
           <Card className="h-full">
             <CardHeader>
@@ -357,7 +428,6 @@ export default function Overview() {
                     <div className="bg-primary h-1.5 rounded-full transition-all" style={{ width: `${Math.min(((overview?.totalTrades || 0) / 1000) * 100, 100)}%` }} />
                   </div>
                 </div>
-                
                 <div>
                   <div className="flex justify-between mb-2">
                     <span className="text-sm text-muted-foreground">Win Rate</span>
@@ -367,13 +437,12 @@ export default function Overview() {
                     <div className="bg-success h-1.5 rounded-full transition-all" style={{ width: `${overview?.winRate || 0}%` }} />
                   </div>
                 </div>
-
                 <div className="pt-4 border-t border-border/40">
                   <p className="section-label mb-3">System Checks</p>
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Data Stream</span>
-                      {overview?.mode !== 'idle'
+                      {overview?.mode !== "idle"
                         ? <Badge variant="success">Online</Badge>
                         : <Badge variant="outline">Offline</Badge>}
                     </div>
@@ -389,9 +458,83 @@ export default function Overview() {
                         ? <Badge variant="success">Connected</Badge>
                         : <Badge variant="outline">Disconnected</Badge>}
                     </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Kill Switch</span>
+                      {overview?.killSwitchActive
+                        ? <Badge variant="destructive">Active</Badge>
+                        : <Badge variant="outline">Off</Badge>}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Signal Scanner</span>
+                      {overview?.mode !== "idle"
+                        ? <Badge variant="success">Active</Badge>
+                        : <Badge variant="outline">Idle</Badge>}
+                    </div>
                   </div>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Recent Signals */}
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+          <Card className="h-full">
+            <CardHeader>
+              <CardTitle>
+                <Zap className="w-4 h-4 text-primary" />
+                Recent Signals
+              </CardTitle>
+              <span className="text-xs text-muted-foreground">
+                {signals?.length ? `${signals.length} latest` : "Live feed"}
+              </span>
+            </CardHeader>
+            <CardContent>
+              {!signals || signals.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                    <Zap className="w-5 h-5 text-primary" />
+                  </div>
+                  <p className="text-sm text-muted-foreground text-center">
+                    No signals yet. Start the data stream to begin scanning.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-0">
+                  {signals.map((sig, i) => {
+                    const isBuy = sig.direction === "buy";
+                    return (
+                      <div
+                        key={sig.id ?? i}
+                        className="flex items-center gap-3 py-3 border-b border-border/40 last:border-0"
+                      >
+                        <Badge variant={isBuy ? "success" : "destructive"} className="text-[10px] font-bold px-1.5 shrink-0">
+                          {isBuy ? "BUY" : "SELL"}
+                        </Badge>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold font-mono text-foreground leading-none">{sig.symbol}</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{sig.strategyName}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className={cn(
+                            "text-sm font-bold font-mono tabular-nums",
+                            sig.confidence >= 80 ? "text-success"
+                              : sig.confidence >= 65 ? "text-warning"
+                              : "text-muted-foreground",
+                          )}>
+                            {formatNumber(sig.confidence, 0)}%
+                          </p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            {sig.createdAt
+                              ? new Date(sig.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                              : "—"}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
         </motion.div>

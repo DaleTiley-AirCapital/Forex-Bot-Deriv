@@ -3,7 +3,7 @@ import { useGetBacktestResults, useRunBacktest, useAnalyseBacktest, getGetBackte
 import type { BacktestAnalysis } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge, Input, Label, Select } from "@/components/ui-elements";
 import { formatCurrency, formatNumber, formatPercent, cn } from "@/lib/utils";
-import { Play, Search, Beaker, Brain, Lightbulb, X } from "lucide-react";
+import { Play, Search, Beaker, Brain, Lightbulb, X, CheckCircle2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -69,8 +69,21 @@ export default function Research() {
   
   const { mutate: runBacktest, isPending } = useRunBacktest({
     mutation: {
-      onSuccess: () => {
+      onSuccess: (data) => {
         queryClient.invalidateQueries({ queryKey: getGetBacktestResultsQueryKey() });
+        if (data) {
+          setLastRunSummary({
+            strategyName:   data.strategyName   ?? form.strategyName,
+            symbol:         data.symbol          ?? form.symbol,
+            initialCapital: data.initialCapital  ?? form.initialCapital,
+            allocationMode: data.allocationMode  ?? form.allocationMode,
+            netProfit:      data.netProfit        ?? 0,
+            winRate:        data.winRate          ?? 0,
+            maxDrawdown:    data.maxDrawdown      ?? 0,
+            tradeCount:     data.tradeCount       ?? 0,
+            sharpeRatio:    data.sharpeRatio      ?? 0,
+          });
+        }
       }
     }
   });
@@ -106,6 +119,11 @@ export default function Research() {
   const [analysingId, setAnalysingId] = useState<number | null>(null);
   const [analysisResults, setAnalysisResults] = useState<Record<number, BacktestAnalysis>>({});
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [lastRunSummary, setLastRunSummary] = useState<{
+    strategyName: string; symbol: string; initialCapital: number;
+    allocationMode: string; netProfit: number; winRate: number;
+    maxDrawdown: number; tradeCount: number; sharpeRatio: number;
+  } | null>(null);
 
   const handleAnalyse = (id: number) => {
     setAnalysingId(id);
@@ -139,6 +157,77 @@ export default function Research() {
           <p className="page-subtitle">Multi-strategy backtesting engine with AI analysis</p>
         </div>
       </div>
+
+      <AnimatePresence>
+        {lastRunSummary && (
+          <motion.div
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+          >
+            <Card className="border-primary/30 bg-primary/5">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-primary" />
+                    Run Summary
+                  </span>
+                  <button onClick={() => setLastRunSummary(null)} className="text-muted-foreground hover:text-foreground">
+                    <X className="w-4 h-4" />
+                  </button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 pb-4 border-b border-border/40">
+                  <div>
+                    <p className="section-label mb-1">Strategy</p>
+                    <p className="text-sm font-semibold text-foreground">{STRATEGY_INFO[lastRunSummary.strategyName]?.label ?? lastRunSummary.strategyName}</p>
+                  </div>
+                  <div>
+                    <p className="section-label mb-1">Symbol</p>
+                    <p className="text-sm font-semibold font-mono text-foreground">{lastRunSummary.symbol}</p>
+                  </div>
+                  <div>
+                    <p className="section-label mb-1">Initial Capital</p>
+                    <p className="text-sm font-semibold font-mono text-foreground">{formatCurrency(lastRunSummary.initialCapital)}</p>
+                  </div>
+                  <div>
+                    <p className="section-label mb-1">Risk Mode</p>
+                    <p className="text-sm font-semibold text-foreground capitalize">{lastRunSummary.allocationMode}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 pb-4 border-b border-border/40">
+                  <div>
+                    <p className="section-label mb-1">Net Profit</p>
+                    <p className={cn("text-lg font-bold font-mono", lastRunSummary.netProfit >= 0 ? "text-success" : "text-destructive")}>
+                      {lastRunSummary.netProfit >= 0 ? "+" : ""}{formatCurrency(lastRunSummary.netProfit)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="section-label mb-1">Win Rate</p>
+                    <p className="text-lg font-bold font-mono text-foreground">{formatNumber(lastRunSummary.winRate * 100, 1)}%</p>
+                  </div>
+                  <div>
+                    <p className="section-label mb-1">Max Drawdown</p>
+                    <p className="text-lg font-bold font-mono text-destructive">{formatPercent(lastRunSummary.maxDrawdown)}</p>
+                  </div>
+                  <div>
+                    <p className="section-label mb-1">Trades · Sharpe</p>
+                    <p className="text-lg font-bold font-mono text-foreground">{lastRunSummary.tradeCount} · {formatNumber(lastRunSummary.sharpeRatio, 2)}</p>
+                  </div>
+                </div>
+                <div className="text-sm text-muted-foreground leading-relaxed">
+                  <span className="text-foreground font-medium">Interpretation: </span>
+                  {lastRunSummary.netProfit >= 0
+                    ? `This run was profitable over the sampled period. Win rate of ${formatNumber(lastRunSummary.winRate * 100, 1)}% with a Sharpe of ${formatNumber(lastRunSummary.sharpeRatio, 2)} indicates ${lastRunSummary.sharpeRatio >= 1 ? "acceptable" : "low"} risk-adjusted returns. Max drawdown of ${formatPercent(lastRunSummary.maxDrawdown)} ${Math.abs(lastRunSummary.maxDrawdown) > 0.15 ? "may be too high for conservative sizing — consider lowering risk allocation." : "is within acceptable limits."}`
+                    : `This run was unprofitable. A ${formatPercent(Math.abs(lastRunSummary.maxDrawdown))} drawdown with a ${formatNumber(lastRunSummary.winRate * 100, 1)}% win rate suggests this strategy or symbol combination may not suit the current market regime. Try a different symbol, lower risk allocation, or a different strategy.`
+                  }
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="lg:col-span-1">

@@ -52,8 +52,8 @@ const SETTING_DEFAULTS: Record<string, string> = {
   total_capital: "600",
   scan_interval_seconds: "30",
   scan_stagger_seconds: "10",
-  paper_equity_pct_per_trade: "18",
-  live_equity_pct_per_trade: "22",
+  paper_equity_pct_per_trade: "8",
+  live_equity_pct_per_trade: "15",
   paper_max_open_trades: "3",
   live_max_open_trades: "3",
   ai_verification_enabled: "false",
@@ -76,10 +76,10 @@ const SETTING_DEFAULTS: Record<string, string> = {
   paper_capital: "600",
   demo_capital: "600",
   real_capital: "600",
-  demo_equity_pct_per_trade: "22",
-  real_equity_pct_per_trade: "22",
+  demo_equity_pct_per_trade: "10",
+  real_equity_pct_per_trade: "15",
   demo_max_open_trades: "3",
-  real_max_open_trades: "2",
+  real_max_open_trades: "3",
   demo_max_daily_loss_pct: "3",
   real_max_daily_loss_pct: "3",
   demo_max_weekly_loss_pct: "8",
@@ -386,7 +386,7 @@ async function runBacktestForOptimisation(
       ? recentPrices.map((c, idx, arr) => idx > 0 ? Math.abs(c - arr[idx - 1]) / arr[idx - 1] : 0).slice(1).reduce((a, b) => a + b, 0) / (recentPrices.length - 1)
       : 0.005;
     const slPct = atrPct * 1.5;
-    const tpPct = atrPct * 3.5;
+    const tpPct = atrPct * 3.0;
     const sl = direction === 1 ? price * (1 - slPct) : price * (1 + slPct);
     const tp = direction === 1 ? price * (1 + tpPct) : price * (1 - tpPct);
 

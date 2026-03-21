@@ -291,7 +291,7 @@ async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise
   let ran = 0;
   for (const { strategy, symbol } of combinations) {
     try {
-      const result = await runBacktestSimulation(strategy, symbol, initialCapital, "aggressive");
+      const result = await runBacktestSimulation(strategy, symbol, initialCapital, "balanced");
 
       await db.insert(backtestRunsTable).values({
         strategyName: strategy,
@@ -306,7 +306,7 @@ async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise
         avgHoldingHours: result.avgHoldingHours,
         expectancy: result.expectancy,
         sharpeRatio: result.sharpeRatio,
-        configJson: { allocationMode: "aggressive", symbol, strategyName: strategy, source: "monthly-reoptimise" },
+        configJson: { allocationMode: "balanced", symbol, strategyName: strategy, source: "monthly-reoptimise" },
         metricsJson: {
           equityCurve: result.equityCurve,
           grossProfit: result.grossProfit,
@@ -328,7 +328,7 @@ async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise
       const optSl = result.profitFactor > 0 ? Math.min(Math.max(1.0 / result.profitFactor, 0.5), 2.0) : 1.0;
       r.tpSum += optTp;
       r.slSum += optSl;
-      r.equitySum += Math.min(Math.max(result.winRate * 30, 18), 30);
+      r.equitySum += Math.min(Math.max(result.winRate * 20, 8), 15);
       ran++;
     } catch { /* skip failed */ }
   }
@@ -336,7 +336,7 @@ async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise
   const comboResults: { strategy: string; symbol: string; pf: number; hold: number; score: number }[] = [];
   for (const { strategy, symbol } of combinations) {
     try {
-      const result = await runBacktestSimulation(strategy, symbol, initialCapital, "aggressive");
+      const result = await runBacktestSimulation(strategy, symbol, initialCapital, "balanced");
       if (result.tradeCount >= 3) {
         comboResults.push({
           strategy, symbol,
@@ -358,15 +358,15 @@ async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise
   const optTpWeak = parseFloat(Math.min(Math.max(1.2 + bestPf * 0.25, 1.5), 2.5).toFixed(2));
   const optSl = parseFloat(Math.min(Math.max(0.8, 1.0 / bestPf), 1.5).toFixed(2));
   const optHold = parseFloat(Math.max(48, Math.min(bestHold * 1.3, 168)).toFixed(1));
-  const optEquity = 22;
+  const optEquity = 15;
 
   const nowIso = new Date().toISOString();
   const currentMonthKey = `${new Date().getFullYear()}-${new Date().getMonth() + 1}`;
 
   const aiSettings: Record<string, string> = {
-    ai_equity_pct_per_trade: String(optEquity),
-    ai_paper_equity_pct_per_trade: "18",
-    ai_live_equity_pct_per_trade: String(optEquity),
+    ai_equity_pct_per_trade: "15",
+    ai_paper_equity_pct_per_trade: "8",
+    ai_live_equity_pct_per_trade: "15",
     ai_tp_multiplier_strong: String(optTpStrong),
     ai_tp_multiplier_medium: String(optTpMed),
     ai_tp_multiplier_weak: String(optTpWeak),

@@ -273,7 +273,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
 
     for (const { strategy, symbol } of combinations) {
       try {
-        const result = await runBacktestSimulation(strategy, symbol, initialCapital, "aggressive");
+        const result = await runBacktestSimulation(strategy, symbol, initialCapital, "balanced");
 
         const [row] = await db.insert(backtestRunsTable).values({
           strategyName: strategy, symbol, initialCapital,
@@ -282,7 +282,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
           maxDrawdown: result.maxDrawdown, tradeCount: result.tradeCount,
           avgHoldingHours: result.avgHoldingHours, expectancy: result.expectancy,
           sharpeRatio: result.sharpeRatio,
-          configJson: { allocationMode: "aggressive", symbol, strategyName: strategy, source: "initial-setup" },
+          configJson: { allocationMode: "balanced", symbol, strategyName: strategy, source: "initial-setup" },
           metricsJson: {
             equityCurve: result.equityCurve, grossProfit: result.grossProfit,
             grossLoss: result.grossLoss, avgWin: result.avgWin, avgLoss: result.avgLoss,
@@ -312,7 +312,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
           r.tpSum += Math.min(Math.max(1.5 + result.profitFactor * 0.4, 1.2), 4.0);
           r.slSum += Math.min(Math.max(1.0 / result.profitFactor, 0.5), 2.0);
         } else { r.tpSum += 2.0; r.slSum += 1.0; }
-        r.equitySum += Math.min(Math.max(result.winRate * 30, 18), 30);
+        r.equitySum += Math.min(Math.max(result.winRate * 20, 8), 15);
 
         if (result.tradeCount >= 3) {
           const comboScore = (result.sharpeRatio * 0.4) + (result.winRate * 0.25) + (result.profitFactor * 0.2) + (result.expectancy * 0.15);
@@ -357,7 +357,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     const optTpWeak = parseFloat(Math.min(Math.max(1.2 + bestPf * 0.25, 1.5), 2.5).toFixed(2));
     const optSl = parseFloat(Math.min(Math.max(0.8, 1.0 / bestPf), 1.5).toFixed(2));
     const optHold = parseFloat(Math.max(48, Math.min(bestAvgHold * 1.3, 168)).toFixed(1));
-    const optEquity = parseFloat(Math.min(Math.max(15, 22), 30).toFixed(2));
+    const optEquity = parseFloat(Math.min(Math.max(8, 15), 20).toFixed(2));
 
     function computeModeSettings(combos: typeof comboResults, prefix: string) {
       const settings: Record<string, string> = {};
@@ -377,7 +377,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
       }
       if (n === 0) return settings;
       const trailPct = prefix === "real" ? 20 : 25;
-      const modeEquity = prefix === "real" ? optEquity : (prefix === "demo" ? optEquity : 18);
+      const modeEquity = prefix === "real" ? 15 : (prefix === "demo" ? 10 : 8);
       settings[`${prefix}_tp_multiplier_strong`] = parseFloat((tpS / n).toFixed(2)).toString();
       settings[`${prefix}_tp_multiplier_medium`] = parseFloat((tpM / n).toFixed(2)).toString();
       settings[`${prefix}_tp_multiplier_weak`] = parseFloat((tpW / n).toFixed(2)).toString();
@@ -394,9 +394,9 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     const realModeSettings = computeModeSettings(realTop, "real");
 
     const aiSettings: Record<string, string> = {
-      ai_equity_pct_per_trade: String(optEquity),
-      ai_paper_equity_pct_per_trade: "18",
-      ai_live_equity_pct_per_trade: String(optEquity),
+      ai_equity_pct_per_trade: "15",
+      ai_paper_equity_pct_per_trade: "8",
+      ai_live_equity_pct_per_trade: "15",
       ai_tp_multiplier_strong: String(optTpStrong),
       ai_tp_multiplier_medium: String(optTpMed),
       ai_tp_multiplier_weak: String(optTpWeak),

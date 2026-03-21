@@ -92,9 +92,9 @@ artifacts-monorepo/
 ## Trading Modes
 
 Three independent trading modes that can run simultaneously:
-- **Paper** — Simulated trades with virtual capital (default $600, 18% equity/trade)
-- **Demo** — Trades on Deriv demo account (requires demo API token, 22% equity/trade)
-- **Real** — Trades on Deriv real account (requires real API token, confirmation needed, 22% equity/trade)
+- **Paper** — Simulated trades with virtual capital (default $600, 8% equity/trade)
+- **Demo** — Trades on Deriv demo account (requires demo API token, 10% equity/trade)
+- **Real** — Trades on Deriv real account (requires real API token, confirmation needed, 15% equity/trade)
 
 Each mode has independent:
 - Capital allocation (`paper_capital`, `demo_capital`, `real_capital`)
@@ -139,7 +139,7 @@ Signals are generated once; positions are opened independently per active mode. 
 
 The platform includes a full swing trade execution engine (`lib/tradeEngine.ts`):
 
-- **Position Sizing** — 22% of equity per trade (real/demo), 18% (paper), max 2 simultaneous (real), 3 (demo/paper), 80% equity cap
+- **Position Sizing** — 15% of equity per trade (real), 10% (demo), 8% (paper), max 3 simultaneous, 80% equity cap. With 1:3–1:5 R:R ratios, this compounds $600→$1200/month
 - **Dynamic TP** — calculated at entry using: confidence × ATR × historical average move
 - **Trailing Stop** — SL trails 25% behind the highest point reached (configurable per mode, AI-optimized: Real=20%, Demo=25%)
 - **3-Layer Exit** — TP hit (Deriv handles), trailing stop triggered, time-based exit (72h with 24h extensions up to 5 days)

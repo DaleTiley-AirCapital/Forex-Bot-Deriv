@@ -147,21 +147,17 @@ router.post("/setup/backfill", async (req, res): Promise<void> => {
   const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
   try {
-    const token = await getDbApiToken();
-    if (!token) {
-      send({ phase: "error", message: "No Deriv API token found. Please add your token in Settings → API Keys first." });
-      res.end();
-      return;
-    }
-
     const client = await getDerivClientWithDbToken();
     const targetStartEpoch = Math.floor(Date.now() / 1000) - MONTHS_24_SECONDS;
+    const expectedCandlesPerSymbol = Math.ceil(MONTHS_24_SECONDS / GRANULARITY_1H);
     let grandTotal = 0;
+    const startTime = Date.now();
 
     send({
       phase: "start",
-      message: `Starting 24-month candle download for ${SUPPORTED_SYMBOLS.length} indices...`,
+      message: `Starting 24-month candle download for ${SUPPORTED_SYMBOLS.length} indices (~${expectedCandlesPerSymbol.toLocaleString()} candles each)...`,
       totalSymbols: SUPPORTED_SYMBOLS.length,
+      expectedCandlesPerSymbol,
     });
 
     for (let si = 0; si < SUPPORTED_SYMBOLS.length; si++) {
@@ -171,25 +167,25 @@ router.post("/setup/backfill", async (req, res): Promise<void> => {
         symbol,
         symbolIndex: si,
         totalSymbols: SUPPORTED_SYMBOLS.length,
-        message: `Downloading history for ${symbol}...`,
+        message: `[${si + 1}/${SUPPORTED_SYMBOLS.length}] Downloading ${symbol}...`,
       });
 
       let endEpoch = Math.floor(Date.now() / 1000);
       let symbolInserted = 0;
       let batchNum = 0;
-      let reachedTarget = false;
+      const MAX_BATCHES = 20;
 
-      while (!reachedTarget) {
+      while (batchNum < MAX_BATCHES) {
         batchNum++;
         const candles = await client.getCandleHistoryWithEnd(symbol, GRANULARITY_1H, MAX_BATCH, endEpoch);
 
         if (!candles || candles.length === 0) break;
 
-        const targetCandles = candles.filter(c => c.epoch >= targetStartEpoch);
-        if (targetCandles.length === 0) break;
+        const sorted = [...candles].sort((a, b) => a.epoch - b.epoch);
+        const earliestEpoch = sorted[0].epoch;
 
-        const toInsert = candles.filter(c => c.epoch >= targetStartEpoch);
-        if (candles[0].epoch <= targetStartEpoch) reachedTarget = true;
+        const toInsert = sorted.filter(c => c.epoch >= targetStartEpoch);
+        const reachedTarget = earliestEpoch <= targetStartEpoch;
 
         if (toInsert.length > 0) {
           const existingTs = await db.select({ openTs: candlesTable.openTs })
@@ -222,19 +218,32 @@ router.post("/setup/backfill", async (req, res): Promise<void> => {
           }
         }
 
+        const elapsedMs = Date.now() - startTime;
+        const symbolFraction = si / SUPPORTED_SYMBOLS.length;
+        const withinSymbolFraction = reachedTarget ? 1 : Math.min((batchNum * MAX_BATCH) / expectedCandlesPerSymbol, 0.95);
+        const overallFraction = symbolFraction + withinSymbolFraction / SUPPORTED_SYMBOLS.length;
+        const estTotalMs = overallFraction > 0.01 ? elapsedMs / overallFraction : 0;
+        const estRemainingMs = Math.max(0, estTotalMs - elapsedMs);
+        const estRemainingSec = Math.ceil(estRemainingMs / 1000);
+
         send({
           phase: "symbol_progress",
           symbol,
           symbolIndex: si,
           totalSymbols: SUPPORTED_SYMBOLS.length,
           candlesForSymbol: symbolInserted,
+          grandTotal,
           batchNum,
-          message: `${symbol}: ${symbolInserted.toLocaleString()} candles downloaded...`,
+          overallPct: Math.round(overallFraction * 100),
+          estRemainingSec,
+          message: `[${si + 1}/${SUPPORTED_SYMBOLS.length}] ${symbol}: ${symbolInserted.toLocaleString()} candles (batch ${batchNum})`,
         });
 
-        if (reachedTarget || candles[0].epoch <= targetStartEpoch) break;
+        if (reachedTarget) break;
 
-        endEpoch = candles[0].epoch - 1;
+        const newEnd = earliestEpoch - 1;
+        if (newEnd >= endEpoch) break;
+        endEpoch = newEnd;
         await new Promise(r => setTimeout(r, 150));
       }
 
@@ -244,14 +253,18 @@ router.post("/setup/backfill", async (req, res): Promise<void> => {
         symbolIndex: si,
         totalSymbols: SUPPORTED_SYMBOLS.length,
         candlesForSymbol: symbolInserted,
-        message: `${symbol}: complete — ${symbolInserted.toLocaleString()} candles`,
+        grandTotal,
+        overallPct: Math.round(((si + 1) / SUPPORTED_SYMBOLS.length) * 100),
+        message: `[${si + 1}/${SUPPORTED_SYMBOLS.length}] ${symbol}: done — ${symbolInserted.toLocaleString()} candles`,
       });
     }
 
+    const totalSec = Math.round((Date.now() - startTime) / 1000);
     send({
       phase: "backfill_complete",
       grandTotal,
-      message: `Download complete — ${grandTotal.toLocaleString()} candles across ${SUPPORTED_SYMBOLS.length} indices`,
+      totalSec,
+      message: `Download complete — ${grandTotal.toLocaleString()} candles across ${SUPPORTED_SYMBOLS.length} indices in ${totalSec}s`,
     });
 
     res.write("data: [DONE]\n\n");

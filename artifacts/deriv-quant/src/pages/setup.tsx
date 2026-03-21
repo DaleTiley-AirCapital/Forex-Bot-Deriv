@@ -47,6 +47,7 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
   const [testResult, setTestResult] = useState<{ derivDemo: { ok: boolean; error?: string }; derivReal: { ok: boolean; error?: string }; openai: { ok: boolean; error?: string } } | null>(null);
   const [backfillProgress, setBackfillProgress] = useState(0);
   const [backfillStatus, setBackfillStatus] = useState("");
+  const [backfillDetails, setBackfillDetails] = useState<{ grandTotal?: number; estRemainingSec?: number; currentSymbol?: string } >({});
   const [analyseProgress, setAnalyseProgress] = useState(0);
   const [analyseStatus, setAnalyseStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -124,18 +125,28 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
         const phase = evt.phase as string;
         if (phase === "start") {
           setBackfillStatus(evt.message as string);
-        } else if (phase === "symbol_start" || phase === "symbol_progress") {
-          const pct = Math.round(((evt.symbolIndex as number) / (evt.totalSymbols as number)) * 100);
+        } else if (phase === "symbol_start") {
+          setBackfillDetails(d => ({ ...d, currentSymbol: evt.symbol as string }));
+          setBackfillStatus(evt.message as string);
+        } else if (phase === "symbol_progress") {
+          const pct = (evt.overallPct as number) || Math.round(((evt.symbolIndex as number) / (evt.totalSymbols as number)) * 100);
           setBackfillProgress(Math.max(pct, 1));
           setBackfillStatus(evt.message as string);
+          setBackfillDetails({
+            grandTotal: evt.grandTotal as number,
+            estRemainingSec: evt.estRemainingSec as number,
+            currentSymbol: evt.symbol as string,
+          });
         } else if (phase === "symbol_done") {
-          const pct = Math.round((((evt.symbolIndex as number) + 1) / (evt.totalSymbols as number)) * 100);
+          const pct = (evt.overallPct as number) || Math.round((((evt.symbolIndex as number) + 1) / (evt.totalSymbols as number)) * 100);
           setBackfillProgress(pct);
           setBackfillStatus(evt.message as string);
+          setBackfillDetails(d => ({ ...d, grandTotal: evt.grandTotal as number, currentSymbol: evt.symbol as string }));
         } else if (phase === "backfill_complete") {
           completedRef.current = true;
           setBackfillProgress(100);
           setBackfillStatus(evt.message as string);
+          setBackfillDetails(d => ({ ...d, estRemainingSec: 0 }));
           setStep("analyse");
         } else if (phase === "error") {
           setError(evt.message as string);
@@ -419,10 +430,27 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                 )}
 
                 {backfillProgress > 0 ? (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <h2 className="text-lg font-semibold text-center">Fetching Historical Data</h2>
-                    <Progress value={backfillProgress} className="h-2" />
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>{backfillProgress}%</span>
+                        {backfillDetails.estRemainingSec != null && backfillDetails.estRemainingSec > 0 && (
+                          <span>
+                            ~{backfillDetails.estRemainingSec >= 60
+                              ? `${Math.floor(backfillDetails.estRemainingSec / 60)}m ${backfillDetails.estRemainingSec % 60}s`
+                              : `${backfillDetails.estRemainingSec}s`} remaining
+                          </span>
+                        )}
+                      </div>
+                      <Progress value={backfillProgress} className="h-3" />
+                    </div>
                     <p className="text-sm text-muted-foreground text-center">{backfillStatus}</p>
+                    {backfillDetails.grandTotal != null && backfillDetails.grandTotal > 0 && (
+                      <p className="text-xs text-muted-foreground text-center tabular-nums">
+                        {backfillDetails.grandTotal.toLocaleString()} candles downloaded so far
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <div className="text-center space-y-4">

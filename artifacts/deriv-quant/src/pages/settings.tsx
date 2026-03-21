@@ -995,7 +995,7 @@ function ModeSettingsTab({
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="w-4 h-4" />
-              Timing & Execution
+              Time Exit
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -1011,8 +1011,6 @@ function ModeSettingsTab({
               onOverride={() => handleOverride("time_exit_window_hours", "Time Exit")}
               onRevert={aiStatus?.aiSuggestions?.["time_exit_window_hours"] !== undefined ? () => handleRevertToAi("time_exit_window_hours") : undefined}
             />
-            <SettingField label="Scan Interval" description="How often the scheduler cycle fires" value={form[p("scan_interval_seconds")] || form.scan_interval_seconds || "30"} onChange={(v) => update(p("scan_interval_seconds"), v)} suffix="sec" min={5} max={300} step={5} />
-            <SettingField label="Symbol Scan Stagger" description="Delay between scanning each symbol" value={form[p("scan_stagger_seconds")] || form.scan_stagger_seconds || "10"} onChange={(v) => update(p("scan_stagger_seconds"), v)} suffix="sec" min={1} max={60} step={1} />
           </CardContent>
         </Card>
       </div>

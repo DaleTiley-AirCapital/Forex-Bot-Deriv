@@ -38,11 +38,13 @@ async function consumeSSE(
 
 export default function SetupWizard({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState<Step>("welcome");
-  const [derivToken, setDerivToken] = useState("");
+  const [derivTokenDemo, setDerivTokenDemo] = useState("");
+  const [derivTokenReal, setDerivTokenReal] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
-  const [showDeriv, setShowDeriv] = useState(false);
+  const [showDerivDemo, setShowDerivDemo] = useState(false);
+  const [showDerivReal, setShowDerivReal] = useState(false);
   const [showOpenai, setShowOpenai] = useState(false);
-  const [testResult, setTestResult] = useState<{ deriv: { ok: boolean; error?: string }; openai: { ok: boolean; error?: string } } | null>(null);
+  const [testResult, setTestResult] = useState<{ derivDemo: { ok: boolean; error?: string }; derivReal: { ok: boolean; error?: string }; openai: { ok: boolean; error?: string } } | null>(null);
   const [backfillProgress, setBackfillProgress] = useState(0);
   const [backfillStatus, setBackfillStatus] = useState("");
   const [analyseProgress, setAnalyseProgress] = useState(0);
@@ -54,8 +56,8 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
   const queryClient = useQueryClient();
 
   const saveKeysAndTest = useCallback(async () => {
-    if (!derivToken.trim()) {
-      setError("Please enter your Deriv API token.");
+    if (!derivTokenDemo.trim() && !derivTokenReal.trim()) {
+      setError("Please enter at least one Deriv API token (Demo or Real).");
       return;
     }
     setError(null);
@@ -64,9 +66,17 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
     setTestResult(null);
 
     try {
-      const keysToSave: Record<string, string> = {
-        deriv_api_token: derivToken.trim(),
-      };
+      const keysToSave: Record<string, string> = {};
+      if (derivTokenDemo.trim()) {
+        keysToSave.deriv_api_token_demo = derivTokenDemo.trim();
+        keysToSave.deriv_api_token = derivTokenDemo.trim();
+      }
+      if (derivTokenReal.trim()) {
+        keysToSave.deriv_api_token_real = derivTokenReal.trim();
+        if (!derivTokenDemo.trim()) {
+          keysToSave.deriv_api_token = derivTokenReal.trim();
+        }
+      }
       if (openaiKey.trim()) {
         keysToSave.openai_api_key = openaiKey.trim();
       }
@@ -82,15 +92,17 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
       const data = await testRes.json();
 
       const result = {
-        deriv: data.deriv || { ok: false, error: "Unknown result" },
+        derivDemo: data.derivDemo || { ok: false, error: "Not configured" },
+        derivReal: data.derivReal || { ok: false, error: "Not configured" },
         openai: data.openai || { ok: false, error: "Not configured" },
       };
       setTestResult(result);
 
-      if (result.deriv.ok) {
+      const anyDerivOk = result.derivDemo.ok || result.derivReal.ok;
+      if (anyDerivOk) {
         setStep("backfill");
       } else {
-        setError(result.deriv.error || "Deriv API connection failed. Please check your token.");
+        setError("No Deriv API connection succeeded. Please check your tokens.");
         setStep("apikeys");
       }
     } catch (err) {
@@ -99,7 +111,7 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
     } finally {
       setSaving(false);
     }
-  }, [derivToken, openaiKey]);
+  }, [derivTokenDemo, derivTokenReal, openaiKey]);
 
   const runBackfill = useCallback(async () => {
     setError(null);
@@ -270,31 +282,55 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                 </div>
 
                 <div className="space-y-4 max-w-md mx-auto">
+                  <p className="text-xs text-muted-foreground">
+                    Get your tokens from{" "}
+                    <a href="https://app.deriv.com/account/api-token" target="_blank" rel="noreferrer" className="text-primary underline">
+                      Deriv API Token Settings
+                    </a>. Enable Read, Trade, and Admin scopes. You need at least one token.
+                  </p>
+
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-foreground flex items-center gap-2">
-                      Deriv API Token <span className="text-destructive">*</span>
+                      Deriv Demo API Token
                     </label>
-                    <p className="text-xs text-muted-foreground">
-                      Get your token from{" "}
-                      <a href="https://app.deriv.com/account/api-token" target="_blank" rel="noreferrer" className="text-primary underline">
-                        Deriv API Token Settings
-                      </a>. Enable Read, Trade, and Admin scopes.
-                    </p>
                     <div className="relative">
                       <Input
-                        type={showDeriv ? "text" : "password"}
-                        placeholder="Enter your Deriv API token"
-                        value={derivToken}
-                        onChange={(e) => setDerivToken(e.target.value)}
+                        type={showDerivDemo ? "text" : "password"}
+                        placeholder="Enter your Demo account API token"
+                        value={derivTokenDemo}
+                        onChange={(e) => setDerivTokenDemo(e.target.value)}
                         className="pr-10 bg-background/50"
                         disabled={step === "testing"}
                       />
                       <button
                         type="button"
-                        onClick={() => setShowDeriv(!showDeriv)}
+                        onClick={() => setShowDerivDemo(!showDerivDemo)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                       >
-                        {showDeriv ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        {showDerivDemo ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground flex items-center gap-2">
+                      Deriv Real API Token
+                    </label>
+                    <div className="relative">
+                      <Input
+                        type={showDerivReal ? "text" : "password"}
+                        placeholder="Enter your Real account API token"
+                        value={derivTokenReal}
+                        onChange={(e) => setDerivTokenReal(e.target.value)}
+                        className="pr-10 bg-background/50"
+                        disabled={step === "testing"}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowDerivReal(!showDerivReal)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showDerivReal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
@@ -327,20 +363,28 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
 
                   {testResult && (
                     <div className="space-y-2 pt-2">
-                      <div className={`flex items-center gap-2 text-sm ${testResult.deriv.ok ? "text-green-400" : "text-destructive"}`}>
-                        {testResult.deriv.ok ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-                        Deriv API: {testResult.deriv.ok ? "Connected successfully" : (testResult.deriv.error || "Connection failed")}
-                      </div>
+                      {derivTokenDemo.trim() && (
+                        <div className={`flex items-center gap-2 text-sm ${testResult.derivDemo.ok ? "text-green-400" : "text-destructive"}`}>
+                          {testResult.derivDemo.ok ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                          Deriv Demo: {testResult.derivDemo.ok ? "Connected" : (testResult.derivDemo.error || "Failed")}
+                        </div>
+                      )}
+                      {derivTokenReal.trim() && (
+                        <div className={`flex items-center gap-2 text-sm ${testResult.derivReal.ok ? "text-green-400" : "text-destructive"}`}>
+                          {testResult.derivReal.ok ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                          Deriv Real: {testResult.derivReal.ok ? "Connected" : (testResult.derivReal.error || "Failed")}
+                        </div>
+                      )}
                       <div className={`flex items-center gap-2 text-sm ${testResult.openai.ok ? "text-green-400" : "text-yellow-400"}`}>
                         {testResult.openai.ok ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-                        OpenAI: {testResult.openai.ok ? "Connected successfully" : (openaiKey.trim() ? (testResult.openai.error || "Connection failed") : "Not configured (optional)")}
+                        OpenAI: {testResult.openai.ok ? "Connected" : (openaiKey.trim() ? (testResult.openai.error || "Failed") : "Not configured (optional)")}
                       </div>
                     </div>
                   )}
                 </div>
 
                 <div className="text-center">
-                  <Button onClick={saveKeysAndTest} disabled={saving || !derivToken.trim()} className="px-8">
+                  <Button onClick={saveKeysAndTest} disabled={saving || (!derivTokenDemo.trim() && !derivTokenReal.trim())} className="px-8">
                     {saving ? (
                       <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Testing Connections...</>
                     ) : (
@@ -354,11 +398,19 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
             {step === "backfill" && (
               <div className="space-y-6">
                 {testResult && (
-                  <div className="flex gap-4 justify-center mb-4">
-                    <div className="flex items-center gap-2 text-sm text-green-400">
-                      <CheckCircle2 className="w-4 h-4" />
-                      Deriv Connected
-                    </div>
+                  <div className="flex gap-4 justify-center mb-4 flex-wrap">
+                    {testResult.derivDemo.ok && (
+                      <div className="flex items-center gap-2 text-sm text-green-400">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Demo Connected
+                      </div>
+                    )}
+                    {testResult.derivReal.ok && (
+                      <div className="flex items-center gap-2 text-sm text-green-400">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Real Connected
+                      </div>
+                    )}
                     <div className={`flex items-center gap-2 text-sm ${testResult.openai.ok ? "text-green-400" : "text-yellow-400"}`}>
                       {testResult.openai.ok ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
                       OpenAI {testResult.openai.ok ? "Connected" : "Skipped"}

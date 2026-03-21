@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, and, inArray, count } from "drizzle-orm";
 import { db, candlesTable, backtestRunsTable, backtestTradesTable, platformStateTable } from "@workspace/db";
-import { getDerivClientWithDbToken, getDbApiToken, SUPPORTED_SYMBOLS } from "../lib/deriv.js";
+import { getDerivClientWithDbToken, getDbApiToken, getDbApiTokenForMode, SUPPORTED_SYMBOLS } from "../lib/deriv.js";
 import { checkOpenAiHealth, isOpenAIConfigured } from "../lib/openai.js";
 import { runBacktestSimulation } from "../lib/backtestEngine.js";
 
@@ -24,56 +24,60 @@ const AI_LOCKABLE_KEYS = [
 
 router.post("/setup/preflight", async (_req, res): Promise<void> => {
   try {
-    const derivToken = await getDbApiToken();
+    const demoToken = await getDbApiTokenForMode("demo");
+    const realToken = await getDbApiTokenForMode("real");
     const openaiConfigured = await isOpenAIConfigured();
 
-    const [derivResult, openaiResult] = await Promise.all([
-      (async (): Promise<{ ok: boolean; error?: string }> => {
-        if (!derivToken) return { ok: false, error: "Deriv API token not configured. Add it in Settings → API Keys." };
-        const DERIV_WS_URL = "wss://ws.binaryws.com/websockets/v3?app_id=1089";
-        const { default: WebSocket } = await import("ws");
-        return new Promise<{ ok: boolean; error?: string }>((resolve) => {
-          const ws = new WebSocket(DERIV_WS_URL);
-          let settled = false;
-          const timeout = setTimeout(() => {
-            if (!settled) {
-              settled = true;
-              try { ws.close(); } catch {}
-              resolve({ ok: false, error: "Deriv WebSocket connection timed out after 15 seconds." });
-            }
-          }, 15000);
+    async function testDerivToken(token: string | null, label: string): Promise<{ ok: boolean; error?: string }> {
+      if (!token) return { ok: false, error: `${label} token not configured.` };
+      const DERIV_WS_URL = "wss://ws.binaryws.com/websockets/v3?app_id=1089";
+      const { default: WebSocket } = await import("ws");
+      return new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        const ws = new WebSocket(DERIV_WS_URL);
+        let settled = false;
+        const timeout = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            try { ws.close(); } catch {}
+            resolve({ ok: false, error: `${label} connection timed out after 15 seconds.` });
+          }
+        }, 15000);
 
-          ws.on("open", () => {
-            ws.send(JSON.stringify({ authorize: derivToken, req_id: 1 }));
-          });
-
-          ws.on("message", (raw: Buffer) => {
-            if (settled) return;
-            try {
-              const data = JSON.parse(raw.toString());
-              if (data.req_id !== 1) return;
-              settled = true;
-              clearTimeout(timeout);
-              try { ws.close(); } catch {}
-              if (data.error) {
-                resolve({ ok: false, error: `Deriv auth failed: ${(data.error as { message: string }).message}` });
-              } else {
-                resolve({ ok: true });
-              }
-            } catch {}
-          });
-
-          ws.on("error", (err: Error) => {
-            if (!settled) {
-              settled = true;
-              clearTimeout(timeout);
-              resolve({ ok: false, error: `Deriv connection error: ${err.message}` });
-            }
-          });
+        ws.on("open", () => {
+          ws.send(JSON.stringify({ authorize: token, req_id: 1 }));
         });
-      })(),
+
+        ws.on("message", (raw: Buffer) => {
+          if (settled) return;
+          try {
+            const data = JSON.parse(raw.toString());
+            if (data.req_id !== 1) return;
+            settled = true;
+            clearTimeout(timeout);
+            try { ws.close(); } catch {}
+            if (data.error) {
+              resolve({ ok: false, error: `${label} auth failed: ${(data.error as { message: string }).message}` });
+            } else {
+              resolve({ ok: true });
+            }
+          } catch {}
+        });
+
+        ws.on("error", (err: Error) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeout);
+            resolve({ ok: false, error: `${label} connection error: ${err.message}` });
+          }
+        });
+      });
+    }
+
+    const [derivDemoResult, derivRealResult, openaiResult] = await Promise.all([
+      testDerivToken(demoToken, "Demo"),
+      testDerivToken(realToken, "Real"),
       (async (): Promise<{ ok: boolean; error?: string }> => {
-        if (!openaiConfigured) return { ok: false, error: "OpenAI API key not configured. Add it in Settings → API Keys." };
+        if (!openaiConfigured) return { ok: false, error: "OpenAI API key not configured." };
         const health = await checkOpenAiHealth();
         if (!health.working) {
           return { ok: false, error: health.error || "OpenAI API key is invalid or the API is unreachable." };
@@ -82,10 +86,11 @@ router.post("/setup/preflight", async (_req, res): Promise<void> => {
       })(),
     ]);
 
-    res.json({ deriv: derivResult, openai: openaiResult });
+    res.json({ derivDemo: derivDemoResult, derivReal: derivRealResult, openai: openaiResult });
   } catch (err) {
     res.status(500).json({
-      deriv: { ok: false, error: "Preflight check failed unexpectedly." },
+      derivDemo: { ok: false, error: "Preflight check failed unexpectedly." },
+      derivReal: { ok: false, error: "Preflight check failed unexpectedly." },
       openai: { ok: false, error: err instanceof Error ? err.message : "Unknown error" },
     });
   }
@@ -93,9 +98,9 @@ router.post("/setup/preflight", async (_req, res): Promise<void> => {
 
 router.get("/setup/status", async (_req, res): Promise<void> => {
   try {
-    const tokenRow = await db.select().from(platformStateTable)
-      .where(eq(platformStateTable.key, "deriv_api_token")).limit(1);
-    const hasToken = tokenRow.length > 0 && !!tokenRow[0].value;
+    const tokenRows = await db.select().from(platformStateTable)
+      .where(inArray(platformStateTable.key, ["deriv_api_token", "deriv_api_token_demo", "deriv_api_token_real"]));
+    const hasToken = tokenRows.some(r => !!r.value);
 
     const symbolCounts = await Promise.all(
       SUPPORTED_SYMBOLS.map(async (symbol) => {

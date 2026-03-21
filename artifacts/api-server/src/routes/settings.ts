@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
-import { db, platformStateTable, candlesTable } from "@workspace/db";
+import { db, platformStateTable, candlesTable, tradesTable } from "@workspace/db";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
 import { checkOpenAiHealth } from "../lib/openai.js";
 import { desc } from "drizzle-orm";
@@ -32,6 +32,9 @@ function decryptSecret(stored: string): string {
   return decrypted;
 }
 
+const ALL_SYMBOLS_DEFAULT = "BOOM1000,CRASH1000,BOOM500,CRASH500,BOOM300,CRASH300,BOOM200,CRASH200,R_75,R_100,JD75,STPIDX,RDBEAR";
+const ALL_STRATEGIES_DEFAULT = "trend-pullback,exhaustion-rebound,volatility-breakout,spike-hazard,volatility-expansion,liquidity-sweep,macro-bias";
+
 const SETTING_DEFAULTS: Record<string, string> = {
   max_open_trades: "4",
   equity_pct_per_trade: "22",
@@ -48,12 +51,13 @@ const SETTING_DEFAULTS: Record<string, string> = {
   allocation_mode: "balanced",
   total_capital: "10000",
   scan_interval_seconds: "30",
+  scan_stagger_seconds: "10",
   paper_equity_pct_per_trade: "13",
   live_equity_pct_per_trade: "22",
   paper_max_open_trades: "4",
   live_max_open_trades: "3",
   ai_verification_enabled: "false",
-  enabled_symbols: "BOOM1000,CRASH1000,BOOM500,CRASH500,R_75,R_100,JD75,STPIDX,RDBEAR",
+  enabled_symbols: ALL_SYMBOLS_DEFAULT,
   paper_max_daily_loss_pct: "5",
   live_max_daily_loss_pct: "3",
   paper_max_weekly_loss_pct: "12",
@@ -85,6 +89,66 @@ const SETTING_DEFAULTS: Record<string, string> = {
   paper_mode_active: "false",
   demo_mode_active: "false",
   real_mode_active: "false",
+  paper_tp_multiplier_strong: "2.5",
+  paper_tp_multiplier_medium: "2.0",
+  paper_tp_multiplier_weak: "1.5",
+  paper_sl_ratio: "1.0",
+  paper_trailing_stop_buffer_pct: "0.3",
+  paper_time_exit_window_hours: "72",
+  paper_allocation_mode: "balanced",
+  paper_scan_interval_seconds: "30",
+  paper_scan_stagger_seconds: "10",
+  paper_min_composite_score: "85",
+  paper_min_ev_threshold: "0.003",
+  paper_min_rr_ratio: "1.5",
+  paper_scoring_weight_regime_fit: "16.67",
+  paper_scoring_weight_setup_quality: "16.67",
+  paper_scoring_weight_trend_alignment: "16.67",
+  paper_scoring_weight_volatility_condition: "16.67",
+  paper_scoring_weight_reward_risk: "16.67",
+  paper_scoring_weight_probability_of_success: "16.67",
+  paper_enabled_symbols: ALL_SYMBOLS_DEFAULT,
+  paper_enabled_strategies: ALL_STRATEGIES_DEFAULT,
+  demo_tp_multiplier_strong: "2.5",
+  demo_tp_multiplier_medium: "2.0",
+  demo_tp_multiplier_weak: "1.5",
+  demo_sl_ratio: "1.0",
+  demo_trailing_stop_buffer_pct: "0.3",
+  demo_time_exit_window_hours: "72",
+  demo_allocation_mode: "balanced",
+  demo_scan_interval_seconds: "30",
+  demo_scan_stagger_seconds: "10",
+  demo_min_composite_score: "85",
+  demo_min_ev_threshold: "0.003",
+  demo_min_rr_ratio: "1.5",
+  demo_scoring_weight_regime_fit: "16.67",
+  demo_scoring_weight_setup_quality: "16.67",
+  demo_scoring_weight_trend_alignment: "16.67",
+  demo_scoring_weight_volatility_condition: "16.67",
+  demo_scoring_weight_reward_risk: "16.67",
+  demo_scoring_weight_probability_of_success: "16.67",
+  demo_enabled_symbols: ALL_SYMBOLS_DEFAULT,
+  demo_enabled_strategies: ALL_STRATEGIES_DEFAULT,
+  real_tp_multiplier_strong: "2.5",
+  real_tp_multiplier_medium: "2.0",
+  real_tp_multiplier_weak: "1.5",
+  real_sl_ratio: "1.0",
+  real_trailing_stop_buffer_pct: "0.3",
+  real_time_exit_window_hours: "72",
+  real_allocation_mode: "balanced",
+  real_scan_interval_seconds: "30",
+  real_scan_stagger_seconds: "10",
+  real_min_composite_score: "85",
+  real_min_ev_threshold: "0.003",
+  real_min_rr_ratio: "1.5",
+  real_scoring_weight_regime_fit: "16.67",
+  real_scoring_weight_setup_quality: "16.67",
+  real_scoring_weight_trend_alignment: "16.67",
+  real_scoring_weight_volatility_condition: "16.67",
+  real_scoring_weight_reward_risk: "16.67",
+  real_scoring_weight_probability_of_success: "16.67",
+  real_enabled_symbols: ALL_SYMBOLS_DEFAULT,
+  real_enabled_strategies: ALL_STRATEGIES_DEFAULT,
 };
 
 const API_KEY_KEYS = ["deriv_api_token", "deriv_api_token_demo", "deriv_api_token_real", "openai_api_key"];
@@ -144,19 +208,25 @@ router.post("/settings", async (req, res): Promise<void> => {
 
     if (!ALL_SETTING_KEYS.includes(key)) continue;
 
-    if (key === "kill_switch" || key === "ai_verification_enabled" ||
-        key === "paper_mode_active" || key === "demo_mode_active" || key === "real_mode_active") {
+    const BOOLEAN_KEYS = ["kill_switch", "ai_verification_enabled", "paper_mode_active", "demo_mode_active", "real_mode_active"];
+    const ALLOCATION_KEYS = ["allocation_mode", "paper_allocation_mode", "demo_allocation_mode", "real_allocation_mode"];
+    const STRING_LIST_KEYS = [
+      "enabled_symbols", "paper_enabled_symbols", "demo_enabled_symbols", "real_enabled_symbols",
+      "paper_enabled_strategies", "demo_enabled_strategies", "real_enabled_strategies",
+    ];
+
+    if (BOOLEAN_KEYS.includes(key)) {
       if (strVal !== "true" && strVal !== "false") {
         errors.push(`${key}: must be "true" or "false"`);
         continue;
       }
-    } else if (key === "allocation_mode") {
+    } else if (ALLOCATION_KEYS.includes(key)) {
       if (!["conservative", "balanced", "aggressive"].includes(strVal)) {
         errors.push(`${key}: must be "conservative", "balanced", or "aggressive"`);
         continue;
       }
-    } else if (key === "enabled_symbols") {
-      // no validation needed
+    } else if (STRING_LIST_KEYS.includes(key)) {
+      // comma-separated lists, no validation needed
     } else {
       const num = parseFloat(strVal);
       if (isNaN(num) || num < 0) {
@@ -478,6 +548,33 @@ router.get("/settings/ai-status", async (_req, res): Promise<void> => {
     lastMonthlyOptimise,
     nextScheduled,
   });
+});
+
+router.post("/settings/paper-reset", async (_req, res): Promise<void> => {
+  try {
+    const deleted = await db.delete(tradesTable).where(eq(tradesTable.mode, "paper")).returning();
+
+    const states = await db.select().from(platformStateTable);
+    const stateMap: Record<string, string> = {};
+    for (const s of states) stateMap[s.key] = s.value;
+    const paperCapital = stateMap["paper_capital"] || "10000";
+
+    await db
+      .insert(platformStateTable)
+      .values({ key: "paper_current_equity", value: paperCapital })
+      .onConflictDoUpdate({
+        target: platformStateTable.key,
+        set: { value: paperCapital, updatedAt: new Date() },
+      });
+
+    res.json({
+      success: true,
+      message: `Paper trading reset: ${deleted.length} trades cleared, capital reset to $${paperCapital}`,
+      tradesDeleted: deleted.length,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err instanceof Error ? err.message : "Reset failed" });
+  }
 });
 
 export default router;

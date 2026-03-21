@@ -289,6 +289,8 @@ router.post("/setup/initial-analyse", async (_req, res): Promise<void> => {
       strategyAgg[strat] = { sharpeSum: 0, sharpeCount: 0, tpSum: 0, slSum: 0, holdSum: 0, equitySum: 0, drawdownSum: 0, winRateSum: 0, count: 0 };
     }
 
+    const comboResults: { strategy: string; symbol: string; sharpe: number; winRate: number; score: number }[] = [];
+
     let completed = 0;
     const startTime = Date.now();
 
@@ -357,6 +359,11 @@ router.post("/setup/initial-analyse", async (_req, res): Promise<void> => {
           r.slSum += 1.0;
         }
         r.equitySum += Math.min(Math.max(result.winRate * 4, 0.5), 5.0);
+
+        if (result.tradeCount >= 3) {
+          const comboScore = (result.sharpeRatio * 0.5) + (result.winRate * 0.3) + (result.profitFactor * 0.2);
+          comboResults.push({ strategy, symbol, sharpe: result.sharpeRatio, winRate: result.winRate, score: comboScore });
+        }
       } catch {
         // skip failed backtest
       }
@@ -399,6 +406,13 @@ router.post("/setup/initial-analyse", async (_req, res): Promise<void> => {
     const optSl = parseFloat((globalSl / sc).toFixed(2));
     const optHold = parseFloat((globalHold / sc).toFixed(1));
 
+    const sortedCombos = [...comboResults].sort((a, b) => b.score - a.score);
+    const top4 = sortedCombos.slice(0, 4);
+    const realStrategies = [...new Set(top4.map(c => c.strategy))];
+    const realSymbols = [...new Set(top4.map(c => c.symbol))];
+    const allStrategies = STRATEGIES.join(",");
+    const allSymbols = enabledSymbols.join(",");
+
     const aiSettings: Record<string, string> = {
       ai_equity_pct_per_trade: String(optEquity),
       ai_paper_equity_pct_per_trade: String(Math.max(optEquity * 0.6, 0.5).toFixed(2)),
@@ -412,6 +426,14 @@ router.post("/setup/initial-analyse", async (_req, res): Promise<void> => {
       ai_optimised_at: new Date().toISOString(),
       initial_setup_complete: "true",
       initial_setup_at: new Date().toISOString(),
+      paper_enabled_strategies: allStrategies,
+      paper_enabled_symbols: allSymbols,
+      demo_enabled_strategies: allStrategies,
+      demo_enabled_symbols: allSymbols,
+      real_enabled_strategies: realStrategies.length > 0 ? realStrategies.join(",") : allStrategies,
+      real_enabled_symbols: realSymbols.length > 0 ? realSymbols.join(",") : allSymbols,
+      ai_recommended_strategies: realStrategies.join(","),
+      ai_recommended_symbols: realSymbols.join(","),
     };
 
     for (const [key, value] of Object.entries(aiSettings)) {

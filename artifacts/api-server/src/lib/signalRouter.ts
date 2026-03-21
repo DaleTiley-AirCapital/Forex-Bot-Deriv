@@ -28,6 +28,7 @@ interface PortfolioContext {
   openTradeCount: number;
   maxOpenTrades: number;
   disabledStrategies: string[];
+  enabledStrategies: string[] | null;
   totalDeployedCapital: number;
   equityPctPerTrade: number;
   tpMultiplierStrong: number;
@@ -72,9 +73,16 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
   const weekStart = now - 604800000;
   const dailyPnl = closedTrades.filter(t => t.exitTs && t.exitTs.getTime() > dayStart).reduce((s, t) => s + (t.pnl || 0), 0);
   const weeklyPnl = closedTrades.filter(t => t.exitTs && t.exitTs.getTime() > weekStart).reduce((s, t) => s + (t.pnl || 0), 0);
-  const disabled = stateMap["disabled_strategies"] ? stateMap["disabled_strategies"].split(",").filter(Boolean) : [];
-
   const prefix = getModePrefix(mode);
+
+  const modeEnabledStrategiesRaw = stateMap[`${prefix}_enabled_strategies`];
+  const globalEnabledStrategiesRaw = stateMap["enabled_strategies"];
+  const disabled = stateMap["disabled_strategies"] ? stateMap["disabled_strategies"].split(",").filter(Boolean) : [];
+  const modeEnabledStrategies = modeEnabledStrategiesRaw
+    ? modeEnabledStrategiesRaw.split(",").filter(Boolean)
+    : globalEnabledStrategiesRaw
+      ? globalEnabledStrategiesRaw.split(",").filter(Boolean)
+      : null;
 
   const modeEquityPct = parseFloat(
     stateMap[`${prefix}_equity_pct_per_trade`] ||
@@ -102,11 +110,13 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
     (mode === "paper" ? "12" : "8")
   );
 
+  const modeAllocation = (stateMap[`${prefix}_allocation_mode`] || stateMap["allocation_mode"] || "balanced") as "conservative" | "balanced" | "aggressive";
+
   return {
     totalCapital,
     availableCapital: Math.max(0, totalCapital - openRisk),
     openRiskPct: (openRisk / totalCapital) * 100,
-    allocationMode: (stateMap["allocation_mode"] || "balanced") as "conservative" | "balanced" | "aggressive",
+    allocationMode: modeAllocation,
     killSwitchActive: stateMap["kill_switch"] === "true",
     dailyLossPct: (dailyPnl / totalCapital) * 100,
     maxDailyLossPct: modeMaxDailyLoss,
@@ -115,17 +125,18 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
     openTradeCount: openTrades.length,
     maxOpenTrades: modeMaxTrades,
     disabledStrategies: disabled,
+    enabledStrategies: modeEnabledStrategies,
     totalDeployedCapital,
     equityPctPerTrade: modeEquityPct,
-    tpMultiplierStrong: parseFloat(stateMap["tp_multiplier_strong"] || "2.5"),
-    tpMultiplierMedium: parseFloat(stateMap["tp_multiplier_medium"] || "2.0"),
-    tpMultiplierWeak: parseFloat(stateMap["tp_multiplier_weak"] || "1.5"),
-    slRatio: parseFloat(stateMap["sl_ratio"] || "1.0"),
-    trailingStopBufferPct: parseFloat(stateMap["trailing_stop_buffer_pct"] || "0.3"),
-    timeExitWindowHours: parseFloat(stateMap["time_exit_window_hours"] || "72"),
-    minCompositeScore: parseFloat(stateMap["min_composite_score"] || "85"),
-    minEvThreshold: parseFloat(stateMap["min_ev_threshold"] || "0.003"),
-    minRrRatio: parseFloat(stateMap["min_rr_ratio"] || "1.5"),
+    tpMultiplierStrong: parseFloat(stateMap[`${prefix}_tp_multiplier_strong`] || stateMap["tp_multiplier_strong"] || "2.5"),
+    tpMultiplierMedium: parseFloat(stateMap[`${prefix}_tp_multiplier_medium`] || stateMap["tp_multiplier_medium"] || "2.0"),
+    tpMultiplierWeak: parseFloat(stateMap[`${prefix}_tp_multiplier_weak`] || stateMap["tp_multiplier_weak"] || "1.5"),
+    slRatio: parseFloat(stateMap[`${prefix}_sl_ratio`] || stateMap["sl_ratio"] || "1.0"),
+    trailingStopBufferPct: parseFloat(stateMap[`${prefix}_trailing_stop_buffer_pct`] || stateMap["trailing_stop_buffer_pct"] || "0.3"),
+    timeExitWindowHours: parseFloat(stateMap[`${prefix}_time_exit_window_hours`] || stateMap["time_exit_window_hours"] || "72"),
+    minCompositeScore: parseFloat(stateMap[`${prefix}_min_composite_score`] || stateMap["min_composite_score"] || "85"),
+    minEvThreshold: parseFloat(stateMap[`${prefix}_min_ev_threshold`] || stateMap["min_ev_threshold"] || "0.003"),
+    minRrRatio: parseFloat(stateMap[`${prefix}_min_rr_ratio`] || stateMap["min_rr_ratio"] || "1.5"),
   };
 }
 
@@ -187,6 +198,9 @@ export async function routeSignals(candidates: SignalCandidate[], tradingMode: T
     } else if (ctx.disabledStrategies.includes(signal.strategyName)) {
       allowed = false;
       rejectionReason = `Strategy '${signal.strategyName}' is disabled`;
+    } else if (ctx.enabledStrategies && !ctx.enabledStrategies.includes(signal.strategyName)) {
+      allowed = false;
+      rejectionReason = `Strategy '${signal.strategyName}' is not enabled for this mode`;
     } else if (!signal.regimeCompatible) {
       allowed = false;
       rejectionReason = `Regime mismatch for ${signal.signalType} strategy`;

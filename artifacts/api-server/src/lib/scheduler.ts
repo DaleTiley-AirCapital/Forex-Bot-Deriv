@@ -66,6 +66,11 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
   if (activeModes.length === 0) return;
 
   for (const mode of activeModes) {
+    const modePrefix = mode === "paper" ? "paper" : mode === "demo" ? "demo" : "real";
+    const modeSymbolsRaw = stateMap[`${modePrefix}_enabled_symbols`] || stateMap["enabled_symbols"] || "";
+    const modeSymbols = modeSymbolsRaw ? modeSymbolsRaw.split(",").map((s: string) => s.trim()).filter(Boolean) : null;
+    if (modeSymbols && !modeSymbols.includes(symbol)) continue;
+
     const decisions = await routeSignals(allCandidates.map(c => c.candidate), mode);
 
     const finalDecisions: AllocationDecision[] = [];
@@ -205,10 +210,14 @@ async function scanCycle(): Promise<void> {
       }
     }
 
-    const enabledSymbolsRaw = stateMap["enabled_symbols"] || "";
-    const symbols = enabledSymbolsRaw
-      ? enabledSymbolsRaw.split(",").map(s => s.trim()).filter(Boolean)
-      : DEFAULT_SYMBOLS;
+    const activeModes = getActiveModes(stateMap);
+    const modeSymbolSets = activeModes.map(m => {
+      const prefix = m === "paper" ? "paper" : m === "demo" ? "demo" : "real";
+      const raw = stateMap[`${prefix}_enabled_symbols`] || stateMap["enabled_symbols"] || "";
+      return raw ? raw.split(",").map((s: string) => s.trim()).filter(Boolean) : DEFAULT_SYMBOLS;
+    });
+    const symbols = [...new Set(modeSymbolSets.flat())];
+    if (symbols.length === 0) symbols.push(...DEFAULT_SYMBOLS);
 
     const staggerSeconds = parseInt(stateMap["scan_stagger_seconds"] || String(DEFAULT_STAGGER_SECONDS));
     const staggerMs = Math.max(staggerSeconds * 1000, 1000);

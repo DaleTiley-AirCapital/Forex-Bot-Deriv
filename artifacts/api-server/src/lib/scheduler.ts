@@ -199,7 +199,7 @@ async function positionManagementCycle(): Promise<void> {
 }
 
 const MONTHLY_CHECK_INTERVAL_MS = 60 * 60 * 1000;
-const STRATEGIES_LIST = ["trend-pullback", "exhaustion-rebound", "volatility-breakout", "spike-hazard"] as const;
+const STRATEGIES_LIST = ["trend-pullback", "exhaustion-rebound", "volatility-breakout", "spike-hazard", "volatility-expansion", "liquidity-sweep", "macro-bias"] as const;
 const AI_LOCKABLE_KEYS = [
   "equity_pct_per_trade", "paper_equity_pct_per_trade", "live_equity_pct_per_trade",
   "tp_multiplier_strong", "tp_multiplier_medium", "tp_multiplier_weak",

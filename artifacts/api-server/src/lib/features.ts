@@ -32,6 +32,21 @@ export interface FeatureVector {
   ticksSinceSpike: number;   // ticks since last spike (normalised)
   runLengthSinceSpike: number; // number of candles since last spike
   spikeHazardScore: number;  // probability of spike based on run length
+  // Swing structure (5-bar pivot detection)
+  swingHighDist: number;     // (price - recent swing high) / price, negative = below
+  swingLowDist: number;      // (price - recent swing low) / price, positive = above
+  swingBreached: boolean;    // price breached a swing level within last 1-3 candles
+  swingReclaimed: boolean;   // price reclaimed (closed back inside) the swing level on latest candle
+  swingBreachCandles: number; // how many candles ago the breach started (0 = no breach)
+  swingBreachDirection: "above" | "below" | null; // which swing level was breached
+  // Volatility dynamics
+  bbWidthRoc: number;        // BB width rate-of-change vs 5 candles ago
+  atrAccel: number;          // ATR acceleration (current ATR / ATR 5 candles ago - 1)
+  // Time features
+  hourOfDay: number;         // UTC hour 0-23 of latest candle
+  dayOfWeek: number;         // UTC day 0=Sun..6=Sat
+  // Cross-index correlation
+  crossCorrelation: number;  // rolling Pearson correlation with paired symbol (-1 to 1)
   // Regime
   regimeLabel: string;       // trending_up | trending_down | ranging | volatile
 }
@@ -90,6 +105,110 @@ function skewness(arr: number[]): number {
   const s = stdDev(arr);
   if (s === 0) return 0;
   return arr.reduce((a, b) => a + ((b - m) / s) ** 3, 0) / arr.length;
+}
+
+function findSwingLevels(highs: number[], lows: number[], pivotBars = 5): { swingHigh: number; swingLow: number; swingHighIdx: number; swingLowIdx: number } {
+  let swingHigh = -Infinity;
+  let swingLow = Infinity;
+  let swingHighIdx = 0;
+  let swingLowIdx = 0;
+
+  for (let i = highs.length - pivotBars - 1; i >= pivotBars; i--) {
+    let isSwingHigh = true;
+    let isSwingLow = true;
+    for (let j = 1; j <= pivotBars; j++) {
+      if (highs[i] <= highs[i - j] || highs[i] <= highs[i + j]) isSwingHigh = false;
+      if (lows[i] >= lows[i - j] || lows[i] >= lows[i + j]) isSwingLow = false;
+    }
+    if (isSwingHigh && swingHigh === -Infinity) {
+      swingHigh = highs[i];
+      swingHighIdx = i;
+    }
+    if (isSwingLow && swingLow === Infinity) {
+      swingLow = lows[i];
+      swingLowIdx = i;
+    }
+    if (swingHigh !== -Infinity && swingLow !== Infinity) break;
+  }
+
+  if (swingHigh === -Infinity) {
+    swingHigh = Math.max(...highs.slice(-20));
+    swingHighIdx = highs.length - 1;
+  }
+  if (swingLow === Infinity) {
+    swingLow = Math.min(...lows.slice(-20));
+    swingLowIdx = lows.length - 1;
+  }
+
+  return { swingHigh, swingLow, swingHighIdx, swingLowIdx };
+}
+
+function computeBbWidthAtIndex(closes: number[], idx: number, period = 20): number {
+  const start = Math.max(0, idx - period + 1);
+  const window = closes.slice(start, idx + 1);
+  if (window.length < 2) return 0;
+  const m = mean(window);
+  const s = stdDev(window);
+  return s > 0 ? (4 * s) / m : 0;
+}
+
+function pearsonCorrelation(x: number[], y: number[]): number {
+  const n = Math.min(x.length, y.length);
+  if (n < 5) return 0;
+  const xSlice = x.slice(-n);
+  const ySlice = y.slice(-n);
+  const mx = mean(xSlice);
+  const my = mean(ySlice);
+  let num = 0, dx = 0, dy = 0;
+  for (let i = 0; i < n; i++) {
+    const a = xSlice[i] - mx;
+    const b = ySlice[i] - my;
+    num += a * b;
+    dx += a * a;
+    dy += b * b;
+  }
+  const denom = Math.sqrt(dx * dy);
+  return denom > 0 ? num / denom : 0;
+}
+
+function getPairedSymbol(symbol: string): string | null {
+  if (symbol.startsWith("BOOM")) return symbol.replace("BOOM", "CRASH");
+  if (symbol.startsWith("CRASH")) return symbol.replace("CRASH", "BOOM");
+  return null;
+}
+
+function detectSwingBreachAndReclaim(
+  candles: { high: number; low: number; close: number }[],
+  swingHigh: number,
+  swingLow: number
+): { breached: boolean; reclaimed: boolean; breachCandles: number; breachDirection: "above" | "below" | null } {
+  const len = candles.length;
+  if (len < 2) return { breached: false, reclaimed: false, breachCandles: 0, breachDirection: null };
+
+  const lastCandle = candles[len - 1];
+  const lastClose = lastCandle.close;
+
+  for (let lookback = 1; lookback <= Math.min(3, len - 1); lookback++) {
+    const idx = len - 1 - lookback;
+    const c = candles[idx];
+
+    if (c.high > swingHigh && lastClose < swingHigh) {
+      return { breached: true, reclaimed: true, breachCandles: lookback, breachDirection: "above" };
+    }
+
+    if (c.low < swingLow && lastClose > swingLow) {
+      return { breached: true, reclaimed: true, breachCandles: lookback, breachDirection: "below" };
+    }
+  }
+
+  if (lastCandle.high > swingHigh && lastClose < swingHigh) {
+    return { breached: true, reclaimed: true, breachCandles: 0, breachDirection: "above" };
+  }
+  if (lastCandle.low < swingLow && lastClose > swingLow) {
+    return { breached: true, reclaimed: true, breachCandles: 0, breachDirection: "below" };
+  }
+
+  return { breached: false, reclaimed: false, breachCandles: 0, breachDirection: null };
 }
 
 function detectRegime(closes: number[], atrVal: number, ema20: number[]): string {
@@ -217,6 +336,41 @@ export async function computeFeatures(symbol: string, lookback = 100): Promise<F
   // Regime
   const regimeLabel = detectRegime(closes, atr14, ema20Arr);
 
+  // Swing structure (5-bar pivots) with multi-candle breach/reclaim detection
+  const { swingHigh, swingLow } = findSwingLevels(highs, lows, 5);
+  const swingHighDist = (price - swingHigh) / price;
+  const swingLowDist = (price - swingLow) / price;
+  const swingResult = detectSwingBreachAndReclaim(candles, swingHigh, swingLow);
+
+  // BB width rate-of-change
+  const bbWidthPrev = closes.length > 25 ? computeBbWidthAtIndex(closes, closes.length - 6) : bbWidth;
+  const bbWidthRoc = bbWidthPrev > 0 ? (bbWidth - bbWidthPrev) / bbWidthPrev : 0;
+
+  // ATR acceleration
+  const atr14Prev = closes.length > 20 ? atr(highs.slice(0, -5), lows.slice(0, -5), closes.slice(0, -5), 14) / (closes[closes.length - 6] || price) : atr14;
+  const atrAccel = atr14Prev > 0 ? (atr14 / atr14Prev) - 1 : 0;
+
+  // Time features
+  const candleDate = new Date(last.closeTs * 1000);
+  const hourOfDay = candleDate.getUTCHours();
+  const dayOfWeek = candleDate.getUTCDay();
+
+  // Cross-index rolling correlation
+  let crossCorrelation = 0;
+  const pairedSymbol = getPairedSymbol(symbol);
+  if (pairedSymbol) {
+    const pairedCandles = await db.select().from(candlesTable)
+      .where(and(eq(candlesTable.symbol, pairedSymbol), eq(candlesTable.timeframe, "1m")))
+      .orderBy(desc(candlesTable.openTs))
+      .limit(30);
+    if (pairedCandles.length >= 10) {
+      pairedCandles.reverse();
+      const pairedCloses = pairedCandles.map(c => c.close);
+      const alignedOwn = closes.slice(-pairedCloses.length);
+      crossCorrelation = pearsonCorrelation(alignedOwn, pairedCloses);
+    }
+  }
+
   return {
     symbol,
     ts: last.closeTs,
@@ -238,6 +392,17 @@ export async function computeFeatures(symbol: string, lookback = 100): Promise<F
     ticksSinceSpike,
     runLengthSinceSpike,
     spikeHazardScore,
+    swingHighDist,
+    swingLowDist,
+    swingBreached: swingResult.breached,
+    swingReclaimed: swingResult.reclaimed,
+    swingBreachCandles: swingResult.breachCandles,
+    swingBreachDirection: swingResult.breachDirection,
+    bbWidthRoc,
+    atrAccel,
+    hourOfDay,
+    dayOfWeek,
+    crossCorrelation,
     regimeLabel,
   };
 }

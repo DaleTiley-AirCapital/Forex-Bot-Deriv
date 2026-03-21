@@ -88,11 +88,62 @@ export async function runBacktestSimulation(
         directionStr = direction === 1 ? "long" : "short";
         break;
       }
-      case "spike-hazard":
-        signal = Math.random() < 0.15;
+      case "spike-hazard": {
+        const spikeHash = ((i * 2654435761) >>> 0) / 4294967296;
+        const runLength = i - ((() => {
+          for (let k = i - 1; k >= Math.max(0, i - 200); k--) {
+            const c = candles[k];
+            const range = c.high - c.low;
+            const bodyPct = Math.abs(c.close - c.open) / Math.max(range, 0.0001);
+            if (range / c.close > 0.005 && bodyPct > 0.7) return k;
+          }
+          return Math.max(0, i - 200);
+        })());
+        const hazardProxy = 1 / (1 + Math.exp(-(runLength - 100) / 30));
+        signal = hazardProxy > 0.6 && spikeHash < hazardProxy * 0.25;
         direction = symbol.startsWith("BOOM") ? 1 : -1;
         directionStr = direction === 1 ? "long" : "short";
         break;
+      }
+      case "volatility-expansion": {
+        const std = Math.sqrt(closes.slice(-20).reduce((acc, c) => acc + (c - ema20) ** 2, 0) / 20);
+        const bbW = std / ema20;
+        const recentRange = closes.slice(-5);
+        const rangeExpanding = recentRange.length >= 2 &&
+          Math.abs(recentRange[recentRange.length - 1] - recentRange[recentRange.length - 2]) / ema20 > 0.002;
+        signal = bbW < 0.008 && rangeExpanding;
+        direction = distFromEma > 0 ? 1 : -1;
+        directionStr = direction === 1 ? "long" : "short";
+        break;
+      }
+      case "liquidity-sweep": {
+        const recent = candles.slice(Math.max(0, i - 10), i + 1);
+        const recentHighs = recent.map(c => c.high);
+        const recentLows = recent.map(c => c.low);
+        const swingHigh = Math.max(...recentHighs.slice(0, -1));
+        const swingLow = Math.min(...recentLows.slice(0, -1));
+        const lastC = candles[i];
+        const bodyRatio = Math.abs(lastC.close - lastC.open) / Math.max(lastC.high - lastC.low, 0.0001);
+        const sweptHigh = lastC.high > swingHigh && lastC.close < swingHigh && bodyRatio < 0.35;
+        const sweptLow = lastC.low < swingLow && lastC.close > swingLow && bodyRatio < 0.35;
+        signal = sweptHigh || sweptLow;
+        direction = sweptLow ? 1 : -1;
+        directionStr = direction === 1 ? "long" : "short";
+        break;
+      }
+      case "macro-bias": {
+        const candleTs = candles[i].openTs;
+        const candleDate = new Date(candleTs * 1000);
+        const candleHour = candleDate.getUTCHours();
+        const candleDow = candleDate.getUTCDay();
+        const isActive = (candleHour >= 8 && candleHour <= 11) || (candleHour >= 14 && candleHour <= 17);
+        const isWeekday = candleDow >= 1 && candleDow <= 5;
+        const trendOk = symbol.startsWith("BOOM") ? distFromEma > 0 : distFromEma < 0;
+        signal = isActive && isWeekday && trendOk && Math.abs(distFromEma) > 0.001;
+        direction = symbol.startsWith("BOOM") ? 1 : -1;
+        directionStr = direction === 1 ? "long" : "short";
+        break;
+      }
     }
 
     if (!signal) continue;
@@ -201,7 +252,7 @@ router.post("/backtest/run", async (req, res): Promise<void> => {
     allocationMode = "balanced",
   } = req.body ?? {};
 
-  const validStrategies = ["trend-pullback", "exhaustion-rebound", "volatility-breakout", "spike-hazard"];
+  const validStrategies = ["trend-pullback", "exhaustion-rebound", "volatility-breakout", "spike-hazard", "volatility-expansion", "liquidity-sweep", "macro-bias"];
   if (!validStrategies.includes(strategyName)) {
     res.status(400).json({ error: `Invalid strategy. Use: ${validStrategies.join(", ")}` });
     return;

@@ -7,7 +7,7 @@ import { runBacktestSimulation } from "./backtest.js";
 
 const router: IRouter = Router();
 
-const STRATEGIES = ["trend-pullback", "exhaustion-rebound", "volatility-breakout", "spike-hazard"] as const;
+const STRATEGIES = ["trend-pullback", "exhaustion-rebound", "volatility-breakout", "spike-hazard", "volatility-expansion", "liquidity-sweep", "macro-bias"] as const;
 const GRANULARITY_1H = 3600;
 const MONTHS_24_SECONDS = 24 * 30 * 24 * 3600;
 const MAX_BATCH = 5000;

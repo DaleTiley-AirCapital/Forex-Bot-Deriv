@@ -34,6 +34,9 @@ interface PortfolioContext {
   slRatio: number;
   trailingStopBufferPct: number;
   timeExitWindowHours: number;
+  minCompositeScore: number;
+  minEvThreshold: number;
+  minRrRatio: number;
 }
 
 export async function getPortfolioContext(): Promise<PortfolioContext> {
@@ -43,7 +46,7 @@ export async function getPortfolioContext(): Promise<PortfolioContext> {
 
   const openTrades = await db.select().from(tradesTable).where(eq(tradesTable.status, "open"));
   const closedTrades = await db.select().from(tradesTable).where(eq(tradesTable.status, "closed"));
-  const totalCapital = parseFloat(stateMap["total_capital"] || "10000");
+  const totalCapital = Math.max(1, parseFloat(stateMap["total_capital"] || "10000"));
   const totalDeployedCapital = openTrades.reduce((sum, t) => sum + t.size, 0);
   const openRisk = totalDeployedCapital;
 
@@ -95,12 +98,15 @@ export async function getPortfolioContext(): Promise<PortfolioContext> {
     slRatio: parseFloat(stateMap["sl_ratio"] || "1.0"),
     trailingStopBufferPct: parseFloat(stateMap["trailing_stop_buffer_pct"] || "0.3"),
     timeExitWindowHours: parseFloat(stateMap["time_exit_window_hours"] || "72"),
+    minCompositeScore: parseFloat(stateMap["min_composite_score"] || "85"),
+    minEvThreshold: parseFloat(stateMap["min_ev_threshold"] || "0.003"),
+    minRrRatio: parseFloat(stateMap["min_rr_ratio"] || "1.5"),
   };
 }
 
-function getAllocationPct(score: number, mode: string): number {
-  const strong = score >= 0.75;
-  const medium = score >= 0.65 && score < 0.75;
+function getAllocationPct(compositeScore: number, mode: string): number {
+  const strong = compositeScore >= 92;
+  const medium = compositeScore >= 85 && compositeScore < 92;
 
   switch (mode) {
     case "conservative":
@@ -123,7 +129,7 @@ export async function routeSignals(candidates: SignalCandidate[]): Promise<Alloc
   const ctx = await getPortfolioContext();
   const decisions: AllocationDecision[] = [];
 
-  const sorted = [...candidates].sort((a, b) => b.score - a.score);
+  const sorted = [...candidates].sort((a, b) => b.compositeScore - a.compositeScore);
 
   let remainingCapital = ctx.availableCapital;
   let currentOpenCount = ctx.openTradeCount;
@@ -133,6 +139,10 @@ export async function routeSignals(candidates: SignalCandidate[]): Promise<Alloc
     let rejectionReason: string | null = null;
     let capitalAllocationPct = 0;
     let capitalAmount = 0;
+
+    const tp = Math.abs(signal.suggestedTp ?? 0);
+    const sl = Math.abs(signal.suggestedSl ?? 0);
+    const rrRatio = sl > 0 ? tp / sl : 0;
 
     if (ctx.killSwitchActive) {
       allowed = false;
@@ -155,17 +165,23 @@ export async function routeSignals(candidates: SignalCandidate[]): Promise<Alloc
     } else if (!signal.regimeCompatible) {
       allowed = false;
       rejectionReason = `Regime mismatch for ${signal.signalType} strategy`;
-    } else if (signal.score < 0.55) {
+    } else if (signal.compositeScore < ctx.minCompositeScore) {
       allowed = false;
-      rejectionReason = `Score below threshold (${signal.score.toFixed(2)} < 0.55)`;
-    } else if (signal.expectedValue < 0.003) {
+      rejectionReason = `Composite score below threshold (${signal.compositeScore} < ${ctx.minCompositeScore})`;
+    } else if (signal.expectedValue < ctx.minEvThreshold) {
       allowed = false;
-      rejectionReason = `Expected value too low (${signal.expectedValue.toFixed(4)} < 0.003)`;
+      rejectionReason = `Expected value too low (${signal.expectedValue.toFixed(4)} < ${ctx.minEvThreshold})`;
+    } else if (sl <= 0 || tp <= 0) {
+      allowed = false;
+      rejectionReason = `Invalid SL/TP values (SL=${sl.toFixed(2)}, TP=${tp.toFixed(2)}) — cannot compute R:R`;
+    } else if (rrRatio < ctx.minRrRatio) {
+      allowed = false;
+      rejectionReason = `Reward/risk too low (${rrRatio.toFixed(2)} < ${ctx.minRrRatio})`;
     } else if (remainingCapital < ctx.totalCapital * 0.05) {
       allowed = false;
       rejectionReason = "Insufficient available capital";
     } else {
-      capitalAllocationPct = getAllocationPct(signal.score, ctx.allocationMode);
+      capitalAllocationPct = getAllocationPct(signal.compositeScore, ctx.allocationMode);
       const maxPerTrade = ctx.totalCapital * (ctx.equityPctPerTrade / 100);
       capitalAmount = Math.min(
         ctx.totalCapital * capitalAllocationPct,
@@ -175,9 +191,9 @@ export async function routeSignals(candidates: SignalCandidate[]): Promise<Alloc
       remainingCapital -= capitalAmount;
       currentOpenCount++;
 
-      const tpMultiplier = signal.score >= 0.75
+      const tpMultiplier = signal.compositeScore >= 92
         ? ctx.tpMultiplierStrong
-        : signal.score >= 0.65
+        : signal.compositeScore >= 85
           ? ctx.tpMultiplierMedium
           : ctx.tpMultiplierWeak;
       const baseTp = signal.suggestedTp ?? 0;
@@ -212,6 +228,8 @@ export async function logSignalDecisions(decisions: AllocationDecision[]): Promi
       aiVerdict: d.aiVerdict ?? null,
       aiReasoning: d.aiReasoning ?? null,
       aiConfidenceAdj: d.aiConfidenceAdj ?? null,
+      compositeScore: d.signal.compositeScore,
+      scoringDimensions: d.signal.dimensions,
     });
   }
 }

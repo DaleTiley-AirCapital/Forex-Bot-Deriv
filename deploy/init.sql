@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS signal_log (
   ai_verdict       TEXT,
   ai_reasoning     TEXT,
   ai_confidence_adj DOUBLE PRECISION,
+  composite_score  DOUBLE PRECISION,
+  scoring_dimensions JSONB,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_signals_ts ON signal_log (ts DESC);

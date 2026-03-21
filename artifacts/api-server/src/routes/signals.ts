@@ -1,9 +1,30 @@
 import { Router, type IRouter } from "express";
 import { desc, eq } from "drizzle-orm";
-import { db, signalLogTable } from "@workspace/db";
+import { db, signalLogTable, platformStateTable } from "@workspace/db";
 import { computeFeatures } from "../lib/features.js";
 import { runAllStrategies } from "../lib/strategies.js";
 import { routeSignals, logSignalDecisions } from "../lib/signalRouter.js";
+import type { ScoringWeights } from "../lib/scoring.js";
+
+async function loadScoringWeights(): Promise<ScoringWeights | undefined> {
+  const states = await db.select().from(platformStateTable);
+  const m: Record<string, string> = {};
+  for (const s of states) m[s.key] = s.value;
+  const map: Record<keyof ScoringWeights, string> = {
+    regimeFit: "scoring_weight_regime_fit",
+    setupQuality: "scoring_weight_setup_quality",
+    trendAlignment: "scoring_weight_trend_alignment",
+    volatilityCondition: "scoring_weight_volatility_condition",
+    rewardRisk: "scoring_weight_reward_risk",
+    probabilityOfSuccess: "scoring_weight_probability_of_success",
+  };
+  const keys = Object.keys(map) as (keyof ScoringWeights)[];
+  const hasAny = keys.some(k => m[map[k]] !== undefined);
+  if (!hasAny) return undefined;
+  const w = {} as ScoringWeights;
+  for (const k of keys) w[k] = parseFloat(m[map[k]] || "1");
+  return w;
+}
 
 const router: IRouter = Router();
 
@@ -32,6 +53,8 @@ router.get("/signals/latest", async (req, res): Promise<void> => {
     aiVerdict: r.aiVerdict ?? null,
     aiReasoning: r.aiReasoning ?? null,
     aiConfidenceAdj: r.aiConfidenceAdj ?? null,
+    compositeScore: r.compositeScore ?? null,
+    scoringDimensions: r.scoringDimensions ?? null,
   })));
 });
 
@@ -40,6 +63,7 @@ router.get("/signals/latest", async (req, res): Promise<void> => {
  */
 router.post("/signals/scan", async (_req, res): Promise<void> => {
   try {
+    const weights = await loadScoringWeights();
     const allCandidates = [];
     const symbolResults: Record<string, number> = {};
 
@@ -47,7 +71,7 @@ router.post("/signals/scan", async (_req, res): Promise<void> => {
       const features = await computeFeatures(symbol);
       if (!features) { symbolResults[symbol] = 0; continue; }
 
-      const candidates = runAllStrategies(features);
+      const candidates = runAllStrategies(features, weights);
       allCandidates.push(...candidates);
       symbolResults[symbol] = candidates.length;
     }
@@ -128,7 +152,8 @@ router.get("/signals/strategies/:symbol", async (req, res): Promise<void> => {
       res.status(404).json({ error: `Insufficient data for ${symbol} — run backfill first.` });
       return;
     }
-    const candidates = runAllStrategies(features);
+    const w = await loadScoringWeights();
+    const candidates = runAllStrategies(features, w);
     res.json({
       symbol,
       regime: features.regimeLabel,

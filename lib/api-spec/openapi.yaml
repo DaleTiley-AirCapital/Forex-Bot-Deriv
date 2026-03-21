@@ -1085,6 +1085,29 @@ components:
         - status
         - createdAt
 
+    ScoringDimensions:
+      type: object
+      properties:
+        regimeFit:
+          type: number
+        setupQuality:
+          type: number
+        trendAlignment:
+          type: number
+        volatilityCondition:
+          type: number
+        rewardRisk:
+          type: number
+        probabilityOfSuccess:
+          type: number
+      required:
+        - regimeFit
+        - setupQuality
+        - trendAlignment
+        - volatilityCondition
+        - rewardRisk
+        - probabilityOfSuccess
+
     SignalLog:
       type: object
       properties:
@@ -1116,6 +1139,12 @@ components:
           type: ["string", "null"]
         aiConfidenceAdj:
           type: ["number", "null"]
+        compositeScore:
+          type: ["number", "null"]
+        scoringDimensions:
+          oneOf:
+            - $ref: "#/components/schemas/ScoringDimensions"
+            - type: "null"
       required:
         - id
         - ts
@@ -1131,6 +1160,8 @@ components:
         - aiVerdict
         - aiReasoning
         - aiConfidenceAdj
+        - compositeScore
+        - scoringDimensions
 
     BacktestAnalysis:
       type: object

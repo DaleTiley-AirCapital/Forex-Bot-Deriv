@@ -60,6 +60,15 @@ const SETTING_DEFAULTS: Record<string, string> = {
   live_max_weekly_loss_pct: "8",
   paper_max_drawdown_pct: "20",
   live_max_drawdown_pct: "15",
+  min_composite_score: "85",
+  min_ev_threshold: "0.003",
+  min_rr_ratio: "1.5",
+  scoring_weight_regime_fit: "16.67",
+  scoring_weight_setup_quality: "16.67",
+  scoring_weight_trend_alignment: "16.67",
+  scoring_weight_volatility_condition: "16.67",
+  scoring_weight_reward_risk: "16.67",
+  scoring_weight_probability_of_success: "16.67",
 };
 
 const API_KEY_KEYS = ["deriv_api_token", "openai_api_key"];

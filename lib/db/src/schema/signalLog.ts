@@ -1,4 +1,4 @@
-import { pgTable, serial, text, doublePrecision, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, doublePrecision, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -17,6 +17,8 @@ export const signalLogTable = pgTable("signal_log", {
   aiVerdict: text("ai_verdict"),
   aiReasoning: text("ai_reasoning"),
   aiConfidenceAdj: doublePrecision("ai_confidence_adj"),
+  compositeScore: doublePrecision("composite_score"),
+  scoringDimensions: jsonb("scoring_dimensions"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

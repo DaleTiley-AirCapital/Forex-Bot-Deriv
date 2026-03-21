@@ -91,11 +91,12 @@ artifacts-monorepo/
 
 1. **Feature Engineering** (`lib/features.ts`): computes RSI(14), EMA slope/distance, ATR(14), Bollinger Band width/%B, candle body/wick ratios, z-score, rolling skew, consecutive candle count, spike hazard score, regime label from real candle data stored in PostgreSQL
 2. **Probability Model** (`lib/model.ts`): logistic regression via SGD with 100 epochs, gradient-boost-style rule ensemble, per-symbol weight store, expected value estimation
-3. **Strategy Engine** (`lib/strategies.ts`): four strategies each with their own entry/exit conditions, SL/TP computation (ATR multiples), min score and min EV thresholds
-4. **Portfolio Signal Router** (`lib/signalRouter.ts`): kill-switch check, daily/weekly loss limit enforcement, 80% open risk cap, per-strategy disable, capital allocation (20-25% per trade), configurable equity % per trade, TP multipliers by confidence band, SL ratio
-5. **AI Signal Verification** (`lib/openai.ts`): GPT-4o based signal pre-trade verification (agree/disagree/uncertain verdicts), backtest analysis with structured output; uses user's own OpenAI key from encrypted DB settings
-6. **Signal Scheduler** (`lib/scheduler.ts`): configurable scan interval (default 30s, live-updates from settings), position management every 10s (trailing stop updates, time exits), opens positions on approved signals, optional AI verification gate (blocks on disagree, 50% size on uncertain)
-7. **Trade Engine** (`lib/tradeEngine.ts`): position sizing, dynamic TP, trailing stop manager, 3-layer exit logic, Deriv execution integration
+3. **Strategy Engine** (`lib/strategies.ts`): seven strategies each with their own entry/exit conditions, SL/TP computation (ATR multiples), min score and min EV thresholds
+4. **Composite Scoring** (`lib/scoring.ts`): six-dimension scoring system (0–100 each): Regime Fit, Setup Quality, Trend Alignment, Volatility Condition, Reward/Risk, Probability of Success. Combined into a weighted composite score (0–100). Configurable weights via Settings.
+5. **Portfolio Signal Router** (`lib/signalRouter.ts`): composite score >= 85 threshold (configurable), EV > min threshold, R:R >= min ratio, kill-switch check, daily/weekly loss limit enforcement, 80% open risk cap, per-strategy disable, capital allocation (20-25% per trade), configurable equity % per trade, TP multipliers by composite score band (92+/85-92/<85), SL ratio
+6. **AI Signal Verification** (`lib/openai.ts`): GPT-4o based signal pre-trade verification (agree/disagree/uncertain verdicts), backtest analysis with structured output; uses user's own OpenAI key from encrypted DB settings
+7. **Signal Scheduler** (`lib/scheduler.ts`): configurable scan interval (default 30s, live-updates from settings), position management every 10s (trailing stop updates, time exits), opens positions on approved signals, optional AI verification gate (blocks on disagree, 50% size on uncertain)
+8. **Trade Engine** (`lib/tradeEngine.ts`): position sizing, dynamic TP, trailing stop manager, 3-layer exit logic, Deriv execution integration
 
 ## Deployment
 

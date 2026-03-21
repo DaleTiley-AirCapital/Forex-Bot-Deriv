@@ -6,6 +6,15 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export interface ScoringDimensions {
+  regimeFit: number;
+  setupQuality: number;
+  trendAlignment: number;
+  volatilityCondition: number;
+  rewardRisk: number;
+  probabilityOfSuccess: number;
+}
+
 export interface SignalLog {
   id: number;
   ts: string;
@@ -28,4 +37,8 @@ export interface SignalLog {
   aiReasoning: string | null;
   /** @nullable */
   aiConfidenceAdj: number | null;
+  /** @nullable */
+  compositeScore: number | null;
+  /** @nullable */
+  scoringDimensions: ScoringDimensions | null;
 }

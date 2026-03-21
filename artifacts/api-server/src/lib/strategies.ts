@@ -5,6 +5,7 @@
  */
 import type { FeatureVector } from "./features.js";
 import { scoreFeatures } from "./model.js";
+import { computeScoringDimensions, computeCompositeScore, type ScoringWeights } from "./scoring.js";
 
 export interface SignalCandidate {
   symbol: string;
@@ -19,48 +20,50 @@ export interface SignalCandidate {
   suggestedTp: number | null;
   reason: string;
   timestamp: number;
+  compositeScore: number;
+  dimensions: import("./scoring.js").ScoringDimensions | null;
 }
 
 const STRATEGY_CONFIG = {
   "trend-pullback": {
     enabled: true,
-    minScore: 0.58,
+    minModelScore: 0.58,
     minEV: 0.005,
     minRR: 1.5,
   },
   "exhaustion-rebound": {
     enabled: true,
-    minScore: 0.60,
+    minModelScore: 0.60,
     minEV: 0.006,
     minRR: 1.8,
   },
   "volatility-breakout": {
     enabled: true,
-    minScore: 0.55,
+    minModelScore: 0.55,
     minEV: 0.004,
     minRR: 1.5,
   },
   "spike-hazard": {
     enabled: true,
-    minScore: 0.65,
+    minModelScore: 0.65,
     minEV: 0.008,
     minRR: 2.0,
   },
   "volatility-expansion": {
     enabled: true,
-    minScore: 0.55,
+    minModelScore: 0.55,
     minEV: 0.005,
     minRR: 1.8,
   },
   "liquidity-sweep": {
     enabled: true,
-    minScore: 0.60,
+    minModelScore: 0.60,
     minEV: 0.006,
     minRR: 2.0,
   },
   "macro-bias": {
     enabled: true,
-    minScore: 0.52,
+    minModelScore: 0.52,
     minEV: 0.004,
     minRR: 1.4,
   },
@@ -117,7 +120,7 @@ export function trendPullback(features: FeatureVector): SignalCandidate | null {
   if (!direction) return null;
 
   const { score, confidence, expectedValue } = scoreFeatures(features, "gradient-boost");
-  if (score < cfg.minScore || expectedValue < cfg.minEV) return null;
+  if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
   // Estimate current price from EMA + dist
   const price = 1; // relative - SL/TP as percentages
@@ -136,6 +139,8 @@ export function trendPullback(features: FeatureVector): SignalCandidate | null {
     suggestedTp: Math.abs(tp - price),
     reason,
     timestamp: Date.now(),
+    compositeScore: 0,
+    dimensions: null,
   };
 }
 
@@ -167,7 +172,7 @@ export function exhaustionRebound(features: FeatureVector): SignalCandidate | nu
   if (!direction) return null;
 
   const { score, confidence, expectedValue } = scoreFeatures(features, "gradient-boost");
-  if (score < cfg.minScore || expectedValue < cfg.minEV) return null;
+  if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
   const { sl, tp } = sltp(1, direction, features.atr14, 2.0, 3.5);
 
@@ -184,6 +189,8 @@ export function exhaustionRebound(features: FeatureVector): SignalCandidate | nu
     suggestedTp: Math.abs(tp - 1),
     reason,
     timestamp: Date.now(),
+    compositeScore: 0,
+    dimensions: null,
   };
 }
 
@@ -215,7 +222,7 @@ export function volatilityBreakout(features: FeatureVector): SignalCandidate | n
   if (!direction) return null;
 
   const { score, confidence, expectedValue } = scoreFeatures(features, "gradient-boost");
-  if (score < cfg.minScore || expectedValue < cfg.minEV) return null;
+  if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
   const { sl, tp } = sltp(1, direction, features.atr14, 1.2, 2.5);
 
@@ -232,6 +239,8 @@ export function volatilityBreakout(features: FeatureVector): SignalCandidate | n
     suggestedTp: Math.abs(tp - 1),
     reason,
     timestamp: Date.now(),
+    compositeScore: 0,
+    dimensions: null,
   };
 }
 
@@ -256,7 +265,7 @@ export function spikeHazard(features: FeatureVector): SignalCandidate | null {
   const { score, confidence, expectedValue } = scoreFeatures(features, "gradient-boost");
   // Boost score for spike hazard since it's the primary signal
   const boostedScore = Math.min(0.99, score * 0.5 + features.spikeHazardScore * 0.5);
-  if (boostedScore < cfg.minScore) return null;
+  if (boostedScore < cfg.minModelScore) return null;
 
   const { sl, tp } = sltp(1, direction, features.atr14, 1.0, 2.5);
 
@@ -273,6 +282,8 @@ export function spikeHazard(features: FeatureVector): SignalCandidate | null {
     suggestedTp: Math.abs(tp - 1),
     reason,
     timestamp: Date.now(),
+    compositeScore: 0,
+    dimensions: null,
   };
 }
 
@@ -299,7 +310,7 @@ export function volatilityExpansion(features: FeatureVector): SignalCandidate | 
   const reason = `Volatility expansion: bbWidth=${features.bbWidth.toFixed(4)}, bbWidthRoC=${features.bbWidthRoc.toFixed(3)}, atrAccel=${features.atrAccel.toFixed(3)}, body=${features.candleBody.toFixed(2)}, %B=${features.bbPctB.toFixed(2)}`;
 
   const { score, confidence, expectedValue } = scoreFeatures(features, "gradient-boost");
-  if (score < cfg.minScore || expectedValue < cfg.minEV) return null;
+  if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
   const { sl, tp } = sltp(1, direction, features.atr14, 1.5, 4.0);
 
@@ -316,6 +327,8 @@ export function volatilityExpansion(features: FeatureVector): SignalCandidate | 
     suggestedTp: Math.abs(tp - 1),
     reason,
     timestamp: Date.now(),
+    compositeScore: 0,
+    dimensions: null,
   };
 }
 
@@ -353,7 +366,7 @@ export function liquiditySweep(features: FeatureVector): SignalCandidate | null 
   }
 
   const { score, confidence, expectedValue } = scoreFeatures(features, "gradient-boost");
-  if (score < cfg.minScore || expectedValue < cfg.minEV) return null;
+  if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
   const { sl, tp } = sltp(1, direction, features.atr14, 1.0, 2.5);
 
@@ -370,6 +383,8 @@ export function liquiditySweep(features: FeatureVector): SignalCandidate | null 
     suggestedTp: Math.abs(tp - 1),
     reason,
     timestamp: Date.now(),
+    compositeScore: 0,
+    dimensions: null,
   };
 }
 
@@ -428,7 +443,7 @@ export function macroBias(features: FeatureVector): SignalCandidate | null {
 
   const { score, confidence, expectedValue } = scoreFeatures(features, "gradient-boost");
   const biasAdjustedScore = Math.min(0.99, score * 0.6 + bias * 0.4);
-  if (biasAdjustedScore < cfg.minScore || expectedValue < cfg.minEV) return null;
+  if (biasAdjustedScore < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
   const { sl, tp } = sltp(1, direction, features.atr14, 1.5, 2.5);
 
@@ -445,13 +460,16 @@ export function macroBias(features: FeatureVector): SignalCandidate | null {
     suggestedTp: Math.abs(tp - 1),
     reason,
     timestamp: Date.now(),
+    compositeScore: 0,
+    dimensions: null,
   };
 }
 
 /**
- * Run all strategies for a symbol and return candidates
+ * Run all strategies for a symbol and return candidates.
+ * Computes composite scoring dimensions for each candidate.
  */
-export function runAllStrategies(features: FeatureVector): SignalCandidate[] {
+export function runAllStrategies(features: FeatureVector, weights?: ScoringWeights): SignalCandidate[] {
   const candidates: SignalCandidate[] = [];
 
   const tp = trendPullback(features);
@@ -474,6 +492,12 @@ export function runAllStrategies(features: FeatureVector): SignalCandidate[] {
 
   const mb = macroBias(features);
   if (mb) candidates.push(mb);
+
+  for (const candidate of candidates) {
+    const dims = computeScoringDimensions(features, candidate, candidate.score);
+    candidate.dimensions = dims;
+    candidate.compositeScore = computeCompositeScore(dims, weights);
+  }
 
   return candidates;
 }

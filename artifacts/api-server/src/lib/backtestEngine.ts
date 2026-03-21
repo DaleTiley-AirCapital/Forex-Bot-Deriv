@@ -1,8 +1,9 @@
-import { db, candlesTable } from "@workspace/db";
+import { db, candlesTable, platformStateTable } from "@workspace/db";
 import { eq, and, asc, gte, lte } from "drizzle-orm";
 import { runAllStrategies, type SignalCandidate } from "./strategies.js";
 import { calculateTrailingStop } from "./tradeEngine.js";
 import type { FeatureVector } from "./features.js";
+import type { ScoringWeights } from "./scoring.js";
 
 const TRAILING_STOP_LOCK_PCT = 0.50;
 const INITIAL_EXIT_HOURS = 72;
@@ -26,6 +27,10 @@ export interface BacktestConfig {
   startDate?: Date;
   endDate?: Date;
   walkForward?: WalkForwardConfig;
+  minCompositeScore?: number;
+  minEvThreshold?: number;
+  minRrRatio?: number;
+  scoringWeights?: ScoringWeights;
 }
 
 export interface WalkForwardConfig {
@@ -634,12 +639,22 @@ function simulateOnCandles(
       const features = computeFeaturesFromCandles(window, sym);
       if (!features) continue;
 
-      const signals = runAllStrategies(features);
+      const signals = runAllStrategies(features, config.scoringWeights);
       const filteredSignals = strategies
         ? signals.filter(s => strategies.includes(s.strategyName))
         : signals;
 
+      const minComposite = config.minCompositeScore ?? 85;
+      const minEv = config.minEvThreshold ?? 0.003;
+      const minRr = config.minRrRatio ?? 1.5;
+
       for (const signal of filteredSignals) {
+        const sigTp = Math.abs(signal.suggestedTp ?? 0);
+        const sigSl = Math.abs(signal.suggestedSl ?? 0);
+        if (signal.compositeScore < minComposite) continue;
+        if (signal.expectedValue < minEv) continue;
+        if (sigSl <= 0 || sigTp <= 0) continue;
+        if (sigTp / sigSl < minRr) continue;
         if (openPositions.length >= maxConcurrent) break;
 
         const alreadyHasPosition = openPositions.some(
@@ -1052,6 +1067,28 @@ export async function runBacktestSimulation(
   const basePct = allocationMode === "aggressive" ? 0.25
     : allocationMode === "conservative" ? 0.10 : 0.15;
 
+  const states = await db.select().from(platformStateTable);
+  const stateMap: Record<string, string> = {};
+  for (const s of states) stateMap[s.key] = s.value;
+  const weightKeys: (keyof ScoringWeights)[] = [
+    "regimeFit", "setupQuality", "trendAlignment",
+    "volatilityCondition", "rewardRisk", "probabilityOfSuccess",
+  ];
+  const weightStateMap: Record<keyof ScoringWeights, string> = {
+    regimeFit: "scoring_weight_regime_fit",
+    setupQuality: "scoring_weight_setup_quality",
+    trendAlignment: "scoring_weight_trend_alignment",
+    volatilityCondition: "scoring_weight_volatility_condition",
+    rewardRisk: "scoring_weight_reward_risk",
+    probabilityOfSuccess: "scoring_weight_probability_of_success",
+  };
+  const hasWeights = weightKeys.some(k => stateMap[weightStateMap[k]] !== undefined);
+  let scoringWeights: ScoringWeights | undefined;
+  if (hasWeights) {
+    scoringWeights = {} as ScoringWeights;
+    for (const k of weightKeys) scoringWeights[k] = parseFloat(stateMap[weightStateMap[k]] || "1");
+  }
+
   const result = await runFullBacktest({
     symbol,
     symbols: [symbol],
@@ -1059,6 +1096,10 @@ export async function runBacktestSimulation(
     initialCapital,
     mode,
     basePct,
+    minCompositeScore: parseFloat(stateMap["min_composite_score"] || "85"),
+    minEvThreshold: parseFloat(stateMap["min_ev_threshold"] || "0.003"),
+    minRrRatio: parseFloat(stateMap["min_rr_ratio"] || "1.5"),
+    scoringWeights,
   });
 
   const pm = result.portfolioMetrics;

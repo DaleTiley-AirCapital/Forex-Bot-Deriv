@@ -1,6 +1,7 @@
 import { computeFeatures } from "./features.js";
 import { runAllStrategies } from "./strategies.js";
 import { routeSignals, logSignalDecisions } from "./signalRouter.js";
+import type { ScoringWeights } from "./scoring.js";
 import { openPosition, manageOpenPositions } from "./tradeEngine.js";
 import { verifySignal } from "./openai.js";
 import { db, platformStateTable, tradesTable, candlesTable, backtestRunsTable, backtestTradesTable } from "@workspace/db";
@@ -24,11 +25,34 @@ let staggeredScanActive = false;
 let staggerSymbolIndex = 0;
 let staggerTimerHandle: ReturnType<typeof setTimeout> | null = null;
 
+function parseScoringWeights(stateMap: Record<string, string>): ScoringWeights | undefined {
+  const keys: (keyof ScoringWeights)[] = [
+    "regimeFit", "setupQuality", "trendAlignment",
+    "volatilityCondition", "rewardRisk", "probabilityOfSuccess",
+  ];
+  const stateKeys: Record<keyof ScoringWeights, string> = {
+    regimeFit: "scoring_weight_regime_fit",
+    setupQuality: "scoring_weight_setup_quality",
+    trendAlignment: "scoring_weight_trend_alignment",
+    volatilityCondition: "scoring_weight_volatility_condition",
+    rewardRisk: "scoring_weight_reward_risk",
+    probabilityOfSuccess: "scoring_weight_probability_of_success",
+  };
+  const hasAny = keys.some(k => stateMap[stateKeys[k]] !== undefined);
+  if (!hasAny) return undefined;
+  const weights: ScoringWeights = {} as ScoringWeights;
+  for (const k of keys) {
+    weights[k] = parseFloat(stateMap[stateKeys[k]] || "1");
+  }
+  return weights;
+}
+
 async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>): Promise<void> {
   const features = await computeFeatures(symbol);
   if (!features) return;
 
-  const candidates = runAllStrategies(features);
+  const weights = parseScoringWeights(stateMap);
+  const candidates = runAllStrategies(features, weights);
   if (candidates.length === 0) return;
 
   const allCandidates = candidates.map(c => ({ candidate: c, atr: features.atr14 }));

@@ -1130,6 +1130,113 @@ export default function Settings() {
         </Card>
       </motion.div>
 
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Crosshair className="w-4 h-4 text-primary" />
+              Signal Scoring Thresholds
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-muted-foreground mb-3">
+              Every signal candidate is scored on six dimensions (0–100 each) and combined into a composite score. Only signals meeting all thresholds below are allowed to trade.
+            </p>
+            <SettingField
+              label="Minimum Composite Score"
+              description="Signals must score at least this high on the 0–100 composite scale to be approved"
+              value={form.min_composite_score || "85"}
+              onChange={(v) => update("min_composite_score", v)}
+              min={50}
+              max={100}
+              step={1}
+            />
+            <SettingField
+              label="Minimum Expected Value"
+              description="Minimum expected value (probability * win – (1-prob) * loss) required"
+              value={form.min_ev_threshold || "0.003"}
+              onChange={(v) => update("min_ev_threshold", v)}
+              min={0}
+              max={0.1}
+              step={0.001}
+            />
+            <SettingField
+              label="Minimum Reward/Risk Ratio"
+              description="Minimum ratio of take profit distance to stop loss distance"
+              value={form.min_rr_ratio || "1.5"}
+              onChange={(v) => update("min_rr_ratio", v)}
+              suffix="x"
+              min={0.5}
+              max={5}
+              step={0.1}
+            />
+            <div className="border-t border-border/30 my-4" />
+            <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Dimension Weights (%)</p>
+            <p className="text-xs text-muted-foreground mb-3">Adjust how much each scoring dimension contributes to the composite score. Values are relative weights (will be normalized).</p>
+            <SettingField
+              label="Regime Fit"
+              description="How well the market regime matches the strategy's ideal conditions"
+              value={form.scoring_weight_regime_fit || "16.67"}
+              onChange={(v) => update("scoring_weight_regime_fit", v)}
+              suffix="%"
+              min={0}
+              max={100}
+              step={1}
+            />
+            <SettingField
+              label="Setup Quality"
+              description="How cleanly the strategy's entry conditions are met"
+              value={form.scoring_weight_setup_quality || "16.67"}
+              onChange={(v) => update("scoring_weight_setup_quality", v)}
+              suffix="%"
+              min={0}
+              max={100}
+              step={1}
+            />
+            <SettingField
+              label="Trend Alignment"
+              description="Whether higher-timeframe structure supports the trade direction"
+              value={form.scoring_weight_trend_alignment || "16.67"}
+              onChange={(v) => update("scoring_weight_trend_alignment", v)}
+              suffix="%"
+              min={0}
+              max={100}
+              step={1}
+            />
+            <SettingField
+              label="Volatility Condition"
+              description="Whether current volatility is in the ideal range for the strategy"
+              value={form.scoring_weight_volatility_condition || "16.67"}
+              onChange={(v) => update("scoring_weight_volatility_condition", v)}
+              suffix="%"
+              min={0}
+              max={100}
+              step={1}
+            />
+            <SettingField
+              label="Reward/Risk"
+              description="Expected reward-to-risk ratio normalized score"
+              value={form.scoring_weight_reward_risk || "16.67"}
+              onChange={(v) => update("scoring_weight_reward_risk", v)}
+              suffix="%"
+              min={0}
+              max={100}
+              step={1}
+            />
+            <SettingField
+              label="Probability of Success"
+              description="ML model's estimated probability of a profitable trade"
+              value={form.scoring_weight_probability_of_success || "16.67"}
+              onChange={(v) => update("scoring_weight_probability_of_success", v)}
+              suffix="%"
+              min={0}
+              max={100}
+              step={1}
+            />
+          </CardContent>
+        </Card>
+      </motion.div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
           <Card>
@@ -1248,7 +1355,7 @@ export default function Settings() {
             <CardContent>
               <SettingField
                 label="TP Multiplier — Strong Signal"
-                description="Take profit multiplier for high-confidence signals (score >= 0.75)"
+                description="Take profit multiplier for high-confidence signals (composite >= 92)"
                 value={form.tp_multiplier_strong || "2.5"}
                 onChange={(v) => update("tp_multiplier_strong", v)}
                 suffix="x"
@@ -1263,7 +1370,7 @@ export default function Settings() {
               />
               <SettingField
                 label="TP Multiplier — Medium Signal"
-                description="Take profit multiplier for medium-confidence signals (score 0.65-0.75)"
+                description="Take profit multiplier for medium-confidence signals (composite 85-92)"
                 value={form.tp_multiplier_medium || "2.0"}
                 onChange={(v) => update("tp_multiplier_medium", v)}
                 suffix="x"
@@ -1278,7 +1385,7 @@ export default function Settings() {
               />
               <SettingField
                 label="TP Multiplier — Weak Signal"
-                description="Take profit multiplier for weaker signals (score 0.55-0.65)"
+                description="Take profit multiplier for weaker signals (composite < 85)"
                 value={form.tp_multiplier_weak || "1.5"}
                 onChange={(v) => update("tp_multiplier_weak", v)}
                 suffix="x"

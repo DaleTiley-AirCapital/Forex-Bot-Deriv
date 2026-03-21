@@ -1,31 +1,37 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { db, platformStateTable } from "@workspace/db";
-import { getDerivClientWithDbToken } from "../lib/deriv.js";
+import { getDerivClientWithDbToken, getDerivClientForMode } from "../lib/deriv.js";
 
 const router: IRouter = Router();
 
-async function getAccountData(res: import("express").Response): Promise<void> {
+interface AccountSnapshot {
+  connected: boolean;
+  balance: number | null;
+  currency: string | null;
+  equity: number | null;
+  margin: number | null;
+  free_margin: number | null;
+  margin_level_pct: number | null;
+  loginid: string | null;
+  account_type: string | null;
+  error: string | null;
+}
+
+const EMPTY_ACCOUNT: AccountSnapshot = {
+  connected: false, balance: null, currency: null, equity: null,
+  margin: null, free_margin: null, margin_level_pct: null,
+  loginid: null, account_type: null, error: null,
+};
+
+async function fetchAccountSnapshot(mode: "demo" | "real"): Promise<AccountSnapshot> {
   try {
-    const client = await getDerivClientWithDbToken();
+    const client = await getDerivClientForMode(mode);
+    if (!client) return { ...EMPTY_ACCOUNT, error: `No ${mode} API token configured.` };
 
     if (!client.isStreaming()) {
-      try {
-        await client.connect();
-      } catch {
-        res.json({
-          connected: false,
-          balance: null,
-          currency: null,
-          equity: null,
-          margin: null,
-          free_margin: null,
-          margin_level_pct: null,
-          loginid: null,
-          account_type: null,
-          error: "Could not connect to Deriv API. Check your API token.",
-        });
-        return;
+      try { await client.connect(); } catch {
+        return { ...EMPTY_ACCOUNT, error: `Could not connect to Deriv ${mode} API.` };
       }
     }
 
@@ -35,66 +41,50 @@ async function getAccountData(res: import("express").Response): Promise<void> {
     ]);
 
     if (!balanceData) {
-      res.json({
-        connected: true,
-        balance: null,
-        currency: null,
-        equity: null,
-        margin: null,
-        free_margin: null,
-        margin_level_pct: null,
-        loginid: null,
-        account_type: null,
-        error: "Could not fetch balance from Deriv.",
-      });
-      return;
+      return { ...EMPTY_ACCOUNT, connected: true, error: `Could not fetch ${mode} balance.` };
     }
 
     const auth = client.authData;
     const loginid = auth ? String(auth.loginid || "") : null;
     const accountType = auth ? String(auth.account_type || auth.landing_company_name || "") : null;
-
     const balance = balanceData.balance;
-    const margin = portfolioPnl.totalBuyPrice;
-    const equity = balance + portfolioPnl.unrealizedPnl;
-    const freeMargin = Math.max(0, equity - margin);
-    const marginLevelPct = margin > 0 ? (equity / margin) * 100 : null;
+    const marginVal = portfolioPnl.totalBuyPrice;
+    const equityVal = balance + portfolioPnl.unrealizedPnl;
+    const freeMargin = Math.max(0, equityVal - marginVal);
+    const marginLevelPct = marginVal > 0 ? (equityVal / marginVal) * 100 : null;
 
-    res.json({
-      connected: true,
-      balance,
-      currency: balanceData.currency,
-      equity,
-      margin,
-      free_margin: freeMargin,
-      margin_level_pct: marginLevelPct,
-      loginid,
-      account_type: accountType,
-      error: null,
-    });
+    return {
+      connected: true, balance, currency: balanceData.currency,
+      equity: equityVal, margin: marginVal, free_margin: freeMargin,
+      margin_level_pct: marginLevelPct, loginid, account_type: accountType, error: null,
+    };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Failed to connect to Deriv";
-    res.json({
-      connected: false,
-      balance: null,
-      currency: null,
-      equity: null,
-      margin: null,
-      free_margin: null,
-      margin_level_pct: null,
-      loginid: null,
-      account_type: null,
-      error: message,
-    });
+    return { ...EMPTY_ACCOUNT, error: err instanceof Error ? err.message : `Failed to connect ${mode}` };
   }
 }
 
 router.get("/account/info", async (_req, res): Promise<void> => {
-  await getAccountData(res);
+  const [demo, real] = await Promise.all([
+    fetchAccountSnapshot("demo"),
+    fetchAccountSnapshot("real"),
+  ]);
+
+  const primary = demo.connected ? demo : real.connected ? real : demo;
+
+  res.json({
+    ...primary,
+    demo,
+    real,
+  });
 });
 
 router.get("/account/balance", async (_req, res): Promise<void> => {
-  await getAccountData(res);
+  const [demo, real] = await Promise.all([
+    fetchAccountSnapshot("demo"),
+    fetchAccountSnapshot("real"),
+  ]);
+  const primary = demo.connected ? demo : real.connected ? real : demo;
+  res.json({ ...primary, demo, real });
 });
 
 router.post("/account/set-mode", async (req, res): Promise<void> => {

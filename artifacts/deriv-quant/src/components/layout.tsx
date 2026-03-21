@@ -104,11 +104,24 @@ function useTradingControls() {
   const realActive = overview?.realModeActive ?? false;
   const isTrading = paperActive || demoActive || realActive;
 
+  const demoAccount = (accountInfo as any)?.demo;
+  const realAccount = (accountInfo as any)?.real;
+
+  const demoBalance = demoAccount?.connected && demoAccount.balance != null
+    ? `${demoAccount.currency || "USD"} ${demoAccount.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : null;
+  const demoLoginId = demoAccount?.loginid || null;
+
+  const realBalanceStr = realAccount?.connected && realAccount.balance != null
+    ? `${realAccount.currency || "USD"} ${realAccount.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : null;
+  const realLoginId = realAccount?.loginid || null;
+
   const realBalance = accountInfo?.connected && accountInfo.balance != null
     ? `${accountInfo.currency || "USD"} ${accountInfo.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : null;
 
-  return { paperActive, demoActive, realActive, isTrading, toggling, stopping, toggleMode, stopTrades, realBalance };
+  return { paperActive, demoActive, realActive, isTrading, toggling, stopping, toggleMode, stopTrades, realBalance, demoBalance, demoLoginId, realBalanceStr, realLoginId };
 }
 
 type TradingControls = ReturnType<typeof useTradingControls>;
@@ -164,11 +177,24 @@ function ModeToggleButtons({ compact = false, controls }: { compact?: boolean; c
   );
 }
 
-function BalanceDisplay({ realBalance }: { realBalance: string | null }) {
+function BalanceDisplay({ controls }: { controls: TradingControls }) {
+  const { demoBalance, demoLoginId, realBalanceStr, realLoginId } = controls;
   return (
-    <div className="pt-1">
-      <p className="text-[9px] text-muted-foreground uppercase tracking-widest">Real Balance</p>
-      <p className="text-sm font-bold text-foreground font-mono mt-0.5">{realBalance || "—"}</p>
+    <div className="pt-1 space-y-2">
+      <div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+          <p className="text-[9px] text-muted-foreground uppercase tracking-widest">Demo{demoLoginId ? ` · ${demoLoginId}` : ""}</p>
+        </div>
+        <p className="text-sm font-bold text-foreground font-mono mt-0.5 pl-3">{demoBalance || "—"}</p>
+      </div>
+      <div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-destructive" />
+          <p className="text-[9px] text-muted-foreground uppercase tracking-widest">Real{realLoginId ? ` · ${realLoginId}` : ""}</p>
+        </div>
+        <p className="text-sm font-bold text-foreground font-mono mt-0.5 pl-3">{realBalanceStr || "—"}</p>
+      </div>
     </div>
   );
 }
@@ -210,7 +236,7 @@ function DesktopLayout({ children, location, tradingControls }: { children: Reac
             </div>
           </div>
           <ModeToggleButtons compact controls={tradingControls} />
-          <BalanceDisplay realBalance={tradingControls.realBalance} />
+          <BalanceDisplay controls={tradingControls} />
         </div>
 
         <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-0.5">

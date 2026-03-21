@@ -88,47 +88,75 @@ export default function Overview() {
             </div>
           )}
 
-          {/* Account chip — desktop only, inline in header */}
-          {accountConnected && (
-            <div className={cn(
-              "hidden lg:flex items-center gap-3 px-4 py-2.5 rounded-xl border",
-              isLive ? "border-destructive/30 bg-destructive/5"
-                     : isPaper ? "border-warning/30 bg-warning/5"
-                     : "border-border bg-card",
-            )}>
-              <div className={cn(
-                "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                isLive ? "bg-destructive/15 text-destructive"
-                       : isPaper ? "bg-warning/15 text-warning"
-                       : "bg-primary/15 text-primary",
-              )}>
-                <Wallet className="w-4 h-4" />
-              </div>
-              <div className="pr-3 border-r border-border/60">
-                <p className="text-[9px] text-muted-foreground uppercase tracking-widest">
-                  {accountInfo.loginid || "Account"} · {accountInfo.account_type || "Virtual"}
-                </p>
-                <p className="text-sm font-bold font-mono tabular-nums text-foreground mt-0.5">
-                  {accountInfo.currency} {accountInfo.balance!.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </p>
-              </div>
-              <div className="flex gap-4">
-                {[
-                  { label: "Equity",       value: accountInfo.equity },
-                  { label: "Free Margin",  value: accountInfo.free_margin },
-                ].map(({ label, value }) => (
-                  <div key={label} className="text-right">
-                    <p className="text-[9px] text-muted-foreground uppercase tracking-widest">{label}</p>
-                    <p className="text-xs font-semibold font-mono tabular-nums text-foreground mt-0.5">
-                      {typeof value === "number"
-                        ? value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                        : "—"}
-                    </p>
+          {/* Account chips — desktop only, inline in header */}
+          {(() => {
+            const demoAcct = (accountInfo as any)?.demo;
+            const realAcct = (accountInfo as any)?.real;
+            const hasDemoData = demoAcct?.connected && demoAcct.balance != null;
+            const hasRealData = realAcct?.connected && realAcct.balance != null;
+            if (!hasDemoData && !hasRealData) return null;
+            const fmtBal = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return (
+              <div className="hidden lg:flex items-center gap-2">
+                {hasDemoData && (
+                  <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl border border-primary/25 bg-primary/5">
+                    <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-primary/15 text-primary shrink-0">
+                      <Wallet className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-widest">
+                        {demoAcct.loginid || "Demo"} · VIRTUAL
+                      </p>
+                      <p className="text-sm font-bold font-mono tabular-nums text-foreground mt-0.5">
+                        {demoAcct.currency} {fmtBal(demoAcct.balance)}
+                      </p>
+                    </div>
+                    <div className="flex gap-3 pl-2 border-l border-border/40">
+                      {[
+                        { label: "Equity", value: demoAcct.equity },
+                        { label: "Free Margin", value: demoAcct.free_margin },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="text-right">
+                          <p className="text-[8px] text-muted-foreground uppercase tracking-widest">{label}</p>
+                          <p className="text-[11px] font-semibold font-mono tabular-nums text-foreground mt-0.5">
+                            {typeof value === "number" ? fmtBal(value) : "—"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                ))}
+                )}
+                {hasRealData && (
+                  <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl border border-destructive/25 bg-destructive/5">
+                    <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-destructive/15 text-destructive shrink-0">
+                      <Wallet className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-widest">
+                        {realAcct.loginid || "Real"} · REAL
+                      </p>
+                      <p className="text-sm font-bold font-mono tabular-nums text-foreground mt-0.5">
+                        {realAcct.currency} {fmtBal(realAcct.balance)}
+                      </p>
+                    </div>
+                    <div className="flex gap-3 pl-2 border-l border-border/40">
+                      {[
+                        { label: "Equity", value: realAcct.equity },
+                        { label: "Free Margin", value: realAcct.free_margin },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="text-right">
+                          <p className="text-[8px] text-muted-foreground uppercase tracking-widest">{label}</p>
+                          <p className="text-[11px] font-semibold font-mono tabular-nums text-foreground mt-0.5">
+                            {typeof value === "number" ? fmtBal(value) : "—"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
 
@@ -151,90 +179,85 @@ export default function Overview() {
         </motion.div>
       )}
 
-      {/* Account card — shown on tablet/mobile only (lg hides the chip version above) */}
-      {accountConnected && (
-        <motion.div
-          className="lg:hidden"
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <Card className={cn(
-            "border",
-            isLive ? "border-destructive/30" : isPaper ? "border-warning/30" : "border-primary/20",
-          )}>
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className={cn(
-                    "w-10 h-10 rounded-xl flex items-center justify-center",
-                    isLive ? "bg-destructive/12 text-destructive" : isPaper ? "bg-warning/12 text-warning" : "bg-primary/12 text-primary",
-                  )}>
-                    <Wallet className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground font-medium">
-                      Deriv Account{accountInfo.loginid ? ` · ${accountInfo.loginid}` : ""}
-                    </p>
-                    <p className="text-2xl font-bold font-mono tabular-nums text-foreground mt-0.5">
-                      {accountInfo.currency}{" "}
-                      {accountInfo.balance!.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                </div>
-                <div className="text-right flex flex-col items-end gap-1">
-                  <Badge variant={isLive ? "destructive" : isPaper ? "warning" : isDemo ? "default" : "outline"}>
-                    {isMulti ? activeModes.map(m => m.toUpperCase()).join(" + ") : (overview?.mode?.toUpperCase() || "IDLE")}
-                  </Badge>
-                  {accountInfo.account_type && (
-                    <p className="text-xs text-muted-foreground capitalize">{accountInfo.account_type}</p>
-                  )}
-                </div>
-              </div>
-              {(accountInfo.equity != null || accountInfo.margin != null) && (
-                <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-border/40">
-                  {[
-                    { label: "Equity",      value: accountInfo.equity },
-                    { label: "Margin",      value: accountInfo.margin },
-                    { label: "Free Margin", value: accountInfo.free_margin },
-                    { label: "Margin Level", value: accountInfo.margin_level_pct != null ? `${accountInfo.margin_level_pct.toFixed(1)}%` : null, raw: true },
-                  ].map(({ label, value, raw }) => (
-                    <div key={label}>
-                      <p className="section-label mb-1">{label}</p>
-                      <p className="text-sm font-semibold font-mono tabular-nums">
-                        {raw
-                          ? (value ?? "—")
-                          : (typeof value === "number"
-                            ? value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                            : "—")}
+      {/* Dual account cards — Demo & Real side by side */}
+      {(() => {
+        const demoAcct = (accountInfo as any)?.demo;
+        const realAcct = (accountInfo as any)?.real;
+        const hasDemoData = demoAcct?.connected && demoAcct.balance != null;
+        const hasRealData = realAcct?.connected && realAcct.balance != null;
+        const fmtBal = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        if (!hasDemoData && !hasRealData) {
+          return (
+            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
+              <Card className="border border-warning/25">
+                <CardContent className="p-5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-warning/10 text-warning rounded-lg flex items-center justify-center">
+                      <Wallet className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Deriv Accounts Not Connected</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {accountInfo?.error || "Set your Deriv API tokens in Settings to see live account data"}
                       </p>
                     </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </motion.div>
-      )}
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          );
+        }
 
-      {!accountConnected && (
-        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
-          <Card className="border border-warning/25">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-warning/10 text-warning rounded-lg flex items-center justify-center">
-                  <Wallet className="w-4 h-4" />
+        const renderCard = (acct: any, label: string, color: "primary" | "destructive") => {
+          const borderCls = color === "destructive" ? "border-destructive/25" : "border-primary/25";
+          const iconCls = color === "destructive" ? "bg-destructive/12 text-destructive" : "bg-primary/12 text-primary";
+          return (
+            <Card className={cn("border flex-1 min-w-0", borderCls)}>
+              <CardContent className="p-5">
+                <div className="flex items-center gap-3">
+                  <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", iconCls)}>
+                    <Wallet className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground font-medium">
+                      {acct.loginid || label} · {label.toUpperCase()}
+                    </p>
+                    <p className="text-xl font-bold font-mono tabular-nums text-foreground mt-0.5">
+                      {acct.currency} {fmtBal(acct.balance)}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm font-medium text-foreground">Deriv Account Not Connected</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {accountInfo?.error || "Set your Deriv API token in Settings to see live account data"}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-      )}
+                {(acct.equity != null || acct.margin != null) && (
+                  <div className="grid grid-cols-4 gap-3 mt-3 pt-3 border-t border-border/40">
+                    {[
+                      { label: "Equity", value: acct.equity },
+                      { label: "Margin", value: acct.margin },
+                      { label: "Free Margin", value: acct.free_margin },
+                      { label: "Margin Lvl", value: acct.margin_level_pct != null ? `${acct.margin_level_pct.toFixed(1)}%` : null, raw: true },
+                    ].map(({ label: l, value: v, raw }) => (
+                      <div key={l}>
+                        <p className="section-label mb-1">{l}</p>
+                        <p className="text-xs font-semibold font-mono tabular-nums">
+                          {raw ? (v ?? "—") : (typeof v === "number" ? fmtBal(v) : "—")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          );
+        };
+
+        return (
+          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {hasDemoData && renderCard(demoAcct, "Demo", "primary")}
+            {hasRealData && renderCard(realAcct, "Real", "destructive")}
+          </motion.div>
+        );
+      })()}
 
       {/* ── KPI Row (4-col) ──────────────────────────────────────── */}
       <div className="space-y-3">

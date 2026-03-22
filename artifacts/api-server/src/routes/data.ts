@@ -80,8 +80,17 @@ router.get("/data/status", async (_req, res): Promise<void> => {
     streamingSymbols = (stateMap["streaming_symbols"] || "").split(",").filter(Boolean);
   }
 
+  const paperActive = stateMap["paper_mode_active"] === "true";
+  const demoActive  = stateMap["demo_mode_active"] === "true";
+  const realActive  = stateMap["real_mode_active"] === "true";
+  let derivedMode = "idle";
+  if (realActive)  derivedMode = "live";
+  else if (demoActive) derivedMode = "demo";
+  else if (paperActive) derivedMode = "paper";
+  else if (stateMap["streaming"] === "true") derivedMode = "collecting";
+
   res.json({
-    mode: stateMap["mode"] || "idle",
+    mode: derivedMode,
     streaming: stateMap["streaming"] === "true",
     lastSyncAt: stateMap["last_sync_at"] || null,
     tickCount: Number(tickCountResult[0]?.count || 0),

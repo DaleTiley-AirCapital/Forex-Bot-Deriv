@@ -1,8 +1,9 @@
 import { Router, type IRouter } from "express";
 import { desc, eq, sql, and } from "drizzle-orm";
 import { db, tradesTable, platformStateTable, signalLogTable } from "@workspace/db";
-import { getActiveModes, getModeCapitalKey, getModeCapitalDefault } from "../lib/deriv.js";
+import { getActiveModes, getModeCapitalKey, getModeCapitalDefault, getDerivClientWithDbToken } from "../lib/deriv.js";
 import type { TradingMode } from "../lib/deriv.js";
+import { getSchedulerStatus } from "../lib/scheduler.js";
 
 const router: IRouter = Router();
 
@@ -102,6 +103,16 @@ router.get("/overview", async (_req, res): Promise<void> => {
     effectiveMode = activeModes.length === 1 ? activeModes[0] : "multi";
   }
 
+  let streamingOnline = false;
+  let subscribedSymbolCount = 0;
+  try {
+    const client = await getDerivClientWithDbToken();
+    streamingOnline = client.isStreaming();
+    subscribedSymbolCount = client.getSubscribedSymbols().length;
+  } catch {}
+
+  const scheduler = getSchedulerStatus();
+
   res.json({
     mode: effectiveMode,
     activeModes,
@@ -119,6 +130,13 @@ router.get("/overview", async (_req, res): Promise<void> => {
     paperModeActive: stateMap["paper_mode_active"] === "true",
     demoModeActive: stateMap["demo_mode_active"] === "true",
     realModeActive: stateMap["real_mode_active"] === "true",
+    streamingOnline,
+    subscribedSymbolCount,
+    scannerRunning: scheduler.running,
+    lastScanTime: scheduler.lastScanTime,
+    lastScanSymbol: scheduler.lastScanSymbol,
+    totalScansRun: scheduler.totalScansRun,
+    totalDecisionsLogged: scheduler.totalDecisionsLogged,
   });
 });
 

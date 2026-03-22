@@ -23,6 +23,13 @@ const STRATEGY_DESCRIPTIONS = [
   { name: "Spike Hazard",        desc: "Elevated boom/crash spike probability detection" },
 ];
 
+const FAMILY_LABELS: Record<string, string> = {
+  trend_continuation: "Trend",
+  mean_reversion: "Reversion",
+  breakout_expansion: "Breakout",
+  spike_event: "Spike",
+};
+
 const DEFAULT_CAPITAL = 10000;
 
 export default function Overview() {
@@ -548,9 +555,15 @@ export default function Overview() {
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Data Stream</span>
-                      {overview?.mode !== "idle"
-                        ? <Badge variant="success">Online</Badge>
+                      {overview?.streamingOnline
+                        ? <Badge variant="success">Online ({overview.subscribedSymbolCount} symbols)</Badge>
                         : <Badge variant="outline">Offline</Badge>}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Signal Scanner</span>
+                      {overview?.scannerRunning
+                        ? <Badge variant="success">Active ({overview.totalScansRun ?? 0} scans)</Badge>
+                        : <Badge variant="outline">Idle</Badge>}
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Risk Engine</span>
@@ -569,12 +582,6 @@ export default function Overview() {
                       {overview?.killSwitchActive
                         ? <Badge variant="destructive">Active</Badge>
                         : <Badge variant="outline">Off</Badge>}
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Signal Scanner</span>
-                      {overview?.mode !== "idle"
-                        ? <Badge variant="success">Active</Badge>
-                        : <Badge variant="outline">Idle</Badge>}
                     </div>
                   </div>
                 </div>
@@ -619,7 +626,7 @@ export default function Overview() {
                         </Badge>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold font-mono text-foreground leading-none">{sig.symbol}</p>
-                          <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{sig.strategyName}</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{FAMILY_LABELS[(sig as any).strategyFamily ?? sig.strategyName ?? ""] || sig.strategyName}</p>
                         </div>
                         <div className="text-right shrink-0">
                           <p className={cn(

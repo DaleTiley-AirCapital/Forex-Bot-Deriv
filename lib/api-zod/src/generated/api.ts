@@ -849,4 +849,11 @@ export const GetOverviewResponse = zod.object({
   paperModeActive: zod.boolean().optional(),
   demoModeActive: zod.boolean().optional(),
   realModeActive: zod.boolean().optional(),
+  streamingOnline: zod.boolean().optional(),
+  subscribedSymbolCount: zod.number().optional(),
+  scannerRunning: zod.boolean().optional(),
+  lastScanTime: zod.string().nullish(),
+  lastScanSymbol: zod.string().nullish(),
+  totalScansRun: zod.number().optional(),
+  totalDecisionsLogged: zod.number().optional(),
 });

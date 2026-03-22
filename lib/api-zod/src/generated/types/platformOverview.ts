@@ -26,4 +26,13 @@ export interface PlatformOverview {
   paperModeActive?: boolean;
   demoModeActive?: boolean;
   realModeActive?: boolean;
+  streamingOnline?: boolean;
+  subscribedSymbolCount?: number;
+  scannerRunning?: boolean;
+  /** @nullable */
+  lastScanTime?: string | null;
+  /** @nullable */
+  lastScanSymbol?: string | null;
+  totalScansRun?: number;
+  totalDecisionsLogged?: number;
 }

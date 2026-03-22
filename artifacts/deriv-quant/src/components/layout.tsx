@@ -69,16 +69,17 @@ function useModeInfo() {
   });
   const mode = statusData?.mode || "idle";
   const isLive      = mode === "live";
+  const isDemo      = mode === "demo";
   const isPaper     = mode === "paper";
   const isCollect   = mode === "collecting";
-  const isActive    = isLive || isPaper || isCollect;
+  const isActive    = isLive || isDemo || isPaper || isCollect;
 
-  const modeColor   = isLive ? "text-destructive" : isPaper ? "text-warning" : isCollect ? "text-primary" : "text-muted-foreground";
-  const modeDot     = isLive ? "bg-destructive"   : isPaper ? "bg-warning"   : isCollect ? "bg-primary"   : "bg-muted-foreground/50";
-  const logoAccent  = isLive ? "bg-destructive/20 text-destructive" : isPaper ? "bg-warning/20 text-warning" : "bg-primary/20 text-primary";
-  const sidebarBorder = isLive ? "border-destructive/30" : isPaper ? "border-warning/30" : "border-border";
+  const modeColor   = isLive ? "text-destructive" : isDemo ? "text-primary" : isPaper ? "text-warning" : isCollect ? "text-primary" : "text-muted-foreground";
+  const modeDot     = isLive ? "bg-destructive"   : isDemo ? "bg-primary"   : isPaper ? "bg-warning"   : isCollect ? "bg-primary"   : "bg-muted-foreground/50";
+  const logoAccent  = isLive ? "bg-destructive/20 text-destructive" : isDemo ? "bg-primary/20 text-primary" : isPaper ? "bg-warning/20 text-warning" : "bg-primary/20 text-primary";
+  const sidebarBorder = isLive ? "border-destructive/30" : isDemo ? "border-primary/30" : isPaper ? "border-warning/30" : "border-border";
 
-  return { mode, isLive, isPaper, isActive, modeColor, modeDot, logoAccent, sidebarBorder };
+  return { mode, isLive, isDemo, isPaper, isActive, modeColor, modeDot, logoAccent, sidebarBorder };
 }
 
 function useTradingControls() {

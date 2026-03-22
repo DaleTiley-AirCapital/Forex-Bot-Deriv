@@ -32,6 +32,22 @@ let staggeredScanActive = false;
 let staggerSymbolIndex = 0;
 let staggerTimerHandle: ReturnType<typeof setTimeout> | null = null;
 
+let lastScanTime: Date | null = null;
+let lastScanSymbol: string | null = null;
+let totalScansRun = 0;
+let totalDecisionsLogged = 0;
+
+export function getSchedulerStatus() {
+  return {
+    running: schedulerHandle !== null,
+    lastScanTime: lastScanTime?.toISOString() ?? null,
+    lastScanSymbol,
+    totalScansRun,
+    totalDecisionsLogged,
+    scanIntervalMs: currentIntervalMs,
+  };
+}
+
 function parseScoringWeights(stateMap: Record<string, string>): ScoringWeights | undefined {
   const keys: (keyof ScoringWeights)[] = [
     "regimeFit", "setupQuality", "trendAlignment",
@@ -55,6 +71,10 @@ function parseScoringWeights(stateMap: Record<string, string>): ScoringWeights |
 }
 
 async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>): Promise<void> {
+  lastScanTime = new Date();
+  lastScanSymbol = symbol;
+  totalScansRun++;
+
   const features = await computeFeatures(symbol);
   if (!features) {
     console.log(`[Scan] ${symbol} | SKIP | reason=insufficient_data`);
@@ -178,6 +198,7 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
     }
 
     await logSignalDecisions(finalDecisions, mode);
+    totalDecisionsLogged += finalDecisions.length;
 
     const allowed = finalDecisions.filter(d => d.allowed);
     for (const decision of allowed) {

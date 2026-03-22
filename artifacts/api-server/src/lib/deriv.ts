@@ -35,22 +35,6 @@ export interface BackfillSymbolProgress {
   oldestDate?: string;
 }
 
-export interface BackfillProgress {
-  running: boolean;
-  startedAt?: number;
-  symbols: Record<string, BackfillSymbolProgress & { status: "pending" | "running" | "done" | "error"; error?: string; finalTicks?: number; finalCandles?: number }>;
-}
-
-const backfillState: BackfillProgress = { running: false, symbols: {} };
-
-export function getBackfillProgress(): BackfillProgress {
-  return backfillState;
-}
-
-export function isBackfillRunning(): boolean {
-  return backfillState.running;
-}
-
 const TIMEFRAMES: Record<string, number> = {
   "1m": 60,
   "5m": 300,

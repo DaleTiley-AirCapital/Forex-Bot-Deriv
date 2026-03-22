@@ -1,16 +1,18 @@
 import { Router, type IRouter } from "express";
 import { eq, and, inArray, count } from "drizzle-orm";
 import { db, candlesTable, backtestRunsTable, backtestTradesTable, platformStateTable } from "@workspace/db";
-import { getDerivClientWithDbToken, getDbApiToken, getDbApiTokenForMode, SUPPORTED_SYMBOLS } from "../lib/deriv.js";
+import { getDerivClientWithDbToken, getDbApiToken, getDbApiTokenForMode, V1_DEFAULT_SYMBOLS } from "../lib/deriv.js";
 import { checkOpenAiHealth, isOpenAIConfigured } from "../lib/openai.js";
 import { runBacktestSimulation } from "../lib/backtestEngine.js";
+import { getApiSymbol, validateActiveSymbols } from "../lib/symbolValidator.js";
 
 const router: IRouter = Router();
 
 const STRATEGIES = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event"] as const;
-const GRANULARITY_1H = 3600;
-const MONTHS_24_SECONDS = 24 * 30 * 24 * 3600;
+const GRANULARITY_1M = 60;
+const GRANULARITY_5M = 300;
 const MAX_BATCH = 5000;
+const MAX_CONSECUTIVE_ERRORS = 3;
 const DEFAULT_CAPITAL = 600;
 const AI_LOCKABLE_KEYS = [
   "equity_pct_per_trade", "paper_equity_pct_per_trade", "live_equity_pct_per_trade",
@@ -103,19 +105,21 @@ router.get("/setup/status", async (_req, res): Promise<void> => {
     const hasToken = tokenRows.some(r => !!r.value);
 
     const symbolCounts = await Promise.all(
-      SUPPORTED_SYMBOLS.map(async (symbol) => {
-        const [r] = await db.select({ n: count() }).from(candlesTable)
-          .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1h")));
-        return { symbol, count: r?.n ?? 0 };
+      V1_DEFAULT_SYMBOLS.map(async (symbol) => {
+        const [r1m] = await db.select({ n: count() }).from(candlesTable)
+          .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m")));
+        const [r5m] = await db.select({ n: count() }).from(candlesTable)
+          .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "5m")));
+        return { symbol, count: (r1m?.n ?? 0) + (r5m?.n ?? 0) };
       })
     );
 
     const [btResult] = await db.select({ n: count() }).from(backtestRunsTable);
     const backtestCount = btResult?.n ?? 0;
-    const expectedBacktests = SUPPORTED_SYMBOLS.length * STRATEGIES.length;
+    const expectedBacktests = V1_DEFAULT_SYMBOLS.length * STRATEGIES.length;
 
     const totalCandles = symbolCounts.reduce((s, r) => s + r.count, 0);
-    const hasEnoughData = symbolCounts.filter(r => r.count >= 100).length >= Math.ceil(SUPPORTED_SYMBOLS.length * 0.5);
+    const hasEnoughData = symbolCounts.filter(r => r.count >= 100).length >= Math.ceil(V1_DEFAULT_SYMBOLS.length * 0.5);
     const hasInitialBacktests = backtestCount >= expectedBacktests;
 
     const setupRow = await db.select().from(platformStateTable)
@@ -149,90 +153,166 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
 
   try {
     const client = await getDerivClientWithDbToken();
-    const targetStartEpoch = Math.floor(Date.now() / 1000) - MONTHS_24_SECONDS;
-    const expectedCandlesPerSymbol = Math.ceil(MONTHS_24_SECONDS / GRANULARITY_1H);
+    await client.connect();
+    await validateActiveSymbols(true);
+
     let candleTotal = 0;
+    const timeframes: { tf: string; granularity: number }[] = [
+      { tf: "1m", granularity: GRANULARITY_1M },
+      { tf: "5m", granularity: GRANULARITY_5M },
+    ];
+    const totalJobs = V1_DEFAULT_SYMBOLS.length * timeframes.length;
 
     send({
       phase: "backfill_start",
       stage: "backfill",
-      message: `Downloading 24-month price history for ${SUPPORTED_SYMBOLS.length} indices...`,
-      totalSymbols: SUPPORTED_SYMBOLS.length,
+      message: `Step 1 of 4: Downloading ALL available 1m & 5m price history for ${V1_DEFAULT_SYMBOLS.length} symbols...`,
+      totalSymbols: V1_DEFAULT_SYMBOLS.length,
+      symbols: V1_DEFAULT_SYMBOLS.map(s => ({ symbol: s, status: "waiting", candles: 0, oldestDate: null })),
     });
 
-    for (let si = 0; si < SUPPORTED_SYMBOLS.length; si++) {
-      const symbol = SUPPORTED_SYMBOLS[si];
-      let endEpoch = Math.floor(Date.now() / 1000);
-      let symbolInserted = 0;
-      let batchNum = 0;
-      const MAX_BATCHES = 20;
+    let jobsDone = 0;
 
-      while (batchNum < MAX_BATCHES) {
-        batchNum++;
-        const candles = await client.getCandleHistoryWithEnd(symbol, GRANULARITY_1H, MAX_BATCH, endEpoch);
-        if (!candles || candles.length === 0) break;
+    for (let si = 0; si < V1_DEFAULT_SYMBOLS.length; si++) {
+      const symbol = V1_DEFAULT_SYMBOLS[si];
+      const apiSymbol = getApiSymbol(symbol);
+      let symbolTotalInserted = 0;
+      let symbolFailed = false;
 
-        const sorted = [...candles].sort((a, b) => a.epoch - b.epoch);
-        const earliestEpoch = sorted[0].epoch;
-        const toInsert = sorted.filter(c => c.epoch >= targetStartEpoch);
-        const reachedTarget = earliestEpoch <= targetStartEpoch;
+      send({
+        phase: "backfill_symbol_start", stage: "backfill", symbol,
+        symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
+        status: "downloading", symbolPct: 0,
+        message: `Starting ${symbol} (${si + 1}/${V1_DEFAULT_SYMBOLS.length})...`,
+      });
 
-        if (toInsert.length > 0) {
+      for (const { tf, granularity } of timeframes) {
+        let endEpoch = Math.floor(Date.now() / 1000);
+        let tfInserted = 0;
+        let oldestDateStr: string | null = null;
+        let page = 0;
+        let consecutiveErrors = 0;
+
+        while (true) {
+          page++;
+          let candles;
+          try {
+            candles = await client.getCandleHistoryWithEnd(apiSymbol, granularity, MAX_BATCH, endEpoch, true);
+            consecutiveErrors = 0;
+          } catch (err) {
+            consecutiveErrors++;
+            if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+              const errMsg = err instanceof Error ? err.message : String(err);
+              send({
+                phase: "backfill_symbol_error", stage: "backfill", symbol,
+                symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
+                status: "error", timeframe: tf,
+                error: `Failed after ${consecutiveErrors} retries: ${errMsg}`,
+                message: `${symbol} ${tf} failed: ${errMsg}`,
+              });
+              symbolFailed = true;
+              break;
+            }
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+          if (candles === null || candles === undefined) {
+            consecutiveErrors++;
+            if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+              send({
+                phase: "backfill_symbol_error", stage: "backfill", symbol,
+                symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
+                status: "error", timeframe: tf,
+                error: `API returned null after ${consecutiveErrors} retries`,
+                message: `${symbol} ${tf} failed: API returned null data`,
+              });
+              symbolFailed = true;
+              break;
+            }
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+          if (candles.length === 0) break;
+
+          const sorted = [...candles].sort((a, b) => a.epoch - b.epoch);
+          const earliestEpoch = sorted[0].epoch;
+          oldestDateStr = new Date(earliestEpoch * 1000).toISOString().slice(0, 10);
+
           const existingTs = await db.select({ openTs: candlesTable.openTs })
             .from(candlesTable)
             .where(and(
               eq(candlesTable.symbol, symbol),
-              eq(candlesTable.timeframe, "1h"),
-              inArray(candlesTable.openTs, toInsert.map(c => c.epoch))
+              eq(candlesTable.timeframe, tf),
+              inArray(candlesTable.openTs, sorted.map(c => c.epoch))
             ));
           const existingSet = new Set(existingTs.map(r => r.openTs));
-          const newRows = toInsert.filter(c => !existingSet.has(c.epoch)).map(c => ({
-            symbol, timeframe: "1h", openTs: c.epoch, closeTs: c.epoch + GRANULARITY_1H,
+          const newRows = sorted.filter(c => !existingSet.has(c.epoch)).map(c => ({
+            symbol, timeframe: tf, openTs: c.epoch, closeTs: c.epoch + granularity,
             open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close), tickCount: 0,
           }));
           if (newRows.length > 0) {
-            await db.insert(candlesTable).values(newRows);
-            symbolInserted += newRows.length;
+            for (let chunk = 0; chunk < newRows.length; chunk += 1000) {
+              await db.insert(candlesTable).values(newRows.slice(chunk, chunk + 1000));
+            }
+            tfInserted += newRows.length;
+            symbolTotalInserted += newRows.length;
             candleTotal += newRows.length;
           }
+
+          if (candles.length < MAX_BATCH) break;
+
+          const newEnd = earliestEpoch - 1;
+          if (newEnd >= endEpoch) break;
+          endEpoch = newEnd;
+
+          if (page % 3 === 0) {
+            const estPagesPerTf = Math.max(page + 20, 100);
+            const tfFrac = Math.min(page / estPagesPerTf, 0.95);
+            const jobFrac = (jobsDone + tfFrac) / totalJobs;
+            const overallPct = Math.round(jobFrac * 50);
+            const symbolJobsDone = jobsDone - si * timeframes.length;
+            const symbolPct = Math.round(((symbolJobsDone + tfFrac) / timeframes.length) * 100);
+            send({
+              phase: "backfill_progress", stage: "backfill", symbol,
+              symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
+              timeframe: tf, candlesForSymbol: symbolTotalInserted, candleTotal,
+              oldestDate: oldestDateStr,
+              overallPct, symbolPct: Math.min(symbolPct, 99),
+              message: `${symbol} ${tf}: ${tfInserted.toLocaleString()} candles (oldest: ${oldestDateStr})`,
+            });
+          }
+
+          await new Promise(r => setTimeout(r, 100));
         }
 
-        const elapsedMs = Date.now() - globalStart;
-        const symbolFrac = si / SUPPORTED_SYMBOLS.length;
-        const withinFrac = reachedTarget ? 1 : Math.min((batchNum * MAX_BATCH) / expectedCandlesPerSymbol, 0.95);
-        const backfillFrac = symbolFrac + withinFrac / SUPPORTED_SYMBOLS.length;
-        const overallPct = Math.round(backfillFrac * 50);
-        const estTotalMs = backfillFrac > 0.01 ? elapsedMs / backfillFrac : 0;
-        const estRemainingSec = Math.ceil(Math.max(0, (estTotalMs - elapsedMs) / 1000));
-
-        send({
-          phase: "backfill_progress", stage: "backfill", symbol,
-          symbolIndex: si, totalSymbols: SUPPORTED_SYMBOLS.length,
-          candlesForSymbol: symbolInserted, candleTotal,
-          overallPct, estRemainingSec,
-          message: `Downloading ${symbol} (${si + 1}/${SUPPORTED_SYMBOLS.length}) — ${candleTotal.toLocaleString()} candles`,
-        });
-
-        if (reachedTarget) break;
-        const newEnd = earliestEpoch - 1;
-        if (newEnd >= endEpoch) break;
-        endEpoch = newEnd;
-        await new Promise(r => setTimeout(r, 150));
+        if (symbolFailed) break;
+        jobsDone++;
       }
 
+      if (symbolFailed) {
+        send({
+          phase: "error", stage: "backfill",
+          message: `Setup failed: could not download history for ${symbol}. Please check your connection and try again.`,
+        });
+        res.end();
+        return;
+      }
+
+      const overallPct = Math.round((jobsDone / totalJobs) * 50);
       send({
         phase: "backfill_symbol_done", stage: "backfill", symbol,
-        symbolIndex: si, totalSymbols: SUPPORTED_SYMBOLS.length,
-        candlesForSymbol: symbolInserted, candleTotal,
-        overallPct: Math.round(((si + 1) / SUPPORTED_SYMBOLS.length) * 50),
-        message: `${symbol} done — ${symbolInserted.toLocaleString()} candles`,
+        symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
+        candlesForSymbol: symbolTotalInserted, candleTotal,
+        overallPct, symbolPct: 100,
+        status: "done",
+        message: `${symbol} done — ${symbolTotalInserted.toLocaleString()} candles`,
       });
     }
 
     send({
       phase: "backfill_complete", stage: "backfill", candleTotal,
       overallPct: 50,
-      message: `Download complete — ${candleTotal.toLocaleString()} candles. Starting backtests...`,
+      message: `Step 1 complete — ${candleTotal.toLocaleString()} candles downloaded. Starting backtests...`,
     });
 
     const states = await db.select().from(platformStateTable);
@@ -241,7 +321,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
 
     const enabledSymbols = stateMap["enabled_symbols"]
       ? stateMap["enabled_symbols"].split(",").filter(Boolean)
-      : SUPPORTED_SYMBOLS;
+      : V1_DEFAULT_SYMBOLS;
     const initialCapital = parseFloat(stateMap["total_capital"] || String(DEFAULT_CAPITAL));
 
     const combinations: { strategy: string; symbol: string }[] = [];
@@ -255,7 +335,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     send({
       phase: "backtest_start", stage: "backtest",
       btTotal, overallPct: 50,
-      message: `Running ${STRATEGIES.length} strategies × ${enabledSymbols.length} indices — ${btTotal} backtests`,
+      message: `Step 2 of 4: Running ${STRATEGIES.length} strategies × ${enabledSymbols.length} symbols — ${btTotal} backtests`,
     });
 
     const strategyAgg: Record<string, {
@@ -337,7 +417,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
 
     send({
       phase: "optimising", stage: "optimise", overallPct: 95,
-      message: "Optimising settings from backtest results...",
+      message: "Step 3 of 4: AI analysing backtest results & optimising parameters...",
     });
 
     const sortedCombos = [...comboResults].sort((a, b) => b.score - a.score);
@@ -345,7 +425,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     const realStrategies = [...new Set(topCombos.map(c => c.strategy))];
     const realSymbols = [...new Set(topCombos.map(c => c.symbol))];
     const allStrategies = STRATEGIES.join(",");
-    const allSymbols = SUPPORTED_SYMBOLS.join(",");
+    const allSymbols = V1_DEFAULT_SYMBOLS.join(",");
 
     const bestAvgHold = topCombos.length > 0
       ? topCombos.reduce((s, c) => s + c.avgHold, 0) / topCombos.length : 72;
@@ -433,11 +513,21 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
         .onConflictDoUpdate({ target: platformStateTable.key, set: { value, updatedAt: new Date() } });
     }
 
+    try {
+      const streamClient = await getDerivClientWithDbToken();
+      await streamClient.startStreaming(V1_DEFAULT_SYMBOLS);
+      await db.insert(platformStateTable).values({ key: "streaming", value: "true" })
+        .onConflictDoUpdate({ target: platformStateTable.key, set: { value: "true", updatedAt: new Date() } });
+      console.log(`[Setup] Streaming started for ${V1_DEFAULT_SYMBOLS.length} symbols after setup complete`);
+    } catch (streamErr) {
+      console.warn("[Setup] Could not auto-start streaming after setup:", streamErr instanceof Error ? streamErr.message : streamErr);
+    }
+
     const totalSec = Math.round((Date.now() - globalStart) / 1000);
     send({
       phase: "complete", stage: "complete", overallPct: 100,
       candleTotal, btCompleted, btTotal,
-      message: `Setup complete — ${candleTotal.toLocaleString()} candles, ${btCompleted} backtests, settings optimised (${totalSec}s)`,
+      message: `Step 4 of 4: Complete — ${candleTotal.toLocaleString()} candles, ${btCompleted} backtests, settings optimised (${totalSec}s)`,
     });
 
     res.write("data: [DONE]\n\n");

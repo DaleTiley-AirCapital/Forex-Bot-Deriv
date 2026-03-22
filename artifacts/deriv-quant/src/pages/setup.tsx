@@ -61,12 +61,13 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
   const [testResult, setTestResult] = useState<{ derivDemo: { ok: boolean; error?: string }; derivReal: { ok: boolean; error?: string }; openai: { ok: boolean; error?: string } } | null>(null);
 
   const [initProgress, setInitProgress] = useState(0);
-  const [initStage, setInitStage] = useState<"backfill" | "backtest" | "optimise" | "complete">("backfill");
+  const [initStage, setInitStage] = useState<"backfill" | "backtest" | "optimise" | "complete" | "error">("backfill");
   const [initStatus, setInitStatus] = useState("");
   const [candleTotal, setCandleTotal] = useState(0);
   const [btCompleted, setBtCompleted] = useState(0);
   const [btTotal, setBtTotal] = useState(0);
   const [estRemainingSec, setEstRemainingSec] = useState(0);
+  const [symbolProgress, setSymbolProgress] = useState<Record<string, { status: string; candles: number; oldestDate: string | null; pct?: number; error?: string }>>({});
 
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -141,6 +142,7 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
     setBtCompleted(0);
     setBtTotal(0);
     setEstRemainingSec(0);
+    setSymbolProgress({});
     abortRef.current = new AbortController();
     completedRef.current = false;
 
@@ -152,16 +154,59 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
         if (phase === "backfill_start") {
           setInitStage("backfill");
           setInitStatus(evt.message as string);
+          const syms = evt.symbols as Array<{ symbol: string; status: string; candles: number; oldestDate: string | null }>;
+          if (syms) {
+            const map: Record<string, { status: string; candles: number; oldestDate: string | null; pct?: number }> = {};
+            for (const s of syms) map[s.symbol] = { status: s.status, candles: s.candles, oldestDate: s.oldestDate, pct: 0 };
+            setSymbolProgress(map);
+          }
+        } else if (phase === "backfill_symbol_start") {
+          const sym = evt.symbol as string;
+          setSymbolProgress(prev => ({ ...prev, [sym]: { status: "downloading", candles: 0, oldestDate: null, pct: 0 } }));
+          setInitStatus(evt.message as string);
         } else if (phase === "backfill_progress") {
           setInitStage("backfill");
           setInitProgress(Math.max(pct, 1));
           setInitStatus(evt.message as string);
           setCandleTotal(evt.candleTotal as number || 0);
-          setEstRemainingSec(evt.estRemainingSec as number || 0);
+          const sym = evt.symbol as string;
+          if (sym) {
+            setSymbolProgress(prev => ({
+              ...prev,
+              [sym]: {
+                status: "downloading",
+                candles: evt.candlesForSymbol as number || 0,
+                oldestDate: evt.oldestDate as string || null,
+                pct: evt.symbolPct as number || prev[sym]?.pct || 0,
+              },
+            }));
+          }
+        } else if (phase === "backfill_symbol_error") {
+          const sym = evt.symbol as string;
+          if (sym) {
+            setSymbolProgress(prev => ({
+              ...prev,
+              [sym]: {
+                status: "error",
+                candles: prev[sym]?.candles || 0,
+                oldestDate: prev[sym]?.oldestDate || null,
+                pct: prev[sym]?.pct || 0,
+                error: evt.error as string || "Failed",
+              },
+            }));
+          }
+          setInitStatus(evt.message as string);
         } else if (phase === "backfill_symbol_done") {
           setInitProgress(Math.max(pct, 1));
           setInitStatus(evt.message as string);
           setCandleTotal(evt.candleTotal as number || 0);
+          const sym = evt.symbol as string;
+          if (sym) {
+            setSymbolProgress(prev => ({
+              ...prev,
+              [sym]: { status: "done", candles: evt.candlesForSymbol as number || 0, oldestDate: prev[sym]?.oldestDate || null, pct: 100 },
+            }));
+          }
         } else if (phase === "backfill_complete") {
           setInitProgress(50);
           setInitStatus(evt.message as string);
@@ -196,13 +241,14 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
           queryClient.invalidateQueries({ queryKey: ["/api/setup/status"] });
           setStep("complete");
         } else if (phase === "error") {
+          completedRef.current = true;
           setError(evt.message as string);
+          setInitStage("error");
         }
       }, abortRef.current.signal);
 
       if (!completedRef.current) {
-        setInitProgress(100);
-        setStep("complete");
+        setError("Setup stream ended unexpectedly. Please try again.");
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
@@ -214,7 +260,7 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
   const stepDefs = [
     { label: "Welcome" },
     { label: "API Keys" },
-    { label: "Initialise" },
+    { label: "Backfill → Backtest → AI" },
     { label: "Ready" },
   ];
 
@@ -288,23 +334,27 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                 <div className="space-y-3">
                   <h2 className="text-xl font-semibold text-foreground">Welcome</h2>
                   <p className="text-muted-foreground leading-relaxed max-w-md mx-auto">
-                    Before trading, the system needs to download 24 months of price history
-                    and run all strategies as backtests across every index. The AI will then
+                    Before trading, the system downloads ALL available 1m & 5m price history,
+                    runs every strategy as backtests across every symbol, and has AI
                     recommend your optimal starting settings.
                   </p>
                 </div>
-                <div className="grid grid-cols-3 gap-4 max-w-lg mx-auto">
-                  <div className="p-4 rounded-lg bg-muted/20 text-center">
-                    <Key className="w-6 h-6 text-yellow-400 mx-auto mb-2" />
-                    <p className="text-xs text-muted-foreground">Connect API keys</p>
+                <div className="grid grid-cols-4 gap-3 max-w-lg mx-auto">
+                  <div className="p-3 rounded-lg bg-muted/20 text-center">
+                    <Key className="w-5 h-5 text-yellow-400 mx-auto mb-1.5" />
+                    <p className="text-[10px] text-muted-foreground">1. API Keys</p>
                   </div>
-                  <div className="p-4 rounded-lg bg-muted/20 text-center">
-                    <Database className="w-6 h-6 text-blue-400 mx-auto mb-2" />
-                    <p className="text-xs text-muted-foreground">Download 24 months of trading history</p>
+                  <div className="p-3 rounded-lg bg-muted/20 text-center">
+                    <Database className="w-5 h-5 text-blue-400 mx-auto mb-1.5" />
+                    <p className="text-[10px] text-muted-foreground">2. Full Backfill</p>
                   </div>
-                  <div className="p-4 rounded-lg bg-muted/20 text-center">
-                    <BarChart3 className="w-6 h-6 text-green-400 mx-auto mb-2" />
-                    <p className="text-xs text-muted-foreground">Run all strategies & AI optimise</p>
+                  <div className="p-3 rounded-lg bg-muted/20 text-center">
+                    <BarChart3 className="w-5 h-5 text-purple-400 mx-auto mb-1.5" />
+                    <p className="text-[10px] text-muted-foreground">3. Backtests</p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/20 text-center">
+                    <Zap className="w-5 h-5 text-green-400 mx-auto mb-1.5" />
+                    <p className="text-[10px] text-muted-foreground">4. AI Optimise</p>
                   </div>
                 </div>
                 <Button size="lg" onClick={() => { setError(null); setStep("apikeys"); }} className="px-8">
@@ -467,14 +517,14 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                   <div className="space-y-5">
                     <div className="text-center space-y-1">
                       <h2 className="text-lg font-semibold">
-                        {initStage === "backfill" && "Downloading Price History"}
-                        {initStage === "backtest" && "Running Strategy Backtests"}
-                        {initStage === "optimise" && "AI Optimising Settings"}
-                        {initStage === "complete" && "Setup Complete"}
+                        {initStage === "backfill" && "Step 1 of 4: Downloading Historical Data"}
+                        {initStage === "backtest" && "Step 2 of 4: Running Backtests"}
+                        {initStage === "optimise" && "Step 3 of 4: AI Analysis"}
+                        {initStage === "complete" && "Step 4 of 4: Complete"}
                       </h2>
                       <p className="text-xs text-muted-foreground">
-                        {initStage === "backfill" && "Fetching 24 months of candle data from Deriv"}
-                        {initStage === "backtest" && "Testing all strategies across every index"}
+                        {initStage === "backfill" && "Fetching all available 1m & 5m candle data from Deriv"}
+                        {initStage === "backtest" && "Testing all strategies across every symbol"}
                         {initStage === "optimise" && "Calculating optimal parameters from backtest results"}
                         {initStage === "complete" && "Your platform is ready"}
                       </p>
@@ -490,50 +540,101 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                       <Progress value={initProgress} className="h-3" />
                     </div>
 
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className={`p-3 rounded-lg border text-center transition-colors ${
+                    <div className="grid grid-cols-4 gap-2">
+                      <div className={`p-2.5 rounded-lg border text-center transition-colors ${
                         initStage === "backfill" ? "bg-blue-500/10 border-blue-500/30" :
                         initProgress >= 50 ? "bg-green-500/5 border-green-500/20" :
                         "bg-muted/20 border-border/40"
                       }`}>
-                        <Database className={`w-5 h-5 mx-auto mb-1 ${
+                        <Database className={`w-4 h-4 mx-auto mb-1 ${
                           initStage === "backfill" ? "text-blue-400" :
                           initProgress >= 50 ? "text-green-400" : "text-muted-foreground"
                         }`} />
-                        <p className="text-xs font-medium">Candles</p>
-                        <p className="text-sm font-bold tabular-nums mt-0.5">
+                        <p className="text-[10px] font-medium">Data</p>
+                        <p className="text-xs font-bold tabular-nums mt-0.5">
                           {candleTotal > 0 ? candleTotal.toLocaleString() : "—"}
                         </p>
                       </div>
-                      <div className={`p-3 rounded-lg border text-center transition-colors ${
+                      <div className={`p-2.5 rounded-lg border text-center transition-colors ${
                         initStage === "backtest" ? "bg-purple-500/10 border-purple-500/30" :
                         btCompleted > 0 && btCompleted >= btTotal ? "bg-green-500/5 border-green-500/20" :
                         "bg-muted/20 border-border/40"
                       }`}>
-                        <BarChart3 className={`w-5 h-5 mx-auto mb-1 ${
+                        <BarChart3 className={`w-4 h-4 mx-auto mb-1 ${
                           initStage === "backtest" ? "text-purple-400" :
                           btCompleted > 0 && btCompleted >= btTotal ? "text-green-400" : "text-muted-foreground"
                         }`} />
-                        <p className="text-xs font-medium">Backtests</p>
-                        <p className="text-sm font-bold tabular-nums mt-0.5">
-                          {btTotal > 0 ? `${btCompleted} / ${btTotal}` : "—"}
+                        <p className="text-[10px] font-medium">Backtests</p>
+                        <p className="text-xs font-bold tabular-nums mt-0.5">
+                          {btTotal > 0 ? `${btCompleted}/${btTotal}` : "—"}
                         </p>
                       </div>
-                      <div className={`p-3 rounded-lg border text-center transition-colors ${
+                      <div className={`p-2.5 rounded-lg border text-center transition-colors ${
                         initStage === "optimise" ? "bg-emerald-500/10 border-emerald-500/30" :
                         initStage === "complete" ? "bg-green-500/5 border-green-500/20" :
                         "bg-muted/20 border-border/40"
                       }`}>
-                        <Zap className={`w-5 h-5 mx-auto mb-1 ${
+                        <Zap className={`w-4 h-4 mx-auto mb-1 ${
                           initStage === "optimise" ? "text-emerald-400 animate-pulse" :
                           initStage === "complete" ? "text-green-400" : "text-muted-foreground"
                         }`} />
-                        <p className="text-xs font-medium">AI Optimise</p>
-                        <p className="text-sm font-bold tabular-nums mt-0.5">
-                          {initStage === "complete" ? "Done" : initStage === "optimise" ? "Running" : "Pending"}
+                        <p className="text-[10px] font-medium">AI</p>
+                        <p className="text-xs font-bold tabular-nums mt-0.5">
+                          {initStage === "complete" ? "Done" : initStage === "optimise" ? "Running" : "—"}
+                        </p>
+                      </div>
+                      <div className={`p-2.5 rounded-lg border text-center transition-colors ${
+                        initStage === "complete" ? "bg-green-500/10 border-green-500/30" :
+                        "bg-muted/20 border-border/40"
+                      }`}>
+                        <CheckCircle2 className={`w-4 h-4 mx-auto mb-1 ${
+                          initStage === "complete" ? "text-green-400" : "text-muted-foreground"
+                        }`} />
+                        <p className="text-[10px] font-medium">Ready</p>
+                        <p className="text-xs font-bold tabular-nums mt-0.5">
+                          {initStage === "complete" ? "Yes" : "—"}
                         </p>
                       </div>
                     </div>
+
+                    {initStage === "backfill" && Object.keys(symbolProgress).length > 0 && (
+                      <div className="space-y-1.5 max-h-64 overflow-y-auto rounded-lg border border-border/30 p-3">
+                        <p className="text-xs font-medium text-muted-foreground mb-2">Per-Symbol Progress</p>
+                        {Object.entries(symbolProgress).map(([sym, info]) => {
+                          const barPct = info.status === "done" ? 100 : info.status === "error" ? (info.pct || 0) : (info.pct || 0);
+                          return (
+                            <div key={sym} className="flex items-center gap-2 text-xs">
+                              <span className="w-24 font-medium truncate">{sym}</span>
+                              <div className="flex-1 h-2 bg-muted/40 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-300 ${
+                                    info.status === "done" ? "bg-green-500" :
+                                    info.status === "error" ? "bg-red-500" :
+                                    info.status === "downloading" ? "bg-blue-500" :
+                                    "bg-muted"
+                                  }`}
+                                  style={{ width: `${Math.max(barPct, info.status === "downloading" ? 2 : 0)}%` }}
+                                />
+                              </div>
+                              <span className="w-20 text-right tabular-nums text-muted-foreground">
+                                {info.status === "done" ? (
+                                  <span className="text-green-400">{info.candles.toLocaleString()}</span>
+                                ) : info.status === "error" ? (
+                                  <span className="text-red-400">Error</span>
+                                ) : info.status === "downloading" ? (
+                                  <span className="text-blue-400">{info.candles > 0 ? info.candles.toLocaleString() : `${barPct}%`}</span>
+                                ) : (
+                                  "waiting"
+                                )}
+                              </span>
+                              {info.oldestDate && (
+                                <span className="w-20 text-right text-[10px] text-muted-foreground/70">{info.oldestDate}</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     <p className="text-sm text-muted-foreground text-center">{initStatus}</p>
                   </div>
@@ -542,8 +643,8 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                     <Database className="w-10 h-10 text-blue-400 mx-auto" />
                     <h2 className="text-lg font-semibold">System Initialisation</h2>
                     <p className="text-muted-foreground text-sm max-w-md mx-auto">
-                      Download 24 months of trading history, run all strategies as backtests
-                      across every index, and AI-optimise your settings. This may take several minutes.
+                      Download ALL available 1m & 5m price history, run all strategies as backtests
+                      across every symbol, and AI-optimise your settings. This may take a while.
                     </p>
                     <div className="flex justify-center gap-3">
                       <Button variant="outline" onClick={goBack} className="px-6">
@@ -567,7 +668,7 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                   <h2 className="text-xl font-semibold text-foreground">You're All Set!</h2>
                   <p className="text-muted-foreground text-sm max-w-md mx-auto">
                     Your platform has been configured with AI-optimised parameters based on
-                    24 months of backtested data.
+                    full historical backtested data.
                   </p>
                   <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto text-sm">
                     <div className="p-3 rounded-lg bg-muted/20 border border-border/40">

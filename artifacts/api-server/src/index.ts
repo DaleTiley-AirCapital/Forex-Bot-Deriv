@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { db, platformStateTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import app from "./app.js";
-import { getDerivClientWithDbToken, getEnabledSymbols, SUPPORTED_SYMBOLS, getBackfillProgress, isBackfillRunning, type BackfillSymbolProgress } from "./lib/deriv.js";
+import { getDerivClientWithDbToken, getEnabledSymbols, SUPPORTED_SYMBOLS } from "./lib/deriv.js";
 import { startScheduler } from "./lib/scheduler.js";
 import { validateActiveSymbols } from "./lib/symbolValidator.js";
 
@@ -244,68 +244,16 @@ async function autoConfigureAI(): Promise<void> {
   }
 }
 
-export async function runBackfillWithTracking(symbols?: string[]): Promise<void> {
-  const state = getBackfillProgress();
-  if (state.running) {
-    console.warn("[Backfill] Already running, skipping.");
-    return;
-  }
-
-  try {
-    const enabledSymbols = symbols || await getEnabledSymbols();
-    const validSymbols = enabledSymbols.filter(s => SUPPORTED_SYMBOLS.includes(s));
-    if (validSymbols.length === 0) return;
-
-    state.running = true;
-    state.startedAt = Date.now();
-    state.symbols = {};
-    for (const s of validSymbols) {
-      state.symbols[s] = { symbol: s, phase: "pending", pct: 0, candles: 0, ticks: 0, status: "pending" };
-    }
-
-    const client = await getDerivClientWithDbToken();
-    await client.connect();
-    await validateActiveSymbols(true);
-    console.log(`[Backfill] Starting backfill for ${validSymbols.length} symbols...`);
-
-    for (const symbol of validSymbols) {
-      state.symbols[symbol].status = "running";
-      try {
-        const result = await client.backfill(symbol, 5000, (update: BackfillSymbolProgress) => {
-          const entry = state.symbols[symbol];
-          entry.phase = update.phase;
-          entry.pct = update.pct;
-          entry.candles = update.candles;
-          entry.ticks = update.ticks;
-          entry.oldestDate = update.oldestDate;
-        });
-        state.symbols[symbol].status = "done";
-        state.symbols[symbol].pct = 100;
-        state.symbols[symbol].finalTicks = result.ticks;
-        state.symbols[symbol].finalCandles = result.candles;
-        console.log(`[Backfill] ${symbol}: ${result.ticks} ticks, ${result.candles} candles`);
-      } catch (err) {
-        state.symbols[symbol].status = "error";
-        state.symbols[symbol].error = err instanceof Error ? err.message : String(err);
-        console.warn(`[Backfill] ${symbol} failed:`, err instanceof Error ? err.message : err);
-      }
-    }
-    console.log("[Backfill] Complete.");
-  } catch (err) {
-    console.warn("[Backfill] Could not run backfill:", err instanceof Error ? err.message : err);
-  } finally {
-    state.running = false;
-  }
-}
-
-async function autoBackfill(): Promise<void> {
-  await runBackfillWithTracking();
-}
-
 async function autoStartStreaming(): Promise<void> {
   try {
     await autoConfigureAI();
-    await autoBackfill();
+
+    const setupRow = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "initial_setup_complete")).limit(1);
+    const setupDone = setupRow.length > 0 && setupRow[0].value === "true";
+    if (!setupDone) {
+      console.log("[AutoStart] Initial setup not complete — skipping auto-start. Run setup wizard first.");
+      return;
+    }
 
     const rows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "streaming"));
     const explicitlyStopped = rows.length > 0 && rows[0].value === "false";

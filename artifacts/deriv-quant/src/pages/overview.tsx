@@ -31,8 +31,9 @@ export default function Overview() {
   const { data: accountInfo }                              = useGetAccountInfo(      { query: { refetchInterval: 30000 } });
   const { data: positions }                                = useGetLivePositions(    { query: { refetchInterval: 10000 } });
   const { data: settings }                                 = useGetSettings(         { query: { staleTime: 60000 } });
-  const { data: signals }                                  = useGetLatestSignals(    { query: { refetchInterval: 15000 } });
-  const [kpiMode, setKpiMode] = useState<string>("all");
+  const { data: signalsData }                               = useGetLatestSignals(undefined,    { query: { refetchInterval: 15000 } });
+  const signals = signalsData?.signals;
+  const [kpiMode, setKpiMode] = useState<string>("paper");
 
   if (overviewLoading || portfolioLoading) {
     return (
@@ -54,15 +55,13 @@ export default function Overview() {
   const perMode         = overview?.perMode || {};
   const isDefaultCapital = !settings?.total_capital || Number(settings.total_capital) === DEFAULT_CAPITAL;
 
-  const kpiSnap = kpiMode !== "all" ? perMode[kpiMode] : undefined;
+  const kpiSnap = perMode[kpiMode];
   const kpiCapital    = kpiSnap?.capital    ?? overview?.availableCapital;
   const kpiPnl        = kpiSnap?.realisedPnl ?? overview?.realisedPnl;
   const kpiPnlTrend   = (kpiPnl || 0) >= 0 ? "up" as const : "down" as const;
   const kpiPositions  = kpiSnap?.openPositions ?? overview?.openPositions;
   const kpiWinRate    = kpiSnap?.winRate     ?? overview?.winRate;
-  const kpiRisk       = overview?.openRisk;
   const kpiStrategies = overview?.activeStrategies;
-  const isPerMode     = kpiMode !== "all";
 
   const accountConnected = accountInfo?.connected && accountInfo.balance != null;
 
@@ -263,7 +262,7 @@ export default function Overview() {
       <div className="space-y-3">
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mr-1">View:</span>
-          {["all", "paper", "demo", "real"].map(m => (
+          {["paper", "demo", "real"].map(m => (
             <button
               key={m}
               onClick={() => setKpiMode(m)}
@@ -321,35 +320,24 @@ export default function Overview() {
 
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
             <KpiCard
-              label={isPerMode ? `Open Positions (${kpiMode})` : "Open Risk"}
-              suffix={isPerMode ? "" : "%"}
-              value={isPerMode ? (kpiPositions || 0) : formatNumber(kpiRisk, 2)}
-              trend={!isPerMode && kpiRisk && kpiRisk > 5 ? "down" : "neutral"}
+              label={`Open Positions (${kpiMode})`}
+              value={kpiPositions || 0}
               accentColor="amber"
               icon={<ShieldAlert className="w-4 h-4" />}
-              tooltip={isPerMode
-                ? `Number of open positions in ${kpiMode} mode.`
-                : "Estimated exposure from all currently open positions as a percentage of total capital. Below 5% is comfortable; above 10% is elevated risk. The risk engine will block new trades if limits are breached."}
+              tooltip={`Number of open positions in ${kpiMode} mode.`}
               detail={
-                isPerMode ? (
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Aggregate Risk</span>
-                    <span className="font-mono tabular-nums text-foreground">{formatNumber(kpiRisk, 2)}%</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Open Positions</span>
-                    <span className="font-mono tabular-nums text-foreground">{kpiPositions || 0}</span>
-                  </div>
-                )
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Win Rate</span>
+                  <span className="font-mono tabular-nums text-foreground">{formatNumber(kpiWinRate, 1)}%</span>
+                </div>
               }
             />
           </motion.div>
 
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
             <KpiCard
-              label={isPerMode ? `Total Trades (${kpiMode})` : "Active Strategies"}
-              value={isPerMode ? (kpiSnap?.totalTrades || 0) : (kpiStrategies || 0)}
+              label={`Total Trades (${kpiMode})`}
+              value={kpiSnap?.totalTrades || 0}
               accentColor="purple"
               icon={<Layers className="w-4 h-4" />}
               tooltip={

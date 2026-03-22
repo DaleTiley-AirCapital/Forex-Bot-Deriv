@@ -30,9 +30,9 @@ function RiskGauge({ value, max, breached, label }: { value: number; max: number
 
 export default function Risk() {
   const { data: risk } = useGetRiskStatus({ query: { refetchInterval: 3000 } });
-  const [modeFilter, setModeFilter] = useState<string>("all");
+  const [modeFilter, setModeFilter] = useState<string>("paper");
 
-  const filteredModes = (["paper", "demo", "real"] as const).filter(m => modeFilter === "all" || modeFilter === m);
+  const filteredModes = (["paper", "demo", "real"] as const).filter(m => modeFilter === m);
 
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
@@ -43,7 +43,7 @@ export default function Risk() {
         </div>
         <div className="flex items-center gap-1">
           <Filter className="w-3.5 h-3.5 text-muted-foreground" />
-          {["all", "paper", "demo", "real"].map(m => (
+          {["paper", "demo", "real"].map(m => (
             <button
               key={m}
               onClick={() => setModeFilter(m)}
@@ -67,43 +67,12 @@ export default function Risk() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="lg:col-span-2 space-y-5">
-          {modeFilter === "all" && (
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <Lock className="w-4 h-4 text-primary" />
-                  Aggregate Exposure Limits
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                <RiskGauge
-                  label="Daily Loss"
-                  value={risk?.dailyLossPct ?? 0}
-                  max={risk?.maxDailyLossPct ?? 5}
-                  breached={risk?.dailyLossBreached ?? false}
-                />
-                <RiskGauge
-                  label="Weekly Loss"
-                  value={risk?.weeklyLossPct ?? 0}
-                  max={risk?.maxWeeklyLossPct ?? 12}
-                  breached={risk?.weeklyLossBreached ?? false}
-                />
-                <RiskGauge
-                  label="Max Drawdown"
-                  value={risk?.drawdownPct ?? 0}
-                  max={risk?.maxDrawdownPct ?? 20}
-                  breached={risk?.maxDrawdownBreached ?? false}
-                />
-              </CardContent>
-            </Card>
-          )}
-
           {risk?.perMode && filteredModes.some(m => risk.perMode?.[m]) && (
             <Card>
               <CardHeader>
                 <CardTitle>
                   <Lock className="w-4 h-4 text-primary" />
-                  {modeFilter === "all" ? "Per-Mode Risk" : `${modeFilter.charAt(0).toUpperCase() + modeFilter.slice(1)} Mode Risk`}
+                  {`${modeFilter.charAt(0).toUpperCase() + modeFilter.slice(1)} Mode Risk`}
                 </CardTitle>
               </CardHeader>
               <CardContent>

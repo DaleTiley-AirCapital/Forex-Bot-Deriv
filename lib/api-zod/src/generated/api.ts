@@ -342,43 +342,64 @@ export const GetBacktestCandlesResponse = zod.array(
 );
 
 /**
- * @summary Get latest trade signals
+ * @summary Get signal decision review log
  */
-export const getLatestSignalsQueryLimitDefault = 20;
+export const getLatestSignalsQueryLimitDefault = 50;
+export const getLatestSignalsQueryOffsetDefault = 0;
 
 export const GetLatestSignalsQueryParams = zod.object({
   limit: zod.coerce.number().default(getLatestSignalsQueryLimitDefault),
+  offset: zod.coerce.number().default(getLatestSignalsQueryOffsetDefault),
+  symbol: zod.coerce.string().optional(),
+  family: zod.coerce.string().optional(),
+  mode: zod.coerce.string().optional(),
+  status: zod.coerce.string().optional(),
+  ai: zod.coerce.string().optional(),
+  from: zod.coerce.string().optional(),
+  to: zod.coerce.string().optional(),
 });
 
-export const GetLatestSignalsResponseItem = zod.object({
-  id: zod.number(),
-  ts: zod.string(),
-  symbol: zod.string(),
-  strategyName: zod.string(),
-  score: zod.number(),
-  expectedValue: zod.number(),
-  allowedFlag: zod.boolean(),
-  rejectionReason: zod.string().nullable(),
-  direction: zod.string().nullable(),
-  suggestedSl: zod.number().nullable(),
-  suggestedTp: zod.number().nullable(),
-  aiVerdict: zod.string().nullable(),
-  aiReasoning: zod.string().nullable(),
-  aiConfidenceAdj: zod.number().nullable(),
-  compositeScore: zod.number().nullable(),
-  scoringDimensions: zod.union([
+export const GetLatestSignalsResponse = zod.object({
+  signals: zod.array(
     zod.object({
-      regimeFit: zod.number(),
-      setupQuality: zod.number(),
-      trendAlignment: zod.number(),
-      volatilityCondition: zod.number(),
-      rewardRisk: zod.number(),
-      probabilityOfSuccess: zod.number(),
+      id: zod.number(),
+      ts: zod.string(),
+      symbol: zod.string(),
+      strategyName: zod.string(),
+      strategyFamily: zod.string().nullable(),
+      subStrategy: zod.string().nullable(),
+      score: zod.number(),
+      expectedValue: zod.number(),
+      allowedFlag: zod.boolean(),
+      rejectionReason: zod.string().nullable(),
+      direction: zod.string().nullable(),
+      suggestedSl: zod.number().nullable(),
+      suggestedTp: zod.number().nullable(),
+      aiVerdict: zod.string().nullable(),
+      aiReasoning: zod.string().nullable(),
+      aiConfidenceAdj: zod.number().nullable(),
+      compositeScore: zod.number().nullable(),
+      scoringDimensions: zod.union([
+        zod.object({
+          regimeFit: zod.number(),
+          setupQuality: zod.number(),
+          trendAlignment: zod.number(),
+          volatilityCondition: zod.number(),
+          rewardRisk: zod.number(),
+          probabilityOfSuccess: zod.number(),
+        }),
+        zod.null(),
+      ]),
+      mode: zod.string().nullable(),
+      regime: zod.string().nullable(),
+      regimeConfidence: zod.number().nullable(),
+      allocationPct: zod.number().nullable(),
+      executionStatus: zod.string().nullable(),
     }),
-    zod.null(),
-  ]),
+  ),
+  total: zod.number(),
+  visibilityThreshold: zod.number(),
 });
-export const GetLatestSignalsResponse = zod.array(GetLatestSignalsResponseItem);
 
 /**
  * @summary Toggle a trading mode on or off

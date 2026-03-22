@@ -32,7 +32,7 @@ const MODE_COLORS: Record<string, string> = {
 export default function Trades() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'positions' | 'history'>('positions');
-  const [modeFilter, setModeFilter] = useState<string>("all");
+  const [modeFilter, setModeFilter] = useState<string>("paper");
   
   const { data: status } = useGetDataStatus({ query: { refetchInterval: 3000 } });
   const { data: positions } = useGetLivePositions({ query: { refetchInterval: 2000 } });
@@ -53,19 +53,16 @@ export default function Trades() {
 
   const filteredOpen = useMemo(() => {
     if (!openTrades) return [];
-    if (modeFilter === "all") return openTrades;
     return openTrades.filter(t => t.mode === modeFilter);
   }, [openTrades, modeFilter]);
 
   const filteredHistory = useMemo(() => {
     if (!historyTrades) return [];
-    if (modeFilter === "all") return historyTrades;
     return historyTrades.filter(t => t.mode === modeFilter);
   }, [historyTrades, modeFilter]);
 
   const filteredPositions = useMemo(() => {
     if (!positions) return [];
-    if (modeFilter === "all") return positions;
     return positions.filter(p => p.mode === modeFilter);
   }, [positions, modeFilter]);
 
@@ -91,7 +88,7 @@ export default function Trades() {
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
             <Filter className="w-3.5 h-3.5 text-muted-foreground" />
-            {["all", "paper", "demo", "real"].map(m => (
+            {["paper", "demo", "real"].map(m => (
               <button
                 key={m}
                 onClick={() => setModeFilter(m)}

@@ -1,4 +1,4 @@
-import { pgTable, serial, text, doublePrecision, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, doublePrecision, boolean, timestamp, jsonb, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -19,6 +19,13 @@ export const signalLogTable = pgTable("signal_log", {
   aiConfidenceAdj: doublePrecision("ai_confidence_adj"),
   compositeScore: doublePrecision("composite_score"),
   scoringDimensions: jsonb("scoring_dimensions"),
+  mode: text("mode"),
+  regime: text("regime"),
+  regimeConfidence: doublePrecision("regime_confidence"),
+  strategyFamily: text("strategy_family"),
+  subStrategy: text("sub_strategy"),
+  allocationPct: doublePrecision("allocation_pct"),
+  executionStatus: text("execution_status"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

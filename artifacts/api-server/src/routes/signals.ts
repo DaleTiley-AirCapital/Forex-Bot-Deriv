@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, gte, lte, and, sql } from "drizzle-orm";
 import { db, signalLogTable, platformStateTable } from "@workspace/db";
 import { computeFeatures } from "../lib/features.js";
 import { runAllStrategies } from "../lib/strategies.js";
@@ -28,39 +28,83 @@ async function loadScoringWeights(): Promise<ScoringWeights | undefined> {
 
 const router: IRouter = Router();
 
-const SYMBOLS = ["BOOM1000", "CRASH1000", "BOOM500", "CRASH500"];
+const SYMBOLS = ["BOOM1000", "BOOM900", "BOOM600", "BOOM500", "BOOM300", "CRASH1000", "CRASH900", "CRASH600", "CRASH500", "CRASH300", "R_75", "R_100"];
 
-/**
- * GET /api/signals/latest - return logged signal history
- */
 router.get("/signals/latest", async (req, res): Promise<void> => {
-  const limit = Math.min(Number(req.query.limit || 20), 100);
+  const limit = Math.min(Number(req.query.limit || 50), 200);
+  const offset = Math.max(Number(req.query.offset || 0), 0);
+  const symbolFilter = req.query.symbol ? String(req.query.symbol).toUpperCase() : null;
+  const familyFilter = req.query.family ? String(req.query.family) : null;
+  const modeFilter = req.query.mode ? String(req.query.mode) : null;
+  const statusFilter = req.query.status ? String(req.query.status) : null;
+  const aiFilter = req.query.ai ? String(req.query.ai) : null;
+  const fromDate = req.query.from ? String(req.query.from) : null;
+  const toDate = req.query.to ? String(req.query.to) : null;
+
+  const states = await db.select().from(platformStateTable);
+  const stateMap: Record<string, string> = {};
+  for (const s of states) stateMap[s.key] = s.value;
+  const visibilityThreshold = parseFloat(stateMap["signal_visibility_threshold"] || "75");
+
+  const conditions = [];
+
+  const visibilityCondition = sql`(${signalLogTable.allowedFlag} = true OR COALESCE(${signalLogTable.compositeScore}, 0) >= ${visibilityThreshold})`;
+  conditions.push(visibilityCondition);
+
+  if (symbolFilter) conditions.push(eq(signalLogTable.symbol, symbolFilter));
+  if (familyFilter) conditions.push(eq(signalLogTable.strategyFamily, familyFilter));
+  if (modeFilter) conditions.push(eq(signalLogTable.mode, modeFilter));
+  if (statusFilter === "approved") conditions.push(eq(signalLogTable.allowedFlag, true));
+  if (statusFilter === "blocked") conditions.push(eq(signalLogTable.allowedFlag, false));
+  if (aiFilter) conditions.push(eq(signalLogTable.aiVerdict, aiFilter));
+  if (fromDate) conditions.push(gte(signalLogTable.ts, new Date(fromDate)));
+  if (toDate) conditions.push(lte(signalLogTable.ts, new Date(toDate)));
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const countResult = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(signalLogTable)
+    .where(whereClause);
+  const totalCount = countResult[0]?.count ?? 0;
+
   const rows = await db.select().from(signalLogTable)
+    .where(whereClause)
     .orderBy(desc(signalLogTable.ts))
-    .limit(limit);
-  res.json(rows.map(r => ({
-    id: r.id,
-    ts: r.ts.toISOString(),
-    symbol: r.symbol,
-    strategyName: r.strategyName,
-    score: r.score,
-    expectedValue: r.expectedValue,
-    allowedFlag: r.allowedFlag,
-    rejectionReason: r.rejectionReason,
-    direction: r.direction,
-    suggestedSl: r.suggestedSl,
-    suggestedTp: r.suggestedTp,
-    aiVerdict: r.aiVerdict ?? null,
-    aiReasoning: r.aiReasoning ?? null,
-    aiConfidenceAdj: r.aiConfidenceAdj ?? null,
-    compositeScore: r.compositeScore ?? null,
-    scoringDimensions: r.scoringDimensions ?? null,
-  })));
+    .limit(limit)
+    .offset(offset);
+
+  res.json({
+    signals: rows.map(r => ({
+      id: r.id,
+      ts: r.ts.toISOString(),
+      symbol: r.symbol,
+      strategyName: r.strategyName,
+      strategyFamily: r.strategyFamily ?? null,
+      subStrategy: r.subStrategy ?? null,
+      score: r.score,
+      expectedValue: r.expectedValue,
+      allowedFlag: r.allowedFlag,
+      rejectionReason: r.rejectionReason,
+      direction: r.direction,
+      suggestedSl: r.suggestedSl,
+      suggestedTp: r.suggestedTp,
+      aiVerdict: r.aiVerdict ?? null,
+      aiReasoning: r.aiReasoning ?? null,
+      aiConfidenceAdj: r.aiConfidenceAdj ?? null,
+      compositeScore: r.compositeScore ?? null,
+      scoringDimensions: r.scoringDimensions ?? null,
+      mode: r.mode ?? null,
+      regime: r.regime ?? null,
+      regimeConfidence: r.regimeConfidence ?? null,
+      allocationPct: r.allocationPct ?? null,
+      executionStatus: r.executionStatus ?? null,
+    })),
+    total: totalCount,
+    visibilityThreshold,
+  });
 });
 
-/**
- * POST /api/signals/scan - run a full scan on all symbols right now
- */
 router.post("/signals/scan", async (_req, res): Promise<void> => {
   try {
     const weights = await loadScoringWeights();
@@ -86,7 +130,7 @@ router.post("/signals/scan", async (_req, res): Promise<void> => {
     }
 
     const decisions = await routeSignals(allCandidates, "paper");
-    await logSignalDecisions(decisions);
+    await logSignalDecisions(decisions, "paper");
 
     const allowed = decisions.filter(d => d.allowed);
     const rejected = decisions.filter(d => !d.allowed);
@@ -115,9 +159,6 @@ router.post("/signals/scan", async (_req, res): Promise<void> => {
   }
 });
 
-/**
- * GET /api/signals/features/:symbol - get current feature vector for a symbol
- */
 router.get("/signals/features/:symbol", async (req, res): Promise<void> => {
   const symbol = req.params.symbol?.toUpperCase() ?? "";
   if (!SYMBOLS.includes(symbol)) {
@@ -137,9 +178,6 @@ router.get("/signals/features/:symbol", async (req, res): Promise<void> => {
   }
 });
 
-/**
- * GET /api/signals/strategies - return which strategies fired for a symbol
- */
 router.get("/signals/strategies/:symbol", async (req, res): Promise<void> => {
   const symbol = req.params.symbol?.toUpperCase() ?? "";
   if (!SYMBOLS.includes(symbol)) {

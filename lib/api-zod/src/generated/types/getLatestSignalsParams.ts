@@ -8,4 +8,12 @@
 
 export type GetLatestSignalsParams = {
   limit?: number;
+  offset?: number;
+  symbol?: string;
+  family?: string;
+  mode?: string;
+  status?: string;
+  ai?: string;
+  from?: string;
+  to?: string;
 };

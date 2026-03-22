@@ -142,7 +142,7 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
             regimeState: (decision.signal as any).regimeState || regime.regime,
             regimeConfidence: (decision.signal as any).regimeConfidence || regime.confidence,
             instrumentFamily: classifyInstrument(decision.signal.symbol),
-            macroBiasModifier: (decision.signal as any).macroBiasApplied || regime.macroBiasModifier,
+            macroBiasModifier: 0,
             compositeScore: decision.signal.compositeScore,
             entryStage: (decision.signal as any).entryStage || "probe",
             expectedValue: decision.signal.expectedValue,
@@ -177,9 +177,7 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
       finalDecisions.push(decision);
     }
 
-    if (mode === activeModes[0]) {
-      await logSignalDecisions(finalDecisions);
-    }
+    await logSignalDecisions(finalDecisions, mode);
 
     const allowed = finalDecisions.filter(d => d.allowed);
     for (const decision of allowed) {

@@ -147,6 +147,15 @@ async function initDb(): Promise<void> {
     ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS ai_verdict TEXT;
     ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS ai_reasoning TEXT;
     ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS ai_confidence_adj DOUBLE PRECISION;
+    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS composite_score DOUBLE PRECISION;
+    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS scoring_dimensions JSONB;
+    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS mode TEXT;
+    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS regime TEXT;
+    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS regime_confidence DOUBLE PRECISION;
+    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS strategy_family TEXT;
+    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS sub_strategy TEXT;
+    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS allocation_pct DOUBLE PRECISION;
+    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS execution_status TEXT;
 
     CREATE TABLE IF NOT EXISTS platform_state (
       id         SERIAL PRIMARY KEY,

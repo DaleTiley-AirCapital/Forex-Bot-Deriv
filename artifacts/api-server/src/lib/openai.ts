@@ -73,7 +73,7 @@ export interface SignalContext {
   regimeState: string;
   regimeConfidence: number;
   instrumentFamily: string;
-  macroBiasModifier: number;
+  macroBiasModifier?: number;
   compositeScore: number;
   entryStage: string;
   expectedValue: number;
@@ -101,7 +101,7 @@ CONTEXT:
 
 REGIME:
 - Current Regime: ${ctx.regimeState} (confidence: ${(ctx.regimeConfidence * 100).toFixed(0)}%)
-- Macro Bias Modifier: ${ctx.macroBiasModifier > 0 ? "+" : ""}${(ctx.macroBiasModifier * 100).toFixed(1)}%
+- Regime Gate: Active (strategy must match regime permissions)
 
 SCORES:
 - Composite Score: ${ctx.compositeScore.toFixed(0)}/100

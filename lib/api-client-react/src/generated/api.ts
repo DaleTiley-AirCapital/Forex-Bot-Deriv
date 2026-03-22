@@ -31,7 +31,6 @@ import type {
   ErrorResponse,
   FeatureBuildRequest,
   GetBacktestResultsParams,
-  PaginatedBacktestResults,
   GetCandlesParams,
   GetLatestSignalsParams,
   GetSpikeEventsParams,
@@ -51,7 +50,7 @@ import type {
   SetModeErrorResponse,
   SetPortfolioModeRequest,
   SetTradingModeRequest,
-  SignalLog,
+  SignalReviewResponse,
   SpikeEvent,
   StreamRequest,
   Tick,
@@ -1196,8 +1195,8 @@ export const getGetBacktestResultsUrl = (params?: GetBacktestResultsParams) => {
 export const getBacktestResults = async (
   params?: GetBacktestResultsParams,
   options?: RequestInit,
-): Promise<PaginatedBacktestResults> => {
-  return customFetch<PaginatedBacktestResults>(getGetBacktestResultsUrl(params), {
+): Promise<BacktestRun[]> => {
+  return customFetch<BacktestRun[]>(getGetBacktestResultsUrl(params), {
     ...options,
     method: "GET",
   });
@@ -1617,7 +1616,7 @@ export function useGetBacktestCandles<
 }
 
 /**
- * @summary Get latest trade signals
+ * @summary Get signal decision review log
  */
 export const getGetLatestSignalsUrl = (params?: GetLatestSignalsParams) => {
   const normalizedParams = new URLSearchParams();
@@ -1638,8 +1637,8 @@ export const getGetLatestSignalsUrl = (params?: GetLatestSignalsParams) => {
 export const getLatestSignals = async (
   params?: GetLatestSignalsParams,
   options?: RequestInit,
-): Promise<SignalLog[]> => {
-  return customFetch<SignalLog[]>(getGetLatestSignalsUrl(params), {
+): Promise<SignalReviewResponse> => {
+  return customFetch<SignalReviewResponse>(getGetLatestSignalsUrl(params), {
     ...options,
     method: "GET",
   });
@@ -1687,7 +1686,7 @@ export type GetLatestSignalsQueryResult = NonNullable<
 export type GetLatestSignalsQueryError = ErrorType<unknown>;
 
 /**
- * @summary Get latest trade signals
+ * @summary Get signal decision review log
  */
 
 export function useGetLatestSignals<

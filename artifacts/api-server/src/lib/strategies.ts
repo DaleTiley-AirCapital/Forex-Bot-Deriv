@@ -21,7 +21,6 @@ export interface SignalCandidate {
   dimensions: import("./scoring.js").ScoringDimensions | null;
   regimeState: string;
   regimeConfidence: number;
-  macroBiasApplied: number;
   entryStage: "probe" | "confirmation" | "momentum";
 }
 
@@ -106,8 +105,7 @@ function trendContinuation(features: FeatureVector, regime: RegimeClassification
   if (!direction) return null;
 
   const { score, confidence, expectedValue } = scoreFeaturesForFamily(features, "trend_continuation");
-  const adjustedScore = Math.min(0.99, score + regime.macroBiasModifier);
-  if (adjustedScore < cfg.minModelScore || expectedValue < cfg.minEV) return null;
+  if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
   const { sl, tp } = sltp(1, direction, features.atr14, cfg.slMultiple, cfg.tpMultiple);
 
@@ -116,7 +114,7 @@ function trendContinuation(features: FeatureVector, regime: RegimeClassification
     strategyName: "trend_continuation",
     strategyFamily: "trend_continuation",
     direction,
-    score: adjustedScore,
+    score,
     confidence,
     expectedValue,
     regimeCompatible: true,
@@ -129,7 +127,6 @@ function trendContinuation(features: FeatureVector, regime: RegimeClassification
     dimensions: null,
     regimeState: regime.regime,
     regimeConfidence: regime.confidence,
-    macroBiasApplied: regime.macroBiasModifier,
     entryStage: "probe",
   };
 }
@@ -172,8 +169,7 @@ function meanReversion(features: FeatureVector, regime: RegimeClassification): S
   if (!direction) return null;
 
   const { score, confidence, expectedValue } = scoreFeaturesForFamily(features, "mean_reversion");
-  const adjustedScore = Math.min(0.99, score + regime.macroBiasModifier);
-  if (adjustedScore < cfg.minModelScore || expectedValue < cfg.minEV) return null;
+  if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
   const { sl, tp } = sltp(1, direction, features.atr14, cfg.slMultiple, cfg.tpMultiple);
 
@@ -182,7 +178,7 @@ function meanReversion(features: FeatureVector, regime: RegimeClassification): S
     strategyName: "mean_reversion",
     strategyFamily: "mean_reversion",
     direction,
-    score: adjustedScore,
+    score,
     confidence,
     expectedValue,
     regimeCompatible: true,
@@ -195,7 +191,6 @@ function meanReversion(features: FeatureVector, regime: RegimeClassification): S
     dimensions: null,
     regimeState: regime.regime,
     regimeConfidence: regime.confidence,
-    macroBiasApplied: regime.macroBiasModifier,
     entryStage: "probe",
   };
 }
@@ -234,8 +229,7 @@ function breakoutExpansion(features: FeatureVector, regime: RegimeClassification
   if (!direction) return null;
 
   const { score, confidence, expectedValue } = scoreFeaturesForFamily(features, "breakout_expansion");
-  const adjustedScore = Math.min(0.99, score + regime.macroBiasModifier);
-  if (adjustedScore < cfg.minModelScore || expectedValue < cfg.minEV) return null;
+  if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
   const { sl, tp } = sltp(1, direction, features.atr14, cfg.slMultiple, cfg.tpMultiple);
 
@@ -244,7 +238,7 @@ function breakoutExpansion(features: FeatureVector, regime: RegimeClassification
     strategyName: "breakout_expansion",
     strategyFamily: "breakout_expansion",
     direction,
-    score: adjustedScore,
+    score,
     confidence,
     expectedValue,
     regimeCompatible: true,
@@ -257,7 +251,6 @@ function breakoutExpansion(features: FeatureVector, regime: RegimeClassification
     dimensions: null,
     regimeState: regime.regime,
     regimeConfidence: regime.confidence,
-    macroBiasApplied: regime.macroBiasModifier,
     entryStage: "probe",
   };
 }
@@ -275,7 +268,7 @@ function spikeEvent(features: FeatureVector, regime: RegimeClassification): Sign
   const reason = `Spike hazard elevated: score=${features.spikeHazardScore.toFixed(2)}, ticks since last=${features.ticksSinceSpike}`;
 
   const { score, confidence, expectedValue } = scoreFeaturesForFamily(features, "spike_event");
-  const boostedScore = Math.min(0.99, score * 0.4 + features.spikeHazardScore * 0.5 + regime.macroBiasModifier);
+  const boostedScore = Math.min(0.99, score * 0.4 + features.spikeHazardScore * 0.5);
   if (boostedScore < cfg.minModelScore) return null;
 
   const { sl, tp } = sltp(1, direction, features.atr14, cfg.slMultiple, cfg.tpMultiple);
@@ -298,7 +291,6 @@ function spikeEvent(features: FeatureVector, regime: RegimeClassification): Sign
     dimensions: null,
     regimeState: regime.regime,
     regimeConfidence: regime.confidence,
-    macroBiasApplied: regime.macroBiasModifier,
     entryStage: "probe",
   };
 }
@@ -330,12 +322,6 @@ export function runAllStrategies(features: FeatureVector, weights?: ScoringWeigh
     const dims = computeScoringDimensions(features, candidate, candidate.score);
     candidate.dimensions = dims;
     candidate.compositeScore = computeCompositeScore(dims, weights);
-
-    if (regime.macroBiasModifier > 0) {
-      candidate.compositeScore = Math.min(100, candidate.compositeScore + regime.macroBiasModifier * 30);
-    } else if (regime.macroBiasModifier < 0) {
-      candidate.compositeScore = Math.max(0, candidate.compositeScore + regime.macroBiasModifier * 40);
-    }
   }
 
   return candidates;

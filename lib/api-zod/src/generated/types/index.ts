@@ -57,6 +57,7 @@ export * from "./setPortfolioModeRequestMode";
 export * from "./setTradingModeRequest";
 export * from "./setTradingModeRequestMode";
 export * from "./signalLog";
+export * from "./signalReviewResponse";
 export * from "./spikeEvent";
 export * from "./spikeEventDirection";
 export * from "./streamRequest";

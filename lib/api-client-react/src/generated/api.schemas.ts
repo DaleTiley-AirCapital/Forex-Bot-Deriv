@@ -225,6 +225,10 @@ export interface SignalLog {
   ts: string;
   symbol: string;
   strategyName: string;
+  /** @nullable */
+  strategyFamily: string | null;
+  /** @nullable */
+  subStrategy: string | null;
   score: number;
   expectedValue: number;
   allowedFlag: boolean;
@@ -245,6 +249,22 @@ export interface SignalLog {
   /** @nullable */
   compositeScore: number | null;
   scoringDimensions: ScoringDimensions | null;
+  /** @nullable */
+  mode: string | null;
+  /** @nullable */
+  regime: string | null;
+  /** @nullable */
+  regimeConfidence: number | null;
+  /** @nullable */
+  allocationPct: number | null;
+  /** @nullable */
+  executionStatus: string | null;
+}
+
+export interface SignalReviewResponse {
+  signals: SignalLog[];
+  total: number;
+  visibilityThreshold: number;
 }
 
 export interface BacktestAnalysis {
@@ -642,18 +662,18 @@ export type GetSpikeEventsParams = {
 
 export type GetBacktestResultsParams = {
   limit?: number;
-  offset?: number;
-};
-
-export type PaginatedBacktestResults = {
-  data: BacktestRun[];
-  total: number;
-  limit: number;
-  offset: number;
 };
 
 export type GetLatestSignalsParams = {
   limit?: number;
+  offset?: number;
+  symbol?: string;
+  family?: string;
+  mode?: string;
+  status?: string;
+  ai?: string;
+  from?: string;
+  to?: string;
 };
 
 export type GetTradeHistoryParams = {

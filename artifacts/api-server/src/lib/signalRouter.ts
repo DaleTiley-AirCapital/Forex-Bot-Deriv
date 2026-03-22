@@ -367,8 +367,9 @@ export async function routeSignals(candidates: SignalCandidate[], tradingMode: T
   return decisions;
 }
 
-export async function logSignalDecisions(decisions: AllocationDecision[]): Promise<void> {
+export async function logSignalDecisions(decisions: AllocationDecision[], tradingMode?: TradingMode): Promise<void> {
   for (const d of decisions) {
+    const sig = d.signal as any;
     await db.insert(signalLogTable).values({
       ts: new Date(d.signal.timestamp),
       symbol: d.signal.symbol,
@@ -385,6 +386,13 @@ export async function logSignalDecisions(decisions: AllocationDecision[]): Promi
       aiConfidenceAdj: d.aiConfidenceAdj ?? null,
       compositeScore: d.signal.compositeScore,
       scoringDimensions: d.signal.dimensions,
+      mode: tradingMode ?? null,
+      regime: sig.regimeState ?? null,
+      regimeConfidence: sig.regimeConfidence ?? null,
+      strategyFamily: sig.strategyFamily ?? null,
+      subStrategy: sig.strategyName ?? null,
+      allocationPct: d.capitalAllocationPct > 0 ? d.capitalAllocationPct * 100 : null,
+      executionStatus: d.allowed ? "approved" : "blocked",
     });
   }
 }

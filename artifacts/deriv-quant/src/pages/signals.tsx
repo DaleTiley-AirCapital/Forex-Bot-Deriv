@@ -1,10 +1,29 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useGetLatestSignals } from "@workspace/api-client-react";
-import type { ScoringDimensions } from "@workspace/api-client-react";
+import type { ScoringDimensions, GetLatestSignalsParams } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, Badge } from "@/components/ui-elements";
 import { formatNumber, cn } from "@/lib/utils";
-import { Zap, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, ChevronUp, Clock } from "lucide-react";
+import { ClipboardList, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, ChevronUp, Filter, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
+const FAMILIES = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event"] as const;
+const MODES = ["paper", "demo", "real"] as const;
+const STATUSES = ["approved", "blocked"] as const;
+const AI_VERDICTS = ["agree", "disagree", "uncertain"] as const;
+
+const FAMILY_LABELS: Record<string, string> = {
+  trend_continuation: "Trend",
+  mean_reversion: "Reversion",
+  breakout_expansion: "Breakout",
+  spike_event: "Spike",
+};
+
+const FAMILY_COLORS: Record<string, string> = {
+  trend_continuation: "bg-blue-500/12 text-blue-400 border-blue-500/25",
+  mean_reversion: "bg-purple-500/12 text-purple-400 border-purple-500/25",
+  breakout_expansion: "bg-orange-500/12 text-orange-400 border-orange-500/25",
+  spike_event: "bg-pink-500/12 text-pink-400 border-pink-500/25",
+};
 
 function AIVerdictBadge({ verdict, reasoning }: { verdict: string | null | undefined; reasoning: string | null | undefined }) {
   const [expanded, setExpanded] = useState(false);
@@ -71,7 +90,7 @@ function CompositeScoreBadge({ score }: { score: number | null | undefined }) {
 
   return (
     <span className={cn("inline-flex items-center px-2 py-0.5 rounded-md text-sm font-bold border mono-num", color, bg)}>
-      {score}
+      {Math.round(score)}
     </span>
   );
 }
@@ -135,33 +154,150 @@ function DimensionsBreakdown({ dimensions }: { dimensions: ScoringDimensions | n
   );
 }
 
+function FilterPill({ label, active, onClick, onClear }: { label: string; active: boolean; onClick: () => void; onClear?: () => void }) {
+  return (
+    <button
+      onClick={active && onClear ? onClear : onClick}
+      className={cn(
+        "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border transition-all",
+        active
+          ? "bg-primary/15 text-primary border-primary/30"
+          : "bg-card text-muted-foreground border-border/50 hover:border-border"
+      )}
+    >
+      {label}
+      {active && onClear && <X className="w-3 h-3" />}
+    </button>
+  );
+}
+
+function FilterSelect({ value, onChange, options, placeholder }: {
+  value: string;
+  onChange: (v: string) => void;
+  options: readonly string[] | string[];
+  placeholder: string;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="bg-card border border-border/50 rounded-md px-2.5 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none"
+    >
+      <option value="">{placeholder}</option>
+      {options.map(opt => (
+        <option key={opt} value={opt}>{opt}</option>
+      ))}
+    </select>
+  );
+}
+
+const PAGE_SIZE = 50;
+
 export default function Signals() {
-  const { data: signals, isLoading } = useGetLatestSignals({ query: { refetchInterval: 3000 } });
+  const [symbolFilter, setSymbolFilter] = useState("");
+  const [familyFilter, setFamilyFilter] = useState("");
+  const [modeFilter, setModeFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [aiFilter, setAiFilter] = useState("");
+  const [page, setPage] = useState(0);
+
+  const params: GetLatestSignalsParams = useMemo(() => {
+    const p: GetLatestSignalsParams = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
+    if (symbolFilter) p.symbol = symbolFilter;
+    if (familyFilter) p.family = familyFilter;
+    if (modeFilter) p.mode = modeFilter;
+    if (statusFilter) p.status = statusFilter;
+    if (aiFilter) p.ai = aiFilter;
+    return p;
+  }, [symbolFilter, familyFilter, modeFilter, statusFilter, aiFilter, page]);
+
+  const { data, isLoading } = useGetLatestSignals(params, { query: { refetchInterval: 5000 } });
+
+  const signals = data?.signals ?? [];
+  const total = data?.total ?? 0;
+  const visThreshold = data?.visibilityThreshold ?? 75;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const hasFilters = symbolFilter || familyFilter || modeFilter || statusFilter || aiFilter;
+
+  const symbols = useMemo(() => {
+    const s = new Set<string>();
+    signals.forEach(sig => s.add(sig.symbol));
+    return Array.from(s).sort();
+  }, [signals]);
+
+  function clearFilters() {
+    setSymbolFilter("");
+    setFamilyFilter("");
+    setModeFilter("");
+    setStatusFilter("");
+    setAiFilter("");
+    setPage(0);
+  }
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
+    <div className="space-y-4 max-w-[1400px] mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="page-title">Live Signals</h1>
-          <p className="page-subtitle">Real-time model scoring and AI-verified signal generation</p>
+          <h1 className="page-title">Decision Review</h1>
+          <p className="page-subtitle">Signal decisions above {visThreshold} composite score</p>
+        </div>
+        <div className="text-xs text-muted-foreground mono-num">
+          {total} total
         </div>
       </div>
 
-      <div className="mb-2 px-1 py-2 rounded-lg bg-muted/30 border border-border/40 text-xs text-muted-foreground flex items-center gap-2">
-        <Clock className="w-3.5 h-3.5 shrink-0 text-primary" />
-        <span>
-          <span className="font-medium text-foreground">Expected hold:</span>{" "}
-          ~24–72 h (position held until Stop Loss or Take Profit is hit, hard cap 120 h)
-        </span>
-      </div>
+      <Card>
+        <CardContent className="p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+
+            <FilterSelect value={symbolFilter} onChange={v => { setSymbolFilter(v); setPage(0); }} options={symbols.length > 0 ? symbols : ["BOOM1000","BOOM500","CRASH1000","CRASH500","R_75","R_100"]} placeholder="Symbol" />
+            <FilterSelect value={familyFilter} onChange={v => { setFamilyFilter(v); setPage(0); }} options={FAMILIES} placeholder="Family" />
+            <FilterSelect value={modeFilter} onChange={v => { setModeFilter(v); setPage(0); }} options={MODES} placeholder="Mode" />
+            <FilterSelect value={statusFilter} onChange={v => { setStatusFilter(v); setPage(0); }} options={STATUSES} placeholder="Status" />
+            <FilterSelect value={aiFilter} onChange={v => { setAiFilter(v); setPage(0); }} options={AI_VERDICTS} placeholder="AI" />
+
+            {hasFilters && (
+              <button
+                onClick={clearFilters}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="w-3 h-3" /> Clear
+              </button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
           <CardTitle>
-            <Zap className="w-4 h-4 text-warning" />
-            Signal Feed
+            <ClipboardList className="w-4 h-4 text-primary" />
+            Decision Log
           </CardTitle>
-          <span className="text-xs text-muted-foreground">{signals?.length ?? 0} recent</span>
+          <div className="flex items-center gap-3">
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="p-1 rounded hover:bg-muted/50 disabled:opacity-30 transition-colors"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-xs mono-num text-muted-foreground px-1">
+                  {page + 1}/{totalPages}
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                  className="p-1 rounded hover:bg-muted/50 disabled:opacity-30 transition-colors"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <div className="overflow-x-auto">
           <table>
@@ -169,30 +305,46 @@ export default function Signals() {
               <tr>
                 <th>Time</th>
                 <th>Symbol</th>
-                <th>Strategy</th>
+                <th>Family</th>
                 <th>Dir</th>
                 <th className="text-right">Composite</th>
-                <th className="text-right">Model</th>
+                <th className="text-right">Score</th>
                 <th className="text-right">EV</th>
+                <th>Regime</th>
+                <th>Mode</th>
+                <th className="text-right">Alloc%</th>
                 <th>Status</th>
-                <th>AI Verdict</th>
+                <th>AI</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={9} className="text-center py-10 text-muted-foreground">Loading signals…</td></tr>
-              ) : !signals?.length ? (
-                <tr><td colSpan={9} className="text-center py-10 text-muted-foreground">No recent signals.</td></tr>
+                <tr><td colSpan={12} className="text-center py-10 text-muted-foreground">Loading decisions…</td></tr>
+              ) : signals.length === 0 ? (
+                <tr><td colSpan={12} className="text-center py-10 text-muted-foreground">
+                  {hasFilters ? "No decisions match filters." : "No decisions logged yet."}
+                </td></tr>
               ) : (
                 signals.map((sig) => (
-                  <tr key={sig.id} className={cn(!sig.allowedFlag && "opacity-50 grayscale")}>
-                    <td className="mono-num text-muted-foreground text-xs">{new Date(sig.ts).toLocaleTimeString()}</td>
-                    <td className="font-semibold text-foreground">{sig.symbol}</td>
-                    <td className="text-sm text-muted-foreground">{sig.strategyName}</td>
+                  <tr key={sig.id} className={cn(!sig.allowedFlag && "opacity-60")}>
+                    <td className="mono-num text-muted-foreground text-xs whitespace-nowrap">
+                      {new Date(sig.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })}{" "}
+                      {new Date(sig.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    </td>
+                    <td className="font-semibold text-foreground text-sm">{sig.symbol}</td>
                     <td>
-                      {sig.direction === 'buy'
+                      {sig.strategyFamily ? (
+                        <span className={cn("inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border", FAMILY_COLORS[sig.strategyFamily] || "bg-gray-500/12 text-gray-400 border-gray-500/25")}>
+                          {FAMILY_LABELS[sig.strategyFamily] || sig.strategyFamily}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">{sig.strategyName}</span>
+                      )}
+                    </td>
+                    <td>
+                      {sig.direction === "buy"
                         ? <span className="inline-flex items-center gap-1 text-success text-xs font-semibold"><ArrowUpRight className="w-3.5 h-3.5" />BUY</span>
-                        : sig.direction === 'sell'
+                        : sig.direction === "sell"
                         ? <span className="inline-flex items-center gap-1 text-destructive text-xs font-semibold"><ArrowDownRight className="w-3.5 h-3.5" />SELL</span>
                         : <span className="text-muted-foreground">—</span>}
                     </td>
@@ -203,17 +355,49 @@ export default function Signals() {
                       </div>
                     </td>
                     <td className="text-right mono-num text-xs text-muted-foreground">{formatNumber(sig.score, 2)}</td>
-                    <td className={cn("text-right mono-num", sig.expectedValue > 0 ? "text-success" : "text-destructive")}>
-                      {formatNumber(sig.expectedValue, 2)}
+                    <td className={cn("text-right mono-num text-xs", sig.expectedValue > 0 ? "text-success" : "text-destructive")}>
+                      {formatNumber(sig.expectedValue, 4)}
+                    </td>
+                    <td>
+                      {sig.regime ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs text-foreground">{sig.regime}</span>
+                          {sig.regimeConfidence != null && (
+                            <span className="text-[10px] mono-num text-muted-foreground">{(sig.regimeConfidence * 100).toFixed(0)}%</span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/50">—</span>
+                      )}
+                    </td>
+                    <td>
+                      {sig.mode ? (
+                        <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider",
+                          sig.mode === "paper" ? "bg-blue-500/12 text-blue-400 border border-blue-500/25" :
+                          sig.mode === "demo" ? "bg-amber-500/12 text-amber-400 border border-amber-500/25" :
+                          "bg-emerald-500/12 text-emerald-400 border border-emerald-500/25"
+                        )}>
+                          {sig.mode}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/50">—</span>
+                      )}
+                    </td>
+                    <td className="text-right mono-num text-xs">
+                      {sig.allocationPct != null ? (
+                        <span className="text-foreground">{sig.allocationPct.toFixed(0)}%</span>
+                      ) : (
+                        <span className="text-muted-foreground/50">—</span>
+                      )}
                     </td>
                     <td>
                       {sig.allowedFlag ? (
                         <Badge variant="success">Approved</Badge>
                       ) : (
                         <div className="flex flex-col gap-0.5">
-                          <Badge variant="destructive">Rejected</Badge>
+                          <Badge variant="destructive">Blocked</Badge>
                           {sig.rejectionReason && (
-                            <span className="text-[10px] text-muted-foreground truncate max-w-[120px]" title={sig.rejectionReason}>
+                            <span className="text-[10px] text-muted-foreground truncate max-w-[140px]" title={sig.rejectionReason}>
                               {sig.rejectionReason}
                             </span>
                           )}

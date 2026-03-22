@@ -22,7 +22,6 @@ export interface RegimeClassification {
   confidence: number;
   allowedFamilies: StrategyFamily[];
   instrumentFamily: InstrumentFamily;
-  macroBiasModifier: number;
 }
 
 export function classifyInstrument(symbol: string): InstrumentFamily {
@@ -97,53 +96,7 @@ export function classifyRegime(features: FeatureVector): RegimeClassification {
 
   const allowedFamilies = STRATEGY_PERMISSION_MATRIX[regime];
 
-  const macroBiasModifier = computeMacroBias(features, instrumentFamily);
-
-  return { regime, confidence, allowedFamilies, instrumentFamily, macroBiasModifier };
-}
-
-function computeMacroBias(features: FeatureVector, instrumentFamily: InstrumentFamily): number {
-  const hour = features.hourOfDay;
-  const dow = features.dayOfWeek;
-  const isBoom = instrumentFamily === "boom";
-  const isCrash = instrumentFamily === "crash";
-
-  let modifier = 0;
-
-  const isHighActivity = (hour >= 8 && hour <= 11) || (hour >= 14 && hour <= 17);
-  const isLowActivity = hour >= 0 && hour <= 4;
-  const isWeekday = dow >= 1 && dow <= 5;
-
-  if (isHighActivity) modifier += 0.05;
-  if (isLowActivity) modifier -= 0.08;
-  if (isWeekday) modifier += 0.02;
-
-  if (isBoom || isCrash) {
-    const trendAligned = isBoom
-      ? features.emaSlope > 0.0001
-      : features.emaSlope < -0.0001;
-    if (trendAligned) modifier += 0.06;
-
-    const momentumConfirms = isBoom
-      ? features.rsi14 > 45 && features.rsi14 < 70
-      : features.rsi14 > 30 && features.rsi14 < 55;
-    if (momentumConfirms) modifier += 0.04;
-
-    const crossCorrConfirms = isBoom
-      ? features.crossCorrelation < -0.3
-      : features.crossCorrelation > 0.3;
-    if (crossCorrConfirms) modifier += 0.04;
-
-    const skewFavorable = isBoom
-      ? features.rollingSkew > 0.1
-      : features.rollingSkew < -0.1;
-    if (skewFavorable) modifier += 0.03;
-  }
-
-  const volatilityModerate = features.atrRank > 0.3 && features.atrRank < 1.5;
-  if (volatilityModerate) modifier += 0.02;
-
-  return Math.max(-0.15, Math.min(0.15, modifier));
+  return { regime, confidence, allowedFamilies, instrumentFamily };
 }
 
 export function isStrategyAllowedForRegime(family: StrategyFamily, regime: RegimeState): boolean {

@@ -12,6 +12,10 @@ export interface SignalLog {
   ts: string;
   symbol: string;
   strategyName: string;
+  /** @nullable */
+  strategyFamily: string | null;
+  /** @nullable */
+  subStrategy: string | null;
   score: number;
   expectedValue: number;
   allowedFlag: boolean;
@@ -32,4 +36,14 @@ export interface SignalLog {
   /** @nullable */
   compositeScore: number | null;
   scoringDimensions: ScoringDimensions | null;
+  /** @nullable */
+  mode: string | null;
+  /** @nullable */
+  regime: string | null;
+  /** @nullable */
+  regimeConfidence: number | null;
+  /** @nullable */
+  allocationPct: number | null;
+  /** @nullable */
+  executionStatus: string | null;
 }

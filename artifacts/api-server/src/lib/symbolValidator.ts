@@ -289,6 +289,7 @@ export function startWatchdog(resubscribeFn: (symbol: string) => Promise<void>):
           await resubscribeFn(symbol);
           health.streaming = true;
           health.error = null;
+          health.lastTickTs = Date.now();
           console.log(`[Watchdog] Resubscribed to ${symbol} successfully`);
         } catch (err) {
           health.error = `Resubscribe failed: ${err instanceof Error ? err.message : String(err)}`;

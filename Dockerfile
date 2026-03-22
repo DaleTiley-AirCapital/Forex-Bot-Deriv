@@ -31,27 +31,18 @@ COPY artifacts/api-server/       ./artifacts/api-server/
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @workspace/api-server run build
 
-# ── Stage 3: Run the API server ──────────────────────────────────────────────
+# ── Stage 3: Lean runtime (no pnpm, no node_modules) ─────────────────────────
 FROM node:24-slim AS app
 RUN apt-get update && apt-get install -y curl --no-install-recommends && rm -rf /var/lib/apt/lists/*
-RUN npm install -g pnpm
 WORKDIR /app
 
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY tsconfig.base.json tsconfig.json ./
-COPY lib/                        ./lib/
-COPY artifacts/api-server/       ./artifacts/api-server/
-COPY scripts/                    ./scripts/
-
-# Copy the built frontend
-COPY --from=frontend /app/artifacts/deriv-quant/dist ./artifacts/deriv-quant/dist
-
-# Copy the compiled API server bundle
+# Copy the compiled API server bundle (fully self-contained CJS)
 COPY --from=api-build /app/artifacts/api-server/dist ./artifacts/api-server/dist
+
+# Copy the built frontend static files
+COPY --from=frontend /app/artifacts/deriv-quant/dist ./artifacts/deriv-quant/dist
 
 ENV NODE_ENV=production
 ENV SERVE_FRONTEND=true
-
-RUN pnpm install --frozen-lockfile --prod
 
 CMD ["node", "./artifacts/api-server/dist/index.cjs"]

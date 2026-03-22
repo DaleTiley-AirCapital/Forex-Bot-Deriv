@@ -104,49 +104,90 @@ async function initDb(): Promise<void> {
       created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS backtest_trades (
+      id               SERIAL PRIMARY KEY,
+      backtest_run_id  INTEGER NOT NULL REFERENCES backtest_runs(id),
+      entry_ts         TIMESTAMPTZ NOT NULL,
+      exit_ts          TIMESTAMPTZ,
+      direction        TEXT NOT NULL,
+      entry_price      DOUBLE PRECISION NOT NULL,
+      exit_price       DOUBLE PRECISION,
+      pnl              DOUBLE PRECISION,
+      exit_reason      TEXT,
+      created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS trades (
-      id              SERIAL PRIMARY KEY,
-      broker_trade_id TEXT,
-      symbol          TEXT NOT NULL,
-      strategy_name   TEXT NOT NULL,
-      side            TEXT NOT NULL,
-      entry_ts        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      exit_ts         TIMESTAMPTZ,
-      entry_price     DOUBLE PRECISION NOT NULL,
-      exit_price      DOUBLE PRECISION,
-      sl              DOUBLE PRECISION NOT NULL,
-      tp              DOUBLE PRECISION NOT NULL,
-      size            DOUBLE PRECISION NOT NULL,
-      pnl             DOUBLE PRECISION,
-      status          TEXT NOT NULL DEFAULT 'open',
-      mode            TEXT NOT NULL DEFAULT 'paper',
-      notes           TEXT,
-      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id                SERIAL PRIMARY KEY,
+      broker_trade_id   TEXT,
+      symbol            TEXT NOT NULL,
+      strategy_name     TEXT NOT NULL,
+      side              TEXT NOT NULL,
+      entry_ts          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      exit_ts           TIMESTAMPTZ,
+      entry_price       DOUBLE PRECISION NOT NULL,
+      exit_price        DOUBLE PRECISION,
+      sl                DOUBLE PRECISION NOT NULL,
+      tp                DOUBLE PRECISION NOT NULL,
+      size              DOUBLE PRECISION NOT NULL,
+      pnl               DOUBLE PRECISION,
+      status            TEXT NOT NULL DEFAULT 'open',
+      mode              TEXT NOT NULL DEFAULT 'paper',
+      notes             TEXT,
+      confidence        DOUBLE PRECISION,
+      trailing_stop_pct DOUBLE PRECISION,
+      peak_price        DOUBLE PRECISION,
+      max_exit_ts       TIMESTAMPTZ,
+      exit_reason       TEXT,
+      current_price     DOUBLE PRECISION,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_trades_status ON trades (status);
 
     CREATE TABLE IF NOT EXISTS signal_log (
-      id               SERIAL PRIMARY KEY,
-      ts               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      symbol           TEXT NOT NULL,
-      strategy_name    TEXT NOT NULL,
-      score            DOUBLE PRECISION NOT NULL,
-      expected_value   DOUBLE PRECISION NOT NULL,
-      allowed_flag     BOOLEAN NOT NULL DEFAULT FALSE,
-      rejection_reason TEXT,
-      direction        TEXT,
-      suggested_sl     DOUBLE PRECISION,
-      suggested_tp     DOUBLE PRECISION,
-      ai_verdict       TEXT,
-      ai_reasoning     TEXT,
-      ai_confidence_adj DOUBLE PRECISION,
-      created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id                 SERIAL PRIMARY KEY,
+      ts                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      symbol             TEXT NOT NULL,
+      strategy_name      TEXT NOT NULL,
+      score              DOUBLE PRECISION NOT NULL,
+      expected_value     DOUBLE PRECISION NOT NULL,
+      allowed_flag       BOOLEAN NOT NULL DEFAULT FALSE,
+      rejection_reason   TEXT,
+      direction          TEXT,
+      suggested_sl       DOUBLE PRECISION,
+      suggested_tp       DOUBLE PRECISION,
+      ai_verdict         TEXT,
+      ai_reasoning       TEXT,
+      ai_confidence_adj  DOUBLE PRECISION,
+      composite_score    DOUBLE PRECISION,
+      scoring_dimensions JSONB,
+      mode               TEXT,
+      regime             TEXT,
+      regime_confidence  DOUBLE PRECISION,
+      strategy_family    TEXT,
+      sub_strategy       TEXT,
+      allocation_pct     DOUBLE PRECISION,
+      execution_status   TEXT,
+      created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_signals_ts ON signal_log (ts DESC);
 
-    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS ai_verdict TEXT;
-    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS ai_reasoning TEXT;
-    ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS ai_confidence_adj DOUBLE PRECISION;
+    CREATE TABLE IF NOT EXISTS platform_state (
+      id         SERIAL PRIMARY KEY,
+      key        TEXT NOT NULL UNIQUE,
+      value      TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await db.execute(sql`
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS trailing_stop_pct DOUBLE PRECISION;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS peak_price DOUBLE PRECISION;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS max_exit_ts TIMESTAMPTZ;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_reason TEXT;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS current_price DOUBLE PRECISION;
+
     ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS composite_score DOUBLE PRECISION;
     ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS scoring_dimensions JSONB;
     ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS mode TEXT;
@@ -156,15 +197,9 @@ async function initDb(): Promise<void> {
     ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS sub_strategy TEXT;
     ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS allocation_pct DOUBLE PRECISION;
     ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS execution_status TEXT;
+  `);
 
-    CREATE TABLE IF NOT EXISTS platform_state (
-      id         SERIAL PRIMARY KEY,
-      key        TEXT NOT NULL UNIQUE,
-      value      TEXT NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    -- Seed default platform configuration (only if table is empty)
+  await db.execute(sql`
     INSERT INTO platform_state (key, value)
     SELECT * FROM (VALUES
       ('mode',                'idle'),
@@ -175,10 +210,12 @@ async function initDb(): Promise<void> {
       ('max_weekly_loss_pct', '8'),
       ('max_drawdown_pct',    '15'),
       ('max_open_trades',     '4'),
+      ('streaming',           'false'),
       ('disabled_strategies', '')
     ) AS defaults(key, value)
     WHERE NOT EXISTS (SELECT 1 FROM platform_state LIMIT 1);
   `);
+
   console.log("[DB] Schema ready.");
 }
 

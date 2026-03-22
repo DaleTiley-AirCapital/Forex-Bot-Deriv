@@ -81,6 +81,19 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS backtest_trades (
+  id               SERIAL PRIMARY KEY,
+  backtest_run_id  INTEGER NOT NULL REFERENCES backtest_runs(id),
+  entry_ts         TIMESTAMPTZ NOT NULL,
+  exit_ts          TIMESTAMPTZ,
+  direction        TEXT NOT NULL,
+  entry_price      DOUBLE PRECISION NOT NULL,
+  exit_price       DOUBLE PRECISION,
+  pnl              DOUBLE PRECISION,
+  exit_reason      TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS trades (
   id              SERIAL PRIMARY KEY,
   broker_trade_id TEXT,
@@ -109,23 +122,30 @@ CREATE TABLE IF NOT EXISTS trades (
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades (status);
 
 CREATE TABLE IF NOT EXISTS signal_log (
-  id               SERIAL PRIMARY KEY,
-  ts               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  symbol           TEXT NOT NULL,
-  strategy_name    TEXT NOT NULL,
-  score            DOUBLE PRECISION NOT NULL,
-  expected_value   DOUBLE PRECISION NOT NULL,
-  allowed_flag     BOOLEAN NOT NULL DEFAULT FALSE,
-  rejection_reason TEXT,
-  direction        TEXT,
-  suggested_sl     DOUBLE PRECISION,
-  suggested_tp     DOUBLE PRECISION,
-  ai_verdict       TEXT,
-  ai_reasoning     TEXT,
-  ai_confidence_adj DOUBLE PRECISION,
-  composite_score  DOUBLE PRECISION,
+  id                 SERIAL PRIMARY KEY,
+  ts                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  symbol             TEXT NOT NULL,
+  strategy_name      TEXT NOT NULL,
+  score              DOUBLE PRECISION NOT NULL,
+  expected_value     DOUBLE PRECISION NOT NULL,
+  allowed_flag       BOOLEAN NOT NULL DEFAULT FALSE,
+  rejection_reason   TEXT,
+  direction          TEXT,
+  suggested_sl       DOUBLE PRECISION,
+  suggested_tp       DOUBLE PRECISION,
+  ai_verdict         TEXT,
+  ai_reasoning       TEXT,
+  ai_confidence_adj  DOUBLE PRECISION,
+  composite_score    DOUBLE PRECISION,
   scoring_dimensions JSONB,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  mode               TEXT,
+  regime             TEXT,
+  regime_confidence  DOUBLE PRECISION,
+  strategy_family    TEXT,
+  sub_strategy       TEXT,
+  allocation_pct     DOUBLE PRECISION,
+  execution_status   TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_signals_ts ON signal_log (ts DESC);
 

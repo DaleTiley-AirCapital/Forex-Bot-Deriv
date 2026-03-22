@@ -98,6 +98,12 @@ CREATE TABLE IF NOT EXISTS trades (
   status          TEXT NOT NULL DEFAULT 'open',
   mode            TEXT NOT NULL DEFAULT 'paper',
   notes           TEXT,
+  confidence      DOUBLE PRECISION,
+  trailing_stop_pct DOUBLE PRECISION,
+  peak_price      DOUBLE PRECISION,
+  max_exit_ts     TIMESTAMPTZ,
+  exit_reason     TEXT,
+  current_price   DOUBLE PRECISION,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades (status);

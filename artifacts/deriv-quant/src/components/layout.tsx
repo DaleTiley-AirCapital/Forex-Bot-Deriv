@@ -71,15 +71,16 @@ function useModeInfo() {
   const isLive      = mode === "live";
   const isDemo      = mode === "demo";
   const isPaper     = mode === "paper";
+  const isScanning  = mode === "scanning";
   const isCollect   = mode === "collecting";
-  const isActive    = isLive || isDemo || isPaper || isCollect;
+  const isActive    = isLive || isDemo || isPaper || isScanning || isCollect;
 
-  const modeColor   = isLive ? "text-destructive" : isDemo ? "text-primary" : isPaper ? "text-warning" : isCollect ? "text-primary" : "text-muted-foreground";
-  const modeDot     = isLive ? "bg-destructive"   : isDemo ? "bg-primary"   : isPaper ? "bg-warning"   : isCollect ? "bg-primary"   : "bg-muted-foreground/50";
-  const logoAccent  = isLive ? "bg-destructive/20 text-destructive" : isDemo ? "bg-primary/20 text-primary" : isPaper ? "bg-warning/20 text-warning" : "bg-primary/20 text-primary";
-  const sidebarBorder = isLive ? "border-destructive/30" : isDemo ? "border-primary/30" : isPaper ? "border-warning/30" : "border-border";
+  const modeColor   = isLive ? "text-destructive" : isDemo ? "text-primary" : isPaper ? "text-warning" : isScanning ? "text-green-400" : isCollect ? "text-primary" : "text-muted-foreground";
+  const modeDot     = isLive ? "bg-destructive"   : isDemo ? "bg-primary"   : isPaper ? "bg-warning"   : isScanning ? "bg-green-400" : isCollect ? "bg-primary"   : "bg-muted-foreground/50";
+  const logoAccent  = isLive ? "bg-destructive/20 text-destructive" : isDemo ? "bg-primary/20 text-primary" : isPaper ? "bg-warning/20 text-warning" : isScanning ? "bg-green-400/20 text-green-400" : "bg-primary/20 text-primary";
+  const sidebarBorder = isLive ? "border-destructive/30" : isDemo ? "border-primary/30" : isPaper ? "border-warning/30" : isScanning ? "border-green-400/30" : "border-border";
 
-  return { mode, isLive, isDemo, isPaper, isActive, modeColor, modeDot, logoAccent, sidebarBorder };
+  return { mode, isLive, isDemo, isPaper, isScanning, isActive, modeColor, modeDot, logoAccent, sidebarBorder };
 }
 
 function useTradingControls() {
@@ -276,17 +277,19 @@ function DesktopLayout({ children, location, tradingControls }: { children: Reac
 
 /* ─── Tablet: icon rail + top bar ───────────────────────────────────────── */
 function TabletLayout({ children, location, tradingControls }: { children: React.ReactNode; location: string; tradingControls: TradingControls }) {
-  const { isLive, isPaper, isActive, modeColor, modeDot, logoAccent, sidebarBorder } = useModeInfo();
+  const { isLive, isPaper, isScanning, isActive, modeColor, modeDot, logoAccent, sidebarBorder } = useModeInfo();
 
-  const modeLabel  = isLive ? "LIVE" : isPaper ? "PAPER" : isActive ? "ON" : "IDLE";
+  const modeLabel  = isLive ? "LIVE" : isPaper ? "PAPER" : isScanning ? "SCANNING" : isActive ? "ON" : "IDLE";
   const modeBadge  = isLive
     ? "bg-destructive/15 border-destructive/30 text-destructive"
     : isPaper
     ? "bg-warning/15 border-warning/30 text-warning"
+    : isScanning
+    ? "bg-green-400/15 border-green-400/30 text-green-400"
     : isActive
     ? "bg-primary/15 border-primary/30 text-primary"
     : "bg-muted/20 border-border text-muted-foreground";
-  const modeDotColor = isLive ? "bg-destructive" : isPaper ? "bg-warning" : isActive ? "bg-primary" : "bg-muted-foreground/50";
+  const modeDotColor = isLive ? "bg-destructive" : isPaper ? "bg-warning" : isScanning ? "bg-green-400" : isActive ? "bg-primary" : "bg-muted-foreground/50";
 
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden flex-col">
@@ -371,13 +374,15 @@ function TabletLayout({ children, location, tradingControls }: { children: React
 /* ─── Mobile: header + bottom tabs ──────────────────────────────────────── */
 function MobileLayout({ children, location, tradingControls }: { children: React.ReactNode; location: string; tradingControls: TradingControls }) {
   const [showMore, setShowMore] = useState(false);
-  const { isLive, isPaper, isActive, logoAccent, sidebarBorder, modeDot } = useModeInfo();
+  const { isLive, isPaper, isScanning, isActive, logoAccent, sidebarBorder, modeDot } = useModeInfo();
 
-  const modeLabel = isLive ? "LIVE" : isPaper ? "PAPER" : isActive ? "ON" : "IDLE";
+  const modeLabel = isLive ? "LIVE" : isPaper ? "PAPER" : isScanning ? "SCANNING" : isActive ? "ON" : "IDLE";
   const modeBadge = isLive
     ? "bg-destructive/15 border-destructive/30 text-destructive"
     : isPaper
     ? "bg-warning/15 border-warning/30 text-warning"
+    : isScanning
+    ? "bg-green-400/15 border-green-400/30 text-green-400"
     : isActive
     ? "bg-primary/15 border-primary/30 text-primary"
     : "bg-muted/20 border-border text-muted-foreground";

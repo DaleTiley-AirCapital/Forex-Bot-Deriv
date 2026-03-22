@@ -91,6 +91,17 @@ export function recordTick(symbol: string, price: number, epochTs: number): void
   health.tickTimestamps = health.tickTimestamps.filter(t => t > cutoff);
 }
 
+export function markSymbolSubscribed(symbol: string): void {
+  let health = symbolHealthStore.get(symbol);
+  if (!health) {
+    health = { lastTickTs: Date.now(), lastTickValue: 0, tickTimestamps: [], streaming: true, error: null };
+    symbolHealthStore.set(symbol, health);
+  } else {
+    health.streaming = true;
+    health.error = null;
+  }
+}
+
 export function markSymbolError(symbol: string, error: string): void {
   let health = symbolHealthStore.get(symbol);
   if (!health) {
@@ -258,7 +269,10 @@ export function getAllSymbolStatuses(): SymbolStatus[] {
 }
 
 export function startWatchdog(resubscribeFn: (symbol: string) => Promise<void>): void {
-  if (watchdogHandle) return;
+  if (watchdogHandle) {
+    clearInterval(watchdogHandle);
+    watchdogHandle = null;
+  }
 
   watchdogHandle = setInterval(async () => {
     const now = Date.now();

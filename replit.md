@@ -52,7 +52,15 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 
 **API Keys:** deriv_api_token_demo, deriv_api_token_real, openai_api_key (legacy single deriv_api_token removed)
 
-**Auto-streaming:** Server auto-starts tick streaming on boot unless user explicitly stopped it.
+**Two-Layer Architecture:**
+1. **Market Intelligence Layer** (always-on with stream): Scanner runs whenever streaming is active, producing signal decisions regardless of execution mode state. When no modes are active, decisions are logged with `executionStatus: "blocked"` and `rejectionReason: "No execution mode active — intelligence only"`.
+2. **Execution Layer** (only with active modes): Trades are only placed when Paper, Demo, or Real mode is explicitly enabled.
+
+**Symbol Mapping:** Some Deriv symbols use different API names (e.g., BOOM300 → BOOM300N). The `apiToConfiguredMap` on `DerivClient` handles bidirectional mapping. Collision detection prevents two configured symbols from mapping to the same API symbol.
+
+**Auto-streaming:** Server auto-starts tick streaming on boot unless user explicitly stopped it. Paper mode is NOT auto-enabled on boot.
+
+**System Modes:** `idle` (no stream), `scanning` (stream on, no execution modes), `paper`/`demo`/`live` (execution modes active).
 
 **Startup Order (Railway/production):** DB init → Listen on PORT → Start scheduler → AI auto-config → Symbol validation → Tick streaming → Health at /api/healthz
 

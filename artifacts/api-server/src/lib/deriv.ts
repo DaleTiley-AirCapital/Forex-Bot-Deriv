@@ -2,7 +2,7 @@ import WebSocket from "ws";
 import { db, ticksTable, candlesTable, spikeEventsTable, platformStateTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { createDecipheriv, scryptSync } from "crypto";
-import { recordTick, validateActiveSymbols, isSymbolValid, markSymbolError, startWatchdog, getAllSymbolStatuses } from "./symbolValidator.js";
+import { recordTick, validateActiveSymbols, isSymbolValid, markSymbolError, markSymbolSubscribed, startWatchdog, getAllSymbolStatuses } from "./symbolValidator.js";
 
 const DERIV_WS_URL = "wss://ws.binaryws.com/websockets/v3?app_id=1089";
 
@@ -212,6 +212,7 @@ class DerivClient {
   private pendingRequests: Map<string, (data: unknown) => void> = new Map();
   private reqId = 1;
   private latestQuotes: Map<string, number> = new Map();
+  public apiToConfiguredMap: Map<string, string> = new Map();
 
   constructor(apiToken: string) {
     this.apiToken = apiToken;
@@ -265,11 +266,19 @@ class DerivClient {
     });
   }
 
+  private configuredToApiSymbol(configured: string): string {
+    for (const [api, cfg] of this.apiToConfiguredMap.entries()) {
+      if (cfg === configured) return api;
+    }
+    return configured;
+  }
+
   private async reconnect() {
     try {
       await this.connect();
       for (const symbol of this.subscribedSymbols) {
-        await this.subscribeToTicks(symbol);
+        const apiSymbol = this.configuredToApiSymbol(symbol);
+        await this.subscribeToTicks(apiSymbol);
       }
     } catch (err) {
       console.error("[Deriv] Reconnect failed:", err);
@@ -315,24 +324,27 @@ class DerivClient {
 
     if (data.msg_type === "tick" && data.tick) {
       const tick = data.tick as DerivTick;
-      this.latestQuotes.set(tick.symbol, tick.quote);
+      const configuredName = this.apiToConfiguredMap.get(tick.symbol) || tick.symbol;
+      this.latestQuotes.set(configuredName, tick.quote);
       this.processTick(tick).catch(console.error);
     }
   }
 
   private async processTick(tick: DerivTick) {
-    const { symbol, epoch, quote } = tick;
+    const apiSymbol = tick.symbol;
+    const configuredSymbol = this.apiToConfiguredMap.get(apiSymbol) || apiSymbol;
+    const { epoch, quote } = tick;
 
-    recordTick(symbol, quote, epoch);
+    recordTick(configuredSymbol, quote, epoch);
 
     await db.insert(ticksTable).values({
-      symbol,
+      symbol: configuredSymbol,
       epochTs: epoch,
       quote,
     }).onConflictDoNothing();
 
-    await detectAndStoreSpike(symbol, quote, epoch);
-    await updateOpenCandles(symbol, quote, epoch);
+    await detectAndStoreSpike(configuredSymbol, quote, epoch);
+    await updateOpenCandles(configuredSymbol, quote, epoch);
   }
 
   public authData: Record<string, unknown> | null = null;
@@ -352,7 +364,6 @@ class DerivClient {
     if (!this.authorized) throw new Error("Not authorized");
     console.log(`[Deriv] Subscribing to ticks for ${symbol}...`);
     await this.send({ ticks: symbol, subscribe: 1 });
-    this.subscribedSymbols.add(symbol);
   }
 
   async getTickHistory(symbol: string, count = 5000): Promise<DerivTickHistory | null> {
@@ -695,9 +706,27 @@ class DerivClient {
       console.warn(`[Deriv] ━━━━━━━━━━━━━━━━━━━━━━━`);
     }
 
+    this.apiToConfiguredMap.clear();
+    const apiSymbolsSeen = new Map<string, string>();
+
     for (const symbol of validSymbols) {
       try {
-        await this.subscribeToTicks(symbol);
+        const info = validatedMap.get(symbol);
+        const apiSymbol = info?.apiSymbol || symbol;
+        if (apiSymbol !== symbol) {
+          const existing = apiSymbolsSeen.get(apiSymbol);
+          if (existing) {
+            markSymbolError(symbol, `API symbol collision: ${apiSymbol} already mapped to ${existing}`);
+            console.error(`[Deriv] API symbol collision: ${apiSymbol} mapped to both ${existing} and ${symbol}. Skipping ${symbol}.`);
+            continue;
+          }
+          this.apiToConfiguredMap.set(apiSymbol, symbol);
+          console.log(`[Deriv] Symbol mapping: ${symbol} → ${apiSymbol} (will subscribe as ${apiSymbol})`);
+        }
+        apiSymbolsSeen.set(apiSymbol, symbol);
+        await this.subscribeToTicks(apiSymbol);
+        this.subscribedSymbols.add(symbol);
+        markSymbolSubscribed(symbol);
       } catch (err) {
         markSymbolError(symbol, `Subscribe failed: ${err instanceof Error ? err.message : String(err)}`);
         console.error(`[Deriv] Failed to subscribe to ${symbol}:`, err instanceof Error ? err.message : err);
@@ -707,7 +736,10 @@ class DerivClient {
     const self = this;
     startWatchdog(async (symbol: string) => {
       if (self.authorized && self.ws && self.ws.readyState === WebSocket.OPEN) {
-        await self.subscribeToTicks(symbol);
+        const apiSymbol = self.configuredToApiSymbol(symbol);
+        await self.subscribeToTicks(apiSymbol);
+        self.subscribedSymbols.add(symbol);
+        markSymbolSubscribed(symbol);
       }
     });
 

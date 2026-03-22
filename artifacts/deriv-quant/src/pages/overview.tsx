@@ -551,7 +551,7 @@ export default function Overview() {
                   </div>
                 </div>
                 <div className="pt-4 border-t border-border/40">
-                  <p className="section-label mb-3">System Checks</p>
+                  <p className="section-label mb-3">System Status</p>
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Data Stream</span>
@@ -560,22 +560,28 @@ export default function Overview() {
                         : <Badge variant="outline">Offline</Badge>}
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Signal Scanner</span>
+                      <span className="text-sm text-muted-foreground">Signal Engine</span>
                       {overview?.scannerRunning
                         ? <Badge variant="success">Active ({overview.totalScansRun ?? 0} scans)</Badge>
                         : <Badge variant="outline">Idle</Badge>}
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Risk Engine</span>
-                      {overview?.killSwitchActive
-                        ? <Badge variant="destructive">Blocked</Badge>
-                        : <Badge variant="success">Active</Badge>}
+                      <span className="text-sm text-muted-foreground">Paper Execution</span>
+                      {overview?.paperModeActive
+                        ? <Badge variant="success">Armed</Badge>
+                        : <Badge variant="outline">Off</Badge>}
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Deriv API</span>
-                      {accountInfo?.connected
-                        ? <Badge variant="success">Connected</Badge>
-                        : <Badge variant="outline">Disconnected</Badge>}
+                      <span className="text-sm text-muted-foreground">Demo Execution</span>
+                      {overview?.demoModeActive
+                        ? <Badge variant="success">Armed</Badge>
+                        : <Badge variant="outline">Off</Badge>}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Real Execution</span>
+                      {overview?.realModeActive
+                        ? <Badge variant="destructive">Armed</Badge>
+                        : <Badge variant="outline">Off</Badge>}
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Kill Switch</span>

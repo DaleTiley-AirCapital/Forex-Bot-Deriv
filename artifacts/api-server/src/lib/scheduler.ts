@@ -93,33 +93,42 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
     return;
   }
 
+  const weights = parseScoringWeights(stateMap);
+  const candidates = runAllStrategies(features, weights);
+  if (candidates.length === 0) {
+    console.log(`[Scan] ${symbol} | regime=${regime.regime} | families=[${regime.allowedFamilies.join(",")}] | candidates=0 | SKIP=no_signals`);
+    return;
+  }
+
+  console.log(`[Intel] ${symbol} | regime=${regime.regime} | families=[${regime.allowedFamilies.join(",")}] | candidates=${candidates.length} | top=${candidates[0].strategyFamily}(${candidates[0].score.toFixed(3)}, EV=${candidates[0].expectedValue.toFixed(4)})`);
+
   const aiEnabled = stateMap["ai_verification_enabled"] === "true";
+  const allCandidates = candidates.map(c => ({ candidate: c, atr: features.atr14 }));
 
   const activeModes = getActiveModes(stateMap);
-  if (activeModes.length === 0) return;
 
-  for (const mode of activeModes) {
+  const modesToProcess: TradingMode[] = activeModes.length > 0 ? activeModes : ["paper" as TradingMode];
+  const isIntelOnly = activeModes.length === 0;
+
+  for (const mode of modesToProcess) {
     const modePrefix = mode === "paper" ? "paper" : mode === "demo" ? "demo" : "real";
-    const modeSymbolsRaw = stateMap[`${modePrefix}_enabled_symbols`] || stateMap["enabled_symbols"] || "";
-    const modeSymbols = modeSymbolsRaw ? modeSymbolsRaw.split(",").map((s: string) => s.trim()).filter(Boolean) : null;
-    if (modeSymbols && !modeSymbols.includes(symbol)) continue;
-
-    const weights = parseScoringWeights(stateMap);
-    const candidates = runAllStrategies(features, weights);
-    if (candidates.length === 0) {
-      console.log(`[Scan] ${symbol} | ${mode} | regime=${regime.regime} | families=[${regime.allowedFamilies.join(",")}] | candidates=0 | SKIP=no_signals`);
-      continue;
+    if (!isIntelOnly) {
+      const modeSymbolsRaw = stateMap[`${modePrefix}_enabled_symbols`] || stateMap["enabled_symbols"] || "";
+      const modeSymbols = modeSymbolsRaw ? modeSymbolsRaw.split(",").map((s: string) => s.trim()).filter(Boolean) : null;
+      if (modeSymbols && !modeSymbols.includes(symbol)) continue;
     }
 
-    console.log(`[Scan] ${symbol} | ${mode} | regime=${regime.regime} | families=[${regime.allowedFamilies.join(",")}] | candidates=${candidates.length} | top=${candidates[0].strategyFamily}(${candidates[0].score.toFixed(3)}, EV=${candidates[0].expectedValue.toFixed(4)})`);
-
-    const allCandidates = candidates.map(c => ({ candidate: c, atr: features.atr14 }));
-
-    const decisions = await routeSignals(allCandidates.map(c => c.candidate), mode);
+    const effectiveMode = isIntelOnly ? "paper" : mode;
+    const decisions = await routeSignals(allCandidates.map(c => c.candidate), effectiveMode);
 
     const finalDecisions: AllocationDecision[] = [];
 
     for (const decision of decisions) {
+      if (isIntelOnly) {
+        decision.allowed = false;
+        decision.rejectionReason = "No execution mode active — intelligence only";
+      }
+
       if (decision.allowed && aiEnabled) {
         try {
           const feats = await computeFeatures(decision.signal.symbol);
@@ -189,24 +198,29 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
       }
       const sig = decision.signal;
       const composite = sig.compositeScore ?? 0;
+      const modeTag = isIntelOnly ? "intel" : mode;
       const aiTag = decision.aiVerdict ? ` | ai=${decision.aiVerdict}` : "";
       const allocTag = decision.allowed ? ` | alloc=${((decision.capitalAmount ?? 0)).toFixed(2)}` : "";
       const rejectTag = !decision.allowed && decision.rejectionReason ? ` | reject=${decision.rejectionReason}` : "";
-      console.log(`[Scan] ${sig.symbol} | ${mode} | family=${sig.strategyFamily || sig.strategyName} | dir=${sig.direction} | score=${sig.score.toFixed(3)} | EV=${sig.expectedValue.toFixed(4)} | composite=${composite}${aiTag}${allocTag}${rejectTag} | ${decision.allowed ? "EXECUTE" : "BLOCKED"}`);
+      console.log(`[Scan] ${sig.symbol} | ${modeTag} | family=${sig.strategyFamily || sig.strategyName} | dir=${sig.direction} | score=${sig.score.toFixed(3)} | EV=${sig.expectedValue.toFixed(4)} | composite=${composite}${aiTag}${allocTag}${rejectTag} | ${decision.allowed ? "EXECUTE" : "BLOCKED"}`);
 
       finalDecisions.push(decision);
     }
 
-    await logSignalDecisions(finalDecisions, mode);
+    await logSignalDecisions(finalDecisions, effectiveMode);
     totalDecisionsLogged += finalDecisions.length;
 
-    const allowed = finalDecisions.filter(d => d.allowed);
-    for (const decision of allowed) {
-      const matchingCandidate = allCandidates.find(c => c.candidate.symbol === decision.signal.symbol && c.candidate.strategyName === decision.signal.strategyName);
-      const atr = matchingCandidate?.atr ?? 0.01;
-      await openPosition(decision, atr, mode);
-      console.log(`[Exec] ${decision.signal.symbol} | ${mode} | ${decision.signal.direction} | family=${decision.signal.strategyFamily || decision.signal.strategyName} | alloc=$${(decision.capitalAmount ?? 0).toFixed(2)}`);
+    if (!isIntelOnly) {
+      const allowed = finalDecisions.filter(d => d.allowed);
+      for (const decision of allowed) {
+        const matchingCandidate = allCandidates.find(c => c.candidate.symbol === decision.signal.symbol && c.candidate.strategyName === decision.signal.strategyName);
+        const atr = matchingCandidate?.atr ?? 0.01;
+        await openPosition(decision, atr, mode);
+        console.log(`[Exec] ${decision.signal.symbol} | ${mode} | ${decision.signal.direction} | family=${decision.signal.strategyFamily || decision.signal.strategyName} | alloc=$${(decision.capitalAmount ?? 0).toFixed(2)}`);
+      }
     }
+
+    if (isIntelOnly) break;
   }
 }
 
@@ -249,13 +263,9 @@ async function scanCycle(): Promise<void> {
     }
 
     const killSwitch = stateMap["kill_switch"] === "true";
-    const anyActive = isAnyModeActive(stateMap);
+    const streamingActive = stateMap["streaming"] === "true";
 
-    const legacyMode = stateMap["mode"] || "idle";
-    const hasLegacyActive = legacyMode === "paper" || legacyMode === "live";
-    const shouldRun = anyActive || hasLegacyActive;
-
-    if (!shouldRun || killSwitch) {
+    if (killSwitch || !streamingActive) {
       if (staggeredScanActive) {
         staggeredScanActive = false;
         if (staggerTimerHandle) { clearTimeout(staggerTimerHandle); staggerTimerHandle = null; }
@@ -263,22 +273,10 @@ async function scanCycle(): Promise<void> {
       return;
     }
 
-    if (hasLegacyActive && !anyActive) {
-      if (legacyMode === "paper") {
-        stateMap["paper_mode_active"] = "true";
-      } else if (legacyMode === "live") {
-        stateMap["demo_mode_active"] = "true";
-      }
-    }
-
-    const activeModes = getActiveModes(stateMap);
-    const modeSymbolSets = activeModes.map(m => {
-      const prefix = m === "paper" ? "paper" : m === "demo" ? "demo" : "real";
-      const raw = stateMap[`${prefix}_enabled_symbols`] || stateMap["enabled_symbols"] || "";
-      return raw ? raw.split(",").map((s: string) => s.trim()).filter(Boolean) : DEFAULT_SYMBOLS;
-    });
-    const symbols = [...new Set(modeSymbolSets.flat())];
-    if (symbols.length === 0) symbols.push(...DEFAULT_SYMBOLS);
+    const enabledSymbolsRaw = stateMap["enabled_symbols"] || "";
+    const symbols = enabledSymbolsRaw
+      ? enabledSymbolsRaw.split(",").map((s: string) => s.trim()).filter(Boolean)
+      : DEFAULT_SYMBOLS;
 
     const staggerSeconds = parseInt(stateMap["scan_stagger_seconds"] || String(DEFAULT_STAGGER_SECONDS));
     const staggerMs = Math.max(staggerSeconds * 1000, 1000);

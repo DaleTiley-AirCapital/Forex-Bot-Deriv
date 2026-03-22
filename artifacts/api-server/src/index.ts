@@ -199,28 +199,9 @@ async function autoConfigureAI(): Promise<void> {
   }
 }
 
-async function autoEnablePaperMode(): Promise<void> {
-  try {
-    const rows = await db.select().from(platformStateTable);
-    const stateMap: Record<string, string> = {};
-    for (const r of rows) stateMap[r.key] = r.value;
-    const anyActive = stateMap["paper_mode_active"] === "true" ||
-                      stateMap["demo_mode_active"] === "true" ||
-                      stateMap["real_mode_active"] === "true";
-    if (!anyActive) {
-      await db.insert(platformStateTable).values({ key: "paper_mode_active", value: "true" })
-        .onConflictDoUpdate({ target: platformStateTable.key, set: { value: "true", updatedAt: new Date() } });
-      console.log("[AutoStart] Paper mode auto-enabled (no active modes found)");
-    }
-  } catch (err) {
-    console.warn("[AutoStart] Could not auto-enable paper mode:", err instanceof Error ? err.message : err);
-  }
-}
-
 async function autoStartStreaming(): Promise<void> {
   try {
     await autoConfigureAI();
-    await autoEnablePaperMode();
 
     const rows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "streaming"));
     const explicitlyStopped = rows.length > 0 && rows[0].value === "false";

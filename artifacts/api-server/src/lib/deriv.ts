@@ -385,11 +385,13 @@ class DerivClient {
     return response.history as DerivTickHistory;
   }
 
-  async getCandleHistoryWithEnd(symbol: string, granularity: number, count = 5000, endEpoch?: number): Promise<DerivCandle[] | null> {
+  async getCandleHistoryWithEnd(symbol: string, granularity: number, count = 5000, endEpoch?: number, silent = false): Promise<DerivCandle[] | null> {
     if (!this.authorized) throw new Error("Not authorized");
     const tf = Object.entries(TIMEFRAMES).find(([, s]) => s === granularity)?.[0] || `${granularity}s`;
-    const endLabel = endEpoch ? new Date(endEpoch * 1000).toISOString().slice(0, 10) : "latest";
-    console.log(`[Deriv] Fetching ${count} candles (${tf}) for ${symbol} ending ${endLabel}...`);
+    if (!silent) {
+      const endLabel = endEpoch ? new Date(endEpoch * 1000).toISOString().slice(0, 10) : "latest";
+      console.log(`[Deriv] Fetching ${count} candles (${tf}) for ${symbol} ending ${endLabel}...`);
+    }
     const response = await this.send({
       ticks_history: symbol,
       count,
@@ -649,9 +651,21 @@ class DerivClient {
       }
     }
 
+    const YEARS_TO_BACKFILL = 3;
+    const CANDLES_PER_PAGE = 5000;
+    const now = Math.floor(Date.now() / 1000);
+    const targetStart = now - (YEARS_TO_BACKFILL * 365.25 * 24 * 60 * 60);
+
     for (const [tf, granularity] of [["1m", 60], ["5m", 300]] as [string, number][]) {
-      const candles = await this.getCandleHistory(apiSymbol, granularity, 1000);
-      if (candles) {
+      let endEpoch = now;
+      let totalForTf = 0;
+      let pages = 0;
+      const maxPages = Math.ceil((YEARS_TO_BACKFILL * 365.25 * 24 * 60 * 60) / (granularity * CANDLES_PER_PAGE)) + 5;
+
+      while (endEpoch > targetStart && pages < maxPages) {
+        const candles = await this.getCandleHistoryWithEnd(apiSymbol, granularity, CANDLES_PER_PAGE, endEpoch, true);
+        if (!candles || candles.length === 0) break;
+
         const values = candles.map(c => ({
           symbol,
           timeframe: tf,
@@ -663,13 +677,28 @@ class DerivClient {
           close: c.close,
           tickCount: 0,
         }));
-        for (let i = 0; i < values.length; i += 200) {
-          const chunk = values.slice(i, i + 200);
+        for (let i = 0; i < values.length; i += 500) {
+          const chunk = values.slice(i, i + 500);
           await db.insert(candlesTable).values(chunk).onConflictDoNothing();
-          storedCandles += chunk.length;
+          totalForTf += chunk.length;
         }
-        console.log(`[Deriv] Stored ${values.length} ${tf} candles for ${symbol}`);
+
+        const oldestEpoch = candles[0].epoch;
+        if (oldestEpoch >= endEpoch) break;
+        endEpoch = oldestEpoch - 1;
+        pages++;
+
+        if (pages % 20 === 0) {
+          const oldestDate = new Date(oldestEpoch * 1000).toISOString().slice(0, 10);
+          console.log(`[Backfill] ${symbol} ${tf}: ${totalForTf} candles so far, oldest=${oldestDate}, page ${pages}`);
+        }
+
+        await new Promise(r => setTimeout(r, 100));
       }
+
+      const oldestStored = endEpoch > targetStart ? new Date(endEpoch * 1000).toISOString().slice(0, 10) : new Date(targetStart * 1000).toISOString().slice(0, 10);
+      console.log(`[Backfill] ${symbol} ${tf}: ${totalForTf} candles total (oldest≈${oldestStored}, ${pages} pages)`);
+      storedCandles += totalForTf;
     }
 
     return { ticks: storedTicks, candles: storedCandles };

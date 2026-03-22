@@ -208,8 +208,12 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
       finalDecisions.push(decision);
     }
 
-    await logSignalDecisions(finalDecisions, logMode);
-    totalDecisionsLogged += finalDecisions.length;
+    try {
+      await logSignalDecisions(finalDecisions, logMode);
+      totalDecisionsLogged += finalDecisions.length;
+    } catch (err) {
+      console.error(`[Scheduler] Failed to log ${finalDecisions.length} signal decisions:`, err instanceof Error ? err.message : err);
+    }
 
     if (!isIntelOnly) {
       const allowed = finalDecisions.filter(d => d.allowed);

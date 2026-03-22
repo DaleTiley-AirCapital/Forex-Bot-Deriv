@@ -16,11 +16,7 @@ const DEFAULT_SYMBOLS = [
   "BOOM1000", "CRASH1000", "BOOM900", "CRASH900",
   "BOOM600", "CRASH600", "BOOM500", "CRASH500",
   "BOOM300", "CRASH300",
-  "R_10", "R_25", "R_50", "R_75", "R_100",
-  "RDBULL", "RDBEAR",
-  "JD10", "JD25", "JD50", "JD75", "JD100",
-  "stpRNG", "STP2", "STP3", "STP4", "STP5",
-  "RDBR100", "RDBR200",
+  "R_75", "R_100",
 ];
 const DEFAULT_SCAN_INTERVAL_MS = 30_000;
 const DEFAULT_STAGGER_SECONDS = 10;
@@ -60,15 +56,20 @@ function parseScoringWeights(stateMap: Record<string, string>): ScoringWeights |
 
 async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>): Promise<void> {
   const features = await computeFeatures(symbol);
-  if (!features) return;
+  if (!features) {
+    console.log(`[Scan] ${symbol} | SKIP | reason=insufficient_data`);
+    return;
+  }
 
   const regime = classifyRegime(features);
 
   if (regime.regime === "no_trade") {
+    console.log(`[Scan] ${symbol} | regime=${regime.regime} | conf=${regime.confidence.toFixed(2)} | SKIP=no_trade_regime`);
     return;
   }
 
   if (regime.allowedFamilies.length === 0) {
+    console.log(`[Scan] ${symbol} | regime=${regime.regime} | SKIP=no_allowed_families`);
     return;
   }
 
@@ -85,7 +86,12 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
 
     const weights = parseScoringWeights(stateMap);
     const candidates = runAllStrategies(features, weights);
-    if (candidates.length === 0) continue;
+    if (candidates.length === 0) {
+      console.log(`[Scan] ${symbol} | ${mode} | regime=${regime.regime} | families=[${regime.allowedFamilies.join(",")}] | candidates=0 | SKIP=no_signals`);
+      continue;
+    }
+
+    console.log(`[Scan] ${symbol} | ${mode} | regime=${regime.regime} | families=[${regime.allowedFamilies.join(",")}] | candidates=${candidates.length} | top=${candidates[0].strategyFamily}(${candidates[0].score.toFixed(3)}, EV=${candidates[0].expectedValue.toFixed(4)})`);
 
     const allCandidates = candidates.map(c => ({ candidate: c, atr: features.atr14 }));
 
@@ -161,6 +167,13 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
           decision.aiReasoning = `Verification failed: ${err instanceof Error ? err.message : "unknown error"}`;
         }
       }
+      const sig = decision.signal;
+      const composite = sig.compositeScore ?? 0;
+      const aiTag = decision.aiVerdict ? ` | ai=${decision.aiVerdict}` : "";
+      const allocTag = decision.allowed ? ` | alloc=${((decision.capitalAmount ?? 0)).toFixed(2)}` : "";
+      const rejectTag = !decision.allowed && decision.rejectionReason ? ` | reject=${decision.rejectionReason}` : "";
+      console.log(`[Scan] ${sig.symbol} | ${mode} | family=${sig.strategyFamily || sig.strategyName} | dir=${sig.direction} | score=${sig.score.toFixed(3)} | EV=${sig.expectedValue.toFixed(4)} | composite=${composite}${aiTag}${allocTag}${rejectTag} | ${decision.allowed ? "EXECUTE" : "BLOCKED"}`);
+
       finalDecisions.push(decision);
     }
 
@@ -173,6 +186,7 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
       const matchingCandidate = allCandidates.find(c => c.candidate.symbol === decision.signal.symbol && c.candidate.strategyName === decision.signal.strategyName);
       const atr = matchingCandidate?.atr ?? 0.01;
       await openPosition(decision, atr, mode);
+      console.log(`[Exec] ${decision.signal.symbol} | ${mode} | ${decision.signal.direction} | family=${decision.signal.strategyFamily || decision.signal.strategyName} | alloc=$${(decision.capitalAmount ?? 0).toFixed(2)}`);
     }
   }
 }

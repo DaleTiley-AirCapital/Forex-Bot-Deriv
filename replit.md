@@ -46,17 +46,15 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 -   Recommended deployment via Railway, using `railway.toml` and a multi-stage `Dockerfile`.
 -   Legacy Docker Compose deployments are supported for Docker and Synology NAS environments.
 
-**Instrument Catalog (29 symbols):**
-- Boom/Crash: BOOM1000, CRASH1000, BOOM900, CRASH900, BOOM600, CRASH600, BOOM500, CRASH500, BOOM300, CRASH300
-- Volatility: R_10, R_25, R_50, R_75, R_100
-- Bull/Bear: RDBULL, RDBEAR
-- Jump: JD10, JD25, JD50, JD75, JD100
-- Step: stpRNG, STP2, STP3, STP4, STP5
-- Range Break: RDBR100, RDBR200
+**Instrument Catalog (29 total, 12 v1-deployed):**
+- v1 Deployable (12): BOOM1000, CRASH1000, BOOM900, CRASH900, BOOM600, CRASH600, BOOM500, CRASH500, BOOM300, CRASH300, R_75, R_100
+- Future catalog: R_10, R_25, R_50, RDBULL, RDBEAR, JD10-JD100, stpRNG, STP2-5, RDBR100, RDBR200
 
 **API Keys:** deriv_api_token_demo, deriv_api_token_real, openai_api_key (legacy single deriv_api_token removed)
 
 **Auto-streaming:** Server auto-starts tick streaming on boot unless user explicitly stopped it.
+
+**Startup Order (Railway/production):** DB init → Listen on PORT → Start scheduler → AI auto-config → Symbol validation → Tick streaming → Health at /api/healthz
 
 ## External Dependencies
 

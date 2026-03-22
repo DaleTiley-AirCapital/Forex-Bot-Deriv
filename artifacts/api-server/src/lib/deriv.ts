@@ -17,6 +17,13 @@ export const SUPPORTED_SYMBOLS = [
   "RDBR100", "RDBR200",
 ];
 
+export const V1_DEFAULT_SYMBOLS = [
+  "BOOM1000", "CRASH1000", "BOOM900", "CRASH900",
+  "BOOM600", "CRASH600", "BOOM500", "CRASH500",
+  "BOOM300", "CRASH300",
+  "R_75", "R_100",
+];
+
 export type TradingMode = "paper" | "demo" | "real";
 
 const TIMEFRAMES: Record<string, number> = {
@@ -861,7 +868,7 @@ async function getEnabledSymbols(): Promise<string[]> {
       if (symbols.length > 0) return symbols;
     }
   } catch {}
-  return [...SUPPORTED_SYMBOLS];
+  return [...V1_DEFAULT_SYMBOLS];
 }
 
 export function getActiveModes(stateMap: Record<string, string>): TradingMode[] {

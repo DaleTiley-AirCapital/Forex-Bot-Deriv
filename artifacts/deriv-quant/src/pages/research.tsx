@@ -713,33 +713,8 @@ export default function Research() {
                       <option value="CRASH300">Crash 300</option>
                     </optgroup>
                     <optgroup label="Volatility">
-                      <option value="R_10">Volatility 10</option>
-                      <option value="R_25">Volatility 25</option>
-                      <option value="R_50">Volatility 50</option>
                       <option value="R_75">Volatility 75</option>
                       <option value="R_100">Volatility 100</option>
-                    </optgroup>
-                    <optgroup label="Bull/Bear">
-                      <option value="RDBULL">Bull Market</option>
-                      <option value="RDBEAR">Bear Market</option>
-                    </optgroup>
-                    <optgroup label="Jump">
-                      <option value="JD10">Jump 10</option>
-                      <option value="JD25">Jump 25</option>
-                      <option value="JD50">Jump 50</option>
-                      <option value="JD75">Jump 75</option>
-                      <option value="JD100">Jump 100</option>
-                    </optgroup>
-                    <optgroup label="Step">
-                      <option value="stpRNG">Step Index</option>
-                      <option value="STP2">Step 200</option>
-                      <option value="STP3">Step 300</option>
-                      <option value="STP4">Step 400</option>
-                      <option value="STP5">Step 500</option>
-                    </optgroup>
-                    <optgroup label="Range Break">
-                      <option value="RDBR100">Range Break 100</option>
-                      <option value="RDBR200">Range Break 200</option>
                     </optgroup>
                   </Select>
                 </div>

@@ -3,6 +3,7 @@ import { db, platformStateTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import app from "./app.js";
 import { getDerivClientWithDbToken, getEnabledSymbols, SUPPORTED_SYMBOLS } from "./lib/deriv.js";
+import { startScheduler } from "./lib/scheduler.js";
 
 const rawPort = process.env["PORT"];
 
@@ -172,8 +173,27 @@ async function initDb(): Promise<void> {
   console.log("[DB] Schema ready.");
 }
 
+async function autoConfigureAI(): Promise<void> {
+  try {
+    const aiRows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "ai_verification_enabled"));
+    if (aiRows.length > 0) return;
+
+    const keyRows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "openai_api_key"));
+    const hasKey = keyRows.length > 0 && keyRows[0].value && keyRows[0].value.length > 10;
+    const defaultValue = hasKey ? "true" : "false";
+
+    await db.insert(platformStateTable).values({ key: "ai_verification_enabled", value: defaultValue })
+      .onConflictDoNothing();
+    console.log(`[AutoConfig] AI verification default: ${defaultValue} (OpenAI key ${hasKey ? "present" : "absent"})`);
+  } catch (err) {
+    console.warn("[AutoConfig] Could not configure AI default:", err instanceof Error ? err.message : err);
+  }
+}
+
 async function autoStartStreaming(): Promise<void> {
   try {
+    await autoConfigureAI();
+
     const rows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "streaming"));
     const explicitlyStopped = rows.length > 0 && rows[0].value === "false";
     if (explicitlyStopped) {
@@ -197,7 +217,14 @@ async function autoStartStreaming(): Promise<void> {
 initDb()
   .then(() => {
     app.listen(port, () => {
-      console.log(`Server listening on port ${port}`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log(`  Deriv Capital Extraction App v1`);
+      console.log(`  Port: ${port} | ENV: ${process.env.NODE_ENV || "development"}`);
+      console.log(`  Health: /api/healthz`);
+      console.log(`  Deployable symbols: 12 (Boom/Crash + R_75/R_100)`);
+      console.log(`  Strategy families: 4 (trend_continuation, mean_reversion, breakout_expansion, spike_event)`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      startScheduler();
       autoStartStreaming();
     });
   })

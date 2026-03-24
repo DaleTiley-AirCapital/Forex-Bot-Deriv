@@ -473,6 +473,32 @@ async function runWeeklyAnalysis(stateMap: Record<string, string>): Promise<void
       }
     }
 
+    const currentMinSlAtr = parseFloat(stateMap[`${mode}_min_sl_atr_multiplier`] || "3.0");
+    if (slHitRate > 0.4 && actualRR < 1) {
+      suggestions[`${mode}_min_sl_atr_multiplier`] = String(Math.min(currentMinSlAtr * 1.1, 8).toFixed(1));
+    } else if (slHitRate < 0.1 && winRate > 0.5) {
+      suggestions[`${mode}_min_sl_atr_multiplier`] = String(Math.max(currentMinSlAtr * 0.9, 2).toFixed(1));
+    }
+
+    const currentCorrelatedCap = parseInt(stateMap[`${mode}_correlated_family_cap`] || "3");
+    if (winRate > 0.6 && avgPnl > 0 && mode !== "real") {
+      suggestions[`${mode}_correlated_family_cap`] = String(Math.min(currentCorrelatedCap + 1, 6));
+    } else if (winRate < 0.35) {
+      suggestions[`${mode}_correlated_family_cap`] = String(Math.max(currentCorrelatedCap - 1, 1));
+    }
+
+    const currentExtractionTarget = parseFloat(stateMap[`${mode}_extraction_target_pct`] || "50");
+    if (winRate > 0.6 && avgPnl > 0) {
+      suggestions[`${mode}_extraction_target_pct`] = String(Math.max(currentExtractionTarget * 0.9, 20).toFixed(0));
+    } else if (winRate < 0.35) {
+      suggestions[`${mode}_extraction_target_pct`] = String(Math.min(currentExtractionTarget * 1.1, 200).toFixed(0));
+    }
+
+    const currentLargePeak = parseFloat(stateMap[`${mode}_large_peak_threshold_pct`] || "8");
+    if (winRate > 0.55 && harvestExits > 2) {
+      suggestions[`${mode}_large_peak_threshold_pct`] = String(Math.min(currentLargePeak * 1.1, 20).toFixed(1));
+    }
+
     const currentTpCapture = parseFloat(stateMap[`${mode}_tp_capture_ratio`] || (mode === "paper" ? "0.80" : mode === "demo" ? "0.70" : "0.60"));
     if (tpHitRate > 0.5 && actualRR > 2) {
       suggestions[`${mode}_tp_capture_ratio`] = String(Math.min(currentTpCapture + 0.05, 0.95).toFixed(2));

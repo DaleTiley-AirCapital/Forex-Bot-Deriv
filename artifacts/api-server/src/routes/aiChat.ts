@@ -41,14 +41,16 @@ async function getCurrentSettings(): Promise<Record<string, string>> {
 const MODE_PREFIXES = ["paper", "demo", "real"];
 const FAMILIES = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event"];
 const PER_MODE_KEYS = [
+  "capital", "equity_pct_per_trade", "max_open_trades", "allocation_mode",
   "tp_multiplier_strong", "tp_multiplier_medium", "tp_multiplier_weak",
   "sl_ratio", "trailing_stop_pct", "time_exit_window_hours",
-  "equity_pct_per_trade", "max_open_trades",
+  "tp_capture_ratio", "min_sl_atr_multiplier",
   "max_daily_loss_pct", "max_weekly_loss_pct", "max_drawdown_pct",
   "probe_threshold", "confirmation_threshold", "momentum_threshold",
   "stage_multiplier_probe", "stage_multiplier_confirmation", "stage_multiplier_momentum",
-  "peak_drawdown_exit_pct", "min_peak_profit_pct",
-  "tp_capture_ratio", "allocation_mode",
+  "peak_drawdown_exit_pct", "min_peak_profit_pct", "large_peak_threshold_pct",
+  "extraction_target_pct", "auto_extraction",
+  "correlated_family_cap",
 ];
 const PER_FAMILY_KEYS = [
   "tp_atr_multiplier", "sl_atr_multiplier", "initial_exit_hours",

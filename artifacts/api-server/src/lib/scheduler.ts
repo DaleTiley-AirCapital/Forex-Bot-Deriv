@@ -322,6 +322,7 @@ async function positionManagementCycle(): Promise<void> {
 }
 
 const MONTHLY_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const WEEKLY_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const STRATEGIES_LIST = [
   "trend_continuation",
   "mean_reversion",
@@ -340,6 +341,258 @@ const AI_LOCKABLE_KEYS = [
   "real_sl_ratio", "real_trailing_stop_pct", "real_equity_pct_per_trade", "real_time_exit_window_hours",
 ];
 let monthlyHandle: ReturnType<typeof setInterval> | null = null;
+let weeklyHandle: ReturnType<typeof setInterval> | null = null;
+
+async function runWeeklyAnalysis(stateMap: Record<string, string>): Promise<void> {
+  const closedTrades = await db.select().from(tradesTable).where(eq(tradesTable.status, "closed"));
+  if (closedTrades.length < 5) {
+    console.log(`[Scheduler] Weekly analysis skipped — only ${closedTrades.length} closed trades (need 5+)`);
+    return;
+  }
+
+  const modes = ["paper", "demo", "real"] as const;
+  const nowIso = new Date().toISOString();
+  const suggestions: Record<string, string> = {};
+
+  for (const mode of modes) {
+    const modeTrades = closedTrades.filter(t => t.mode === mode);
+    if (modeTrades.length < 3) continue;
+
+    const wins = modeTrades.filter(t => (t.pnl ?? 0) > 0);
+    const losses = modeTrades.filter(t => (t.pnl ?? 0) <= 0);
+    const winRate = wins.length / modeTrades.length;
+    const avgPnl = modeTrades.reduce((s, t) => s + (t.pnl ?? 0), 0) / modeTrades.length;
+    const avgDurationHrs = modeTrades.reduce((s, t) => {
+      if (!t.entryTs || !t.exitTs) return s;
+      return s + (t.exitTs.getTime() - t.entryTs.getTime()) / 3600000;
+    }, 0) / modeTrades.length;
+
+    const avgWinPnl = wins.length > 0 ? wins.reduce((s, t) => s + (t.pnl ?? 0), 0) / wins.length : 0;
+    const avgLossPnl = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + (t.pnl ?? 0), 0) / losses.length) : 1;
+    const actualRR = avgLossPnl > 0 ? avgWinPnl / avgLossPnl : 1;
+
+    const tpHits = modeTrades.filter(t => t.exitReason?.includes("tp")).length;
+    const slHits = modeTrades.filter(t => t.exitReason?.includes("sl")).length;
+    const timeExits = modeTrades.filter(t => t.exitReason?.includes("time")).length;
+    const harvestExits = modeTrades.filter(t => t.exitReason?.includes("harvest")).length;
+    const tpHitRate = modeTrades.length > 0 ? tpHits / modeTrades.length : 0;
+    const slHitRate = modeTrades.length > 0 ? slHits / modeTrades.length : 0;
+
+    const currentEquityPct = parseFloat(stateMap[`${mode}_equity_pct_per_trade`] || "15");
+    const currentMaxTrades = parseInt(stateMap[`${mode}_max_open_trades`] || "3");
+    const currentTpStrong = parseFloat(stateMap[`${mode}_tp_multiplier_strong`] || "3.0");
+    const currentTpMed = parseFloat(stateMap[`${mode}_tp_multiplier_medium`] || "2.5");
+    const currentTpWeak = parseFloat(stateMap[`${mode}_tp_multiplier_weak`] || "2.0");
+    const currentSlRatio = parseFloat(stateMap[`${mode}_sl_ratio`] || "1.0");
+    const currentTrailing = parseFloat(stateMap[`${mode}_trailing_stop_pct`] || "25");
+    const currentTimeExit = parseFloat(stateMap[`${mode}_time_exit_window_hours`] || "168");
+    const currentMaxDaily = parseFloat(stateMap[`${mode}_max_daily_loss_pct`] || "5");
+    const currentMaxWeekly = parseFloat(stateMap[`${mode}_max_weekly_loss_pct`] || "10");
+    const currentMaxDD = parseFloat(stateMap[`${mode}_max_drawdown_pct`] || "15");
+    const currentProbe = parseFloat(stateMap[`${mode}_probe_threshold`] || "80");
+    const currentConfirm = parseFloat(stateMap[`${mode}_confirmation_threshold`] || "85");
+    const currentMomentum = parseFloat(stateMap[`${mode}_momentum_threshold`] || "90");
+    const currentProbeMult = parseFloat(stateMap[`${mode}_stage_multiplier_probe`] || "1.0");
+    const currentConfirmMult = parseFloat(stateMap[`${mode}_stage_multiplier_confirmation`] || "0.85");
+    const currentMomentumMult = parseFloat(stateMap[`${mode}_stage_multiplier_momentum`] || "0.70");
+    const currentPeakDD = parseFloat(stateMap[`${mode}_peak_drawdown_exit_pct`] || "30");
+    const currentMinPeak = parseFloat(stateMap[`${mode}_min_peak_profit_pct`] || "3");
+
+    const conservatism = mode === "real" ? 0.85 : mode === "demo" ? 0.95 : 1.05;
+
+    if (winRate > 0.6 && avgPnl > 0) {
+      suggestions[`${mode}_equity_pct_per_trade`] = String(Math.min(currentEquityPct * 1.05 * conservatism, mode === "real" ? 25 : mode === "demo" ? 30 : 40).toFixed(1));
+    } else if (winRate < 0.4) {
+      suggestions[`${mode}_equity_pct_per_trade`] = String(Math.max(currentEquityPct * 0.9, mode === "real" ? 10 : 8).toFixed(1));
+    }
+
+    if (winRate > 0.55 && currentMaxTrades < (mode === "real" ? 4 : 6)) {
+      suggestions[`${mode}_max_open_trades`] = String(Math.min(currentMaxTrades + 1, mode === "real" ? 4 : 6));
+    } else if (winRate < 0.35 && currentMaxTrades > 2) {
+      suggestions[`${mode}_max_open_trades`] = String(Math.max(currentMaxTrades - 1, 2));
+    }
+
+    if (tpHitRate < 0.2 && tpHits + slHits > 5) {
+      suggestions[`${mode}_tp_multiplier_strong`] = String(Math.max(currentTpStrong * 0.9, 1.5).toFixed(2));
+      suggestions[`${mode}_tp_multiplier_medium`] = String(Math.max(currentTpMed * 0.9, 1.2).toFixed(2));
+      suggestions[`${mode}_tp_multiplier_weak`] = String(Math.max(currentTpWeak * 0.9, 1.0).toFixed(2));
+    } else if (tpHitRate > 0.5) {
+      suggestions[`${mode}_tp_multiplier_strong`] = String(Math.min(currentTpStrong * 1.1, 6.0).toFixed(2));
+      suggestions[`${mode}_tp_multiplier_medium`] = String(Math.min(currentTpMed * 1.1, 5.0).toFixed(2));
+      suggestions[`${mode}_tp_multiplier_weak`] = String(Math.min(currentTpWeak * 1.1, 4.0).toFixed(2));
+    }
+
+    if (slHitRate > 0.4) {
+      suggestions[`${mode}_sl_ratio`] = String(Math.min(currentSlRatio * 1.15, 2.5).toFixed(2));
+    } else if (slHitRate < 0.15 && actualRR > 1.5) {
+      suggestions[`${mode}_sl_ratio`] = String(Math.max(currentSlRatio * 0.9, 0.5).toFixed(2));
+    }
+
+    if (harvestExits > timeExits && harvestExits > 3) {
+      suggestions[`${mode}_trailing_stop_pct`] = String(Math.max(currentTrailing - 2, 10).toFixed(0));
+    }
+
+    if (avgDurationHrs > 0) {
+      if (avgDurationHrs > currentTimeExit * 0.9) {
+        suggestions[`${mode}_time_exit_window_hours`] = String(Math.min(currentTimeExit * 1.2, 336).toFixed(0));
+      } else if (avgDurationHrs < currentTimeExit * 0.3 && timeExits > 2) {
+        suggestions[`${mode}_time_exit_window_hours`] = String(Math.max(currentTimeExit * 0.8, 24).toFixed(0));
+      }
+    }
+
+    if (winRate < 0.4) {
+      suggestions[`${mode}_max_daily_loss_pct`] = String(Math.max(currentMaxDaily * 0.85, 2).toFixed(1));
+      suggestions[`${mode}_max_weekly_loss_pct`] = String(Math.max(currentMaxWeekly * 0.85, 4).toFixed(1));
+      suggestions[`${mode}_max_drawdown_pct`] = String(Math.max(currentMaxDD * 0.85, 8).toFixed(1));
+    } else if (winRate > 0.6 && avgPnl > 0) {
+      suggestions[`${mode}_max_daily_loss_pct`] = String(Math.min(currentMaxDaily * 1.1, mode === "real" ? 5 : 10).toFixed(1));
+      suggestions[`${mode}_max_weekly_loss_pct`] = String(Math.min(currentMaxWeekly * 1.1, mode === "real" ? 10 : 20).toFixed(1));
+    }
+
+    if (winRate > 0.55) {
+      suggestions[`${mode}_probe_threshold`] = String(Math.max(currentProbe - 1, mode === "real" ? 82 : 75).toFixed(0));
+      suggestions[`${mode}_confirmation_threshold`] = String(Math.max(currentConfirm - 1, mode === "real" ? 86 : 80).toFixed(0));
+      suggestions[`${mode}_momentum_threshold`] = String(Math.max(currentMomentum - 1, mode === "real" ? 90 : 85).toFixed(0));
+    } else if (winRate < 0.35) {
+      suggestions[`${mode}_probe_threshold`] = String(Math.min(currentProbe + 2, 95).toFixed(0));
+      suggestions[`${mode}_confirmation_threshold`] = String(Math.min(currentConfirm + 2, 97).toFixed(0));
+      suggestions[`${mode}_momentum_threshold`] = String(Math.min(currentMomentum + 2, 99).toFixed(0));
+    }
+
+    if (avgPnl > 0 && winRate > 0.5) {
+      suggestions[`${mode}_stage_multiplier_probe`] = String(Math.min(currentProbeMult * 1.05, 1.5).toFixed(2));
+      suggestions[`${mode}_stage_multiplier_confirmation`] = String(Math.min(currentConfirmMult * 1.05, 1.2).toFixed(2));
+      suggestions[`${mode}_stage_multiplier_momentum`] = String(Math.min(currentMomentumMult * 1.05, 1.0).toFixed(2));
+    }
+
+    if (harvestExits > 0 && wins.length > 0) {
+      const harvestWinPct = modeTrades.filter(t => t.exitReason?.includes("harvest") && (t.pnl ?? 0) > 0).length / Math.max(harvestExits, 1);
+      if (harvestWinPct < 0.5) {
+        suggestions[`${mode}_peak_drawdown_exit_pct`] = String(Math.min(currentPeakDD + 5, 50).toFixed(0));
+        suggestions[`${mode}_min_peak_profit_pct`] = String(Math.min(currentMinPeak + 1, 10).toFixed(1));
+      }
+    }
+
+    for (const family of STRATEGY_FAMILIES) {
+      const familyTrades = modeTrades.filter(t => t.strategyName === family);
+      if (familyTrades.length < 3) continue;
+      const famWins = familyTrades.filter(t => (t.pnl ?? 0) > 0);
+      const famWinRate = famWins.length / familyTrades.length;
+      const famAvgDuration = familyTrades.reduce((s, t) => {
+        if (!t.entryTs || !t.exitTs) return s;
+        return s + (t.exitTs.getTime() - t.entryTs.getTime()) / 3600000;
+      }, 0) / familyTrades.length;
+
+      const curTpAtr = parseFloat(stateMap[`${mode}_${family}_tp_atr_multiplier`] || "8");
+      const curSlAtr = parseFloat(stateMap[`${mode}_${family}_sl_atr_multiplier`] || "3");
+      const curInitExit = parseFloat(stateMap[`${mode}_${family}_initial_exit_hours`] || "168");
+      const curHarvSens = parseFloat(stateMap[`${mode}_${family}_harvest_sensitivity`] || "1.0");
+
+      if (famWinRate > 0.55) {
+        suggestions[`${mode}_${family}_tp_atr_multiplier`] = String(Math.min(curTpAtr * 1.1, 15).toFixed(1));
+      } else if (famWinRate < 0.35) {
+        suggestions[`${mode}_${family}_tp_atr_multiplier`] = String(Math.max(curTpAtr * 0.9, 3).toFixed(1));
+        suggestions[`${mode}_${family}_sl_atr_multiplier`] = String(Math.min(curSlAtr * 1.15, 6).toFixed(1));
+      }
+
+      if (famAvgDuration > curInitExit * 0.85) {
+        suggestions[`${mode}_${family}_initial_exit_hours`] = String(Math.min(curInitExit * 1.2, 480).toFixed(0));
+      }
+
+      if (famWinRate < 0.4) {
+        suggestions[`${mode}_${family}_harvest_sensitivity`] = String(Math.min(curHarvSens * 1.1, 2.0).toFixed(2));
+      } else if (famWinRate > 0.6) {
+        suggestions[`${mode}_${family}_harvest_sensitivity`] = String(Math.max(curHarvSens * 0.9, 0.5).toFixed(2));
+      }
+    }
+  }
+
+  const currentMinScore = parseFloat(stateMap["min_composite_score"] || "80");
+  const currentMinEV = parseFloat(stateMap["min_ev_threshold"] || "0.003");
+  const currentMinRR = parseFloat(stateMap["min_rr_ratio"] || "1.5");
+
+  const allWinRate = closedTrades.length > 0
+    ? closedTrades.filter(t => (t.pnl ?? 0) > 0).length / closedTrades.length : 0.5;
+
+  if (allWinRate < 0.35) {
+    suggestions["min_composite_score"] = String(Math.min(currentMinScore + 2, 95).toFixed(0));
+    suggestions["min_ev_threshold"] = String(Math.min(currentMinEV * 1.2, 0.01).toFixed(4));
+    suggestions["min_rr_ratio"] = String(Math.min(currentMinRR * 1.1, 4.0).toFixed(2));
+  } else if (allWinRate > 0.6 && closedTrades.length > 20) {
+    suggestions["min_composite_score"] = String(Math.max(currentMinScore - 1, 80).toFixed(0));
+  }
+
+  const weightKeys = ["regime_fit", "setup_quality", "trend_alignment", "volatility_condition", "reward_risk", "probability_of_success"];
+  const exitReasons = closedTrades.map(t => t.exitReason || "");
+  const tpCount = exitReasons.filter(r => r.includes("tp")).length;
+  const totalExits = closedTrades.length;
+  if (totalExits > 10 && tpCount / totalExits < 0.25) {
+    const curRR = parseFloat(stateMap["scoring_weight_reward_risk"] || "16.67");
+    suggestions["scoring_weight_reward_risk"] = String(Math.min(curRR * 1.1, 30).toFixed(2));
+    const curSetup = parseFloat(stateMap["scoring_weight_setup_quality"] || "16.67");
+    suggestions["scoring_weight_setup_quality"] = String(Math.min(curSetup * 1.05, 25).toFixed(2));
+  }
+
+  const filteredSuggestions: Record<string, string> = {};
+  for (const [key, value] of Object.entries(suggestions)) {
+    const current = stateMap[key];
+    if (current !== undefined && current !== value) {
+      filteredSuggestions[key] = value;
+    }
+  }
+
+  for (const [key, value] of Object.entries(filteredSuggestions)) {
+    const suggestKey = `ai_suggest_${key}`;
+    await db.insert(platformStateTable).values({ key: suggestKey, value })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value, updatedAt: new Date() } });
+  }
+
+  await db.insert(platformStateTable).values({ key: "ai_weekly_analysis_at", value: nowIso })
+    .onConflictDoUpdate({ target: platformStateTable.key, set: { value: nowIso, updatedAt: new Date() } });
+
+  const tradeCount = closedTrades.length;
+  const overallWinRate = allWinRate;
+  const increaseSuggestions = Object.values(filteredSuggestions).filter((v, i) => {
+    const k = Object.keys(filteredSuggestions)[i];
+    return parseFloat(v) > parseFloat(stateMap[k] || "0");
+  }).length;
+  const decreaseSuggestions = Object.keys(filteredSuggestions).length - increaseSuggestions;
+  const trend = increaseSuggestions > decreaseSuggestions ? "more_aggressive" : increaseSuggestions < decreaseSuggestions ? "more_conservative" : "neutral";
+
+  await db.insert(platformStateTable).values({ key: "ai_suggestion_trend", value: trend })
+    .onConflictDoUpdate({ target: platformStateTable.key, set: { value: trend, updatedAt: new Date() } });
+  await db.insert(platformStateTable).values({ key: "ai_trades_analyzed", value: String(tradeCount) })
+    .onConflictDoUpdate({ target: platformStateTable.key, set: { value: String(tradeCount), updatedAt: new Date() } });
+  await db.insert(platformStateTable).values({ key: "ai_win_rate_observed", value: String(overallWinRate.toFixed(3)) })
+    .onConflictDoUpdate({ target: platformStateTable.key, set: { value: String(overallWinRate.toFixed(3)), updatedAt: new Date() } });
+
+  console.log(`[Scheduler] Weekly analysis complete — ${tradeCount} trades analyzed, ${Object.keys(filteredSuggestions).length} suggestions generated (trend: ${trend}).`);
+}
+
+async function weeklyAnalysisCycle(): Promise<void> {
+  try {
+    const states = await db.select().from(platformStateTable);
+    const stateMap: Record<string, string> = {};
+    for (const s of states) stateMap[s.key] = s.value;
+
+    if (stateMap["initial_setup_complete"] !== "true") return;
+
+    const now = new Date();
+    if (now.getDay() !== 0) return;
+
+    const lastAnalysis = stateMap["ai_weekly_analysis_at"];
+    if (lastAnalysis) {
+      const lastDate = new Date(lastAnalysis);
+      const hoursSince = (now.getTime() - lastDate.getTime()) / 3600000;
+      if (hoursSince < 20) return;
+    }
+
+    console.log(`[Scheduler] Sunday detected — starting weekly AI analysis...`);
+    await runWeeklyAnalysis(stateMap);
+  } catch (err) {
+    console.error("[Scheduler] Weekly analysis error:", err instanceof Error ? err.message : err);
+  }
+}
 
 async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise<void> {
   const enabledSymbols = stateMap["enabled_symbols"]
@@ -492,6 +745,10 @@ export function startScheduler(): void {
   console.log(`[Scheduler] Starting monthly re-optimisation check (hourly)`);
   monthlyHandle = setInterval(monthlyOptimisationCycle, MONTHLY_CHECK_INTERVAL_MS);
   setTimeout(monthlyOptimisationCycle, 15000);
+
+  console.log(`[Scheduler] Starting weekly AI analysis check (hourly)`);
+  weeklyHandle = setInterval(weeklyAnalysisCycle, WEEKLY_CHECK_INTERVAL_MS);
+  setTimeout(weeklyAnalysisCycle, 20000);
 }
 
 export function stopScheduler(): void {
@@ -509,6 +766,11 @@ export function stopScheduler(): void {
     clearInterval(monthlyHandle);
     monthlyHandle = null;
     console.log("[Scheduler] Monthly optimiser stopped.");
+  }
+  if (weeklyHandle) {
+    clearInterval(weeklyHandle);
+    weeklyHandle = null;
+    console.log("[Scheduler] Weekly analyser stopped.");
   }
   staggeredScanActive = false;
   if (staggerTimerHandle) {

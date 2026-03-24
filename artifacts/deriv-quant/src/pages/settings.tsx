@@ -751,11 +751,67 @@ const MODE_DESCRIPTIONS: Record<string, { title: string; desc: string; target: s
   real: { title: "Real Mode — Conservative Fortress", desc: "Selective entries, careful position sizing, strict risk controls. Protects your real capital while still targeting strong returns.", target: "Target: ~50% monthly return", color: "destructive" },
 };
 
-function ModeSettingsTab({ mode, form, update, suggestions, onApplySuggestion, unlockedSections, onUnlockSection, onSaveSection, saving, onPaperReset }: {
+interface AiMetaInfo {
+  weeklyAnalysisAt: string | null;
+  suggestionTrend: string;
+  tradesAnalyzed: number;
+  observedWinRate: number;
+  nextWeeklyAnalysis: string | null;
+  optimisedAt: string | null;
+  modeSuggestionCounts: Record<string, number>;
+}
+
+function SuggestionSummaryCard({ mode, form, suggestions, aiMeta }: { mode: "paper" | "demo" | "real"; form: Record<string, string>; suggestions: AiSuggestions; aiMeta: AiMetaInfo }) {
+  const suggestionCount = Object.keys(suggestions).filter(k => k.startsWith(`${mode}_`) && suggestions[k] !== form[k]).length;
+  const trendLabel = aiMeta.suggestionTrend === "more_aggressive" ? "More Aggressive" : aiMeta.suggestionTrend === "more_conservative" ? "More Conservative" : "Balanced";
+  const trendColor = aiMeta.suggestionTrend === "more_aggressive" ? "text-emerald-500" : aiMeta.suggestionTrend === "more_conservative" ? "text-amber-500" : "text-muted-foreground";
+  const trendIcon = aiMeta.suggestionTrend === "more_aggressive" ? "↑" : aiMeta.suggestionTrend === "more_conservative" ? "↓" : "→";
+  const lastAnalysis = aiMeta.weeklyAnalysisAt || aiMeta.optimisedAt;
+
+  if (suggestionCount === 0 && !lastAnalysis) return null;
+
+  return (
+    <Card className="border border-emerald-500/20 bg-emerald-500/5">
+      <CardContent className="pt-5 pb-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Bot className="w-4 h-4 text-emerald-500" />
+          <span className="text-sm font-semibold text-foreground">AI Suggestions</span>
+          {suggestionCount > 0 && (
+            <span className="ml-auto px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-xs font-bold text-emerald-500">{suggestionCount} pending</span>
+          )}
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div>
+            <p className="text-muted-foreground">Direction</p>
+            <p className={cn("font-semibold mt-0.5", trendColor)}>{trendIcon} {trendLabel}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Trades Analyzed</p>
+            <p className="font-semibold text-foreground mt-0.5">{aiMeta.tradesAnalyzed || "—"}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Win Rate</p>
+            <p className="font-semibold text-foreground mt-0.5">{aiMeta.observedWinRate > 0 ? `${(aiMeta.observedWinRate * 100).toFixed(1)}%` : "—"}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Last Analysis</p>
+            <p className="font-semibold text-foreground mt-0.5">{lastAnalysis ? new Date(lastAnalysis).toLocaleDateString() : "Not yet"}</p>
+          </div>
+        </div>
+        {suggestionCount > 0 && (
+          <p className="text-xs text-muted-foreground mt-3">Unlock fields and look for green/amber badges to review individual suggestions.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ModeSettingsTab({ mode, form, update, suggestions, onApplySuggestion, unlockedSections, onUnlockSection, onSaveSection, saving, onPaperReset, aiMeta }: {
   mode: "paper" | "demo" | "real"; form: Record<string, string>; update: (key: string, value: string) => void;
   suggestions: AiSuggestions; onApplySuggestion: (key: string) => void;
   unlockedSections: Set<string>; onUnlockSection: (section: string) => void;
   onSaveSection: (keys: string[], overrides?: Record<string, string>) => void; saving: boolean; onPaperReset?: () => void;
+  aiMeta: AiMetaInfo;
 }) {
   const p = (key: string) => `${mode}_${key}`;
   const modeLabel = mode === "paper" ? "Paper" : mode === "demo" ? "Demo" : "Real";
@@ -765,8 +821,6 @@ function ModeSettingsTab({ mode, form, update, suggestions, onApplySuggestion, u
 
   const isLocked = (section: string) => !unlockedSections.has(`${mode}_${section}`);
   const handleUnlock = (section: string) => onUnlockSection(`${mode}_${section}`);
-
-  const suggestionCount = Object.keys(suggestions).filter(k => k.startsWith(`${mode}_`) && suggestions[k] !== form[k]).length;
 
   return (
     <div className="space-y-6">
@@ -778,15 +832,11 @@ function ModeSettingsTab({ mode, form, update, suggestions, onApplySuggestion, u
               <p className="text-sm text-muted-foreground mt-1">{modeInfo.desc}</p>
               <p className={cn("text-xs font-semibold mt-2", `text-${modeInfo.color}`)}>{modeInfo.target}</p>
             </div>
-            {suggestionCount > 0 && (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30">
-                <Bot className="w-3.5 h-3.5 text-emerald-500" />
-                <span className="text-xs font-semibold text-emerald-500">{suggestionCount} suggestions</span>
-              </div>
-            )}
           </div>
         </CardContent>
       </Card>
+
+      <SuggestionSummaryCard mode={mode} form={form} suggestions={suggestions} aiMeta={aiMeta} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
@@ -978,6 +1028,15 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
 
   const [suggestions, setSuggestions] = useState<AiSuggestions>({});
+  const [aiMeta, setAiMeta] = useState<{
+    weeklyAnalysisAt: string | null;
+    suggestionTrend: string;
+    tradesAnalyzed: number;
+    observedWinRate: number;
+    nextWeeklyAnalysis: string | null;
+    optimisedAt: string | null;
+    modeSuggestionCounts: Record<string, number>;
+  }>({ weeklyAnalysisAt: null, suggestionTrend: "neutral", tradesAnalyzed: 0, observedWinRate: 0, nextWeeklyAnalysis: null, optimisedAt: null, modeSuggestionCounts: {} });
   const [unlockedSections, setUnlockedSections] = useState<Set<string>>(new Set());
   const [unlockTarget, setUnlockTarget] = useState<string | null>(null);
 
@@ -989,6 +1048,15 @@ export default function Settings() {
       if (resp.ok) {
         const data = await resp.json();
         setSuggestions(data.aiSuggestions || {});
+        setAiMeta({
+          weeklyAnalysisAt: data.weeklyAnalysisAt || null,
+          suggestionTrend: data.suggestionTrend || "neutral",
+          tradesAnalyzed: data.tradesAnalyzed || 0,
+          observedWinRate: data.observedWinRate || 0,
+          nextWeeklyAnalysis: data.nextWeeklyAnalysis || null,
+          optimisedAt: data.optimisedAt || null,
+          modeSuggestionCounts: data.modeSuggestionCounts || {},
+        });
       }
     } catch {}
   }, [base]);
@@ -1260,15 +1328,15 @@ export default function Settings() {
           )}
 
           {activeTab === "paper" && (
-            <ModeSettingsTab mode="paper" form={form} update={update} suggestions={suggestions} onApplySuggestion={handleApplySuggestion} unlockedSections={unlockedSections} onUnlockSection={handleUnlockSection} onSaveSection={handleSaveSection} saving={saving} onPaperReset={() => setShowPaperReset(true)} />
+            <ModeSettingsTab mode="paper" form={form} update={update} suggestions={suggestions} onApplySuggestion={handleApplySuggestion} unlockedSections={unlockedSections} onUnlockSection={handleUnlockSection} onSaveSection={handleSaveSection} saving={saving} onPaperReset={() => setShowPaperReset(true)} aiMeta={aiMeta} />
           )}
 
           {activeTab === "demo" && (
-            <ModeSettingsTab mode="demo" form={form} update={update} suggestions={suggestions} onApplySuggestion={handleApplySuggestion} unlockedSections={unlockedSections} onUnlockSection={handleUnlockSection} onSaveSection={handleSaveSection} saving={saving} />
+            <ModeSettingsTab mode="demo" form={form} update={update} suggestions={suggestions} onApplySuggestion={handleApplySuggestion} unlockedSections={unlockedSections} onUnlockSection={handleUnlockSection} onSaveSection={handleSaveSection} saving={saving} aiMeta={aiMeta} />
           )}
 
           {activeTab === "real" && (
-            <ModeSettingsTab mode="real" form={form} update={update} suggestions={suggestions} onApplySuggestion={handleApplySuggestion} unlockedSections={unlockedSections} onUnlockSection={handleUnlockSection} onSaveSection={handleSaveSection} saving={saving} />
+            <ModeSettingsTab mode="real" form={form} update={update} suggestions={suggestions} onApplySuggestion={handleApplySuggestion} unlockedSections={unlockedSections} onUnlockSection={handleUnlockSection} onSaveSection={handleSaveSection} saving={saving} aiMeta={aiMeta} />
           )}
 
           {activeTab === "diagnostics" && <SymbolDiagnosticsPanel />}

@@ -577,6 +577,28 @@ router.get("/settings/ai-status", async (_req, res): Promise<void> => {
     return next.toISOString();
   })();
 
+  const weeklyAnalysisAt = stateMap["ai_weekly_analysis_at"] || null;
+  const suggestionTrend = stateMap["ai_suggestion_trend"] || "neutral";
+  const tradesAnalyzed = parseInt(stateMap["ai_trades_analyzed"] || "0");
+  const observedWinRate = parseFloat(stateMap["ai_win_rate_observed"] || "0");
+
+  const nextSunday = (() => {
+    const now = new Date();
+    const daysUntilSunday = (7 - now.getDay()) % 7 || 7;
+    const next = new Date(now);
+    next.setDate(next.getDate() + daysUntilSunday);
+    next.setHours(0, 0, 0, 0);
+    return next.toISOString();
+  })();
+
+  const modeSuggestionCounts: Record<string, number> = { paper: 0, demo: 0, real: 0, global: 0 };
+  for (const k of Object.keys(aiSuggestions)) {
+    if (k.startsWith("paper_")) modeSuggestionCounts.paper++;
+    else if (k.startsWith("demo_")) modeSuggestionCounts.demo++;
+    else if (k.startsWith("real_")) modeSuggestionCounts.real++;
+    else modeSuggestionCounts.global++;
+  }
+
   res.json({
     locked: false,
     optimisedAt,
@@ -586,6 +608,12 @@ router.get("/settings/ai-status", async (_req, res): Promise<void> => {
     overriddenKeys: [],
     lastMonthlyOptimise,
     nextScheduled,
+    weeklyAnalysisAt,
+    suggestionTrend,
+    tradesAnalyzed,
+    observedWinRate,
+    nextWeeklyAnalysis: nextSunday,
+    modeSuggestionCounts,
   });
 });
 

@@ -60,62 +60,71 @@ const WRITABLE_SETTINGS = [
   "real_max_daily_loss_pct", "real_max_weekly_loss_pct", "real_max_drawdown_pct",
 ];
 
-const SYSTEM_PROMPT = `You are the AI assistant for a Deriv Capital Extraction trading platform. You help users configure settings, understand strategies, and maximise returns.
+const SYSTEM_PROMPT = `You are the AI assistant for a Deriv Capital Extraction trading platform. You help users understand settings, review AI suggestions, and learn about strategies.
+
+IMPORTANT: You are an ADVISOR, not a controller. You NEVER directly change settings. Instead, you can:
+1. Read current settings and AI suggestions
+2. Write new AI suggestions for the user to review and manually apply in Settings
+3. Explain the reasoning behind suggestions
 
 CORE TRADING PHILOSOPHY — This is a CAPITAL EXTRACTION strategy:
-- HIGH CAPITAL PER TRADE: Deploy 15–25% equity per position. We want large, meaningful trades — not lots of small ones.
-- HIGHEST-VALUE SIGNALS ONLY: The composite score threshold should be 85+. We only trade when the signal quality is exceptional. Fewer trades, each with high conviction.
-- HOLD FOR LONGER PERIODS: Time exit windows of 48–168 hours. Let winning trades run. Don't scalp — swing trade with patience.
-- WIDE TAKE PROFITS: TP multipliers of 2.5x–4.0x ATR. We're targeting large moves, not quick flips.
-- TIGHT TRAILING STOPS: Trail 20–25% behind peak price. Once in profit, protect it aggressively.
-- FEW SIMULTANEOUS POSITIONS: Max 2–3 open trades. Concentrate capital on the best opportunities.
-- SELECTIVE INSTRUMENTS: Focus on the top-performing strategy/instrument combinations from backtests.
+- HIGH CAPITAL PER TRADE: Deploy 15–25% equity per position. Large, meaningful trades.
+- HIGHEST-VALUE SIGNALS ONLY: Composite score threshold 85+. Fewer trades, high conviction.
+- HOLD FOR LONGER PERIODS: Time exit windows of 48–168 hours. Swing trade with patience.
+- WIDE TAKE PROFITS: TP multipliers of 2.5x–4.0x ATR. Target large moves.
+- TIGHT TRAILING STOPS: Trail 20–25% behind peak price. Protect profits aggressively.
+- FEW SIMULTANEOUS POSITIONS: Max 2–3 open trades. Concentrate capital.
 
 You have access to these capabilities via function calls:
-1. get_current_settings - View all current platform settings
-2. update_settings - Change specific settings (only allowed keys)
+1. get_current_settings - View all current platform settings and existing AI suggestions
+2. write_suggestions - Write AI suggestions for the user to review (NEVER changes actual settings)
 
 Platform architecture:
-- 3 independent trading modes: Paper (simulated), Demo (Deriv demo account), Real (Deriv real account)
+- 3 independent trading modes: Paper (120%/mo target), Demo (80%/mo), Real (50%/mo)
 - 4 strategy families: trend_continuation, mean_reversion, breakout_expansion, spike_event
 - Composite scoring system (0-100) with 6 weighted dimensions
-- Signal scoring thresholds, scan timing, and kill switch are GLOBAL (same for all modes)
+- Signal scoring thresholds, scan timing, and kill switch are GLOBAL
 - TP/SL, trailing stop, position sizing, time exit, risk limits, instruments, and strategies are PER-MODE
+- All settings are prefixed with mode name (e.g. paper_equity_pct_per_trade, demo_sl_ratio, real_max_open_trades)
 
 When making recommendations:
 - Always favour FEWER, LARGER, HIGHER-QUALITY trades
-- Suggest raising composite score thresholds if the user is getting too many signals
-- Recommend longer hold times and wider TPs — this is swing trading, not scalping
-- For Real mode, be more conservative on max open trades (2–3) but aggressive on equity per trade (20%+)
-- Never suggest lowering the composite score threshold below 80
-- If equity_pct_per_trade is below 15%, suggest raising it — we want meaningful position sizes
+- For Real mode, be most conservative. For Paper, most aggressive.
+- Never suggest lowering composite score below 80
+- Explain WHY you're suggesting a change — what data supports it
+- Write suggestions using write_suggestions, then tell the user to check Settings to review and apply them
 
-Be concise and helpful. When changing settings, confirm what you're about to do. Format numbers clearly.`;
+Be concise and helpful. Format numbers clearly. Always explain your reasoning.`;
+
 
 const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
       name: "get_current_settings",
-      description: "Get all current platform settings and their values",
+      description: "Get all current platform settings, their values, and any pending AI suggestions",
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
   {
     type: "function",
     function: {
-      name: "update_settings",
-      description: "Update one or more platform settings. Only use after confirming with the user.",
+      name: "write_suggestions",
+      description: "Write AI suggestions for settings. These are NOT applied automatically — the user must review and apply them manually in the Settings page. Use this to recommend value changes.",
       parameters: {
         type: "object",
         properties: {
-          settings: {
+          suggestions: {
             type: "object",
-            description: "Key-value pairs of settings to update",
+            description: "Key-value pairs of suggested settings. Keys should match actual setting names (e.g. paper_equity_pct_per_trade, demo_sl_ratio, min_composite_score)",
             additionalProperties: { type: "string" },
           },
+          reasoning: {
+            type: "string",
+            description: "Brief explanation of why these suggestions are being made",
+          },
         },
-        required: ["settings"],
+        required: ["suggestions", "reasoning"],
       },
     },
   },
@@ -156,31 +165,53 @@ router.post("/ai/chat", async (req, res): Promise<void> => {
         try {
           if (tc.function.name === "get_current_settings") {
             const settings = await getCurrentSettings();
-            result = JSON.stringify(settings, null, 2);
-          } else if (tc.function.name === "update_settings") {
+            const aiSuggestions: Record<string, string> = {};
+            for (const [k, v] of Object.entries(settings)) {
+              if (k.startsWith("ai_suggest_")) {
+                aiSuggestions[k.replace("ai_suggest_", "")] = v;
+              }
+            }
+            const actualSettings: Record<string, string> = {};
+            for (const [k, v] of Object.entries(settings)) {
+              if (!k.startsWith("ai_suggest_") && !k.startsWith("ai_")) {
+                actualSettings[k] = v;
+              }
+            }
+            result = JSON.stringify({ settings: actualSettings, pendingSuggestions: aiSuggestions }, null, 2);
+          } else if (tc.function.name === "write_suggestions") {
             const args = JSON.parse(tc.function.arguments);
-            const toUpdate = args.settings || {};
-            const updated: string[] = [];
+            const toSuggest = args.suggestions || {};
+            const reasoning = args.reasoning || "";
+            const written: string[] = [];
             const rejected: string[] = [];
 
-            for (const [key, value] of Object.entries(toUpdate)) {
+            for (const [key, value] of Object.entries(toSuggest)) {
               if (WRITABLE_SETTINGS.includes(key)) {
+                const suggestKey = `ai_suggest_${key}`;
                 await db
                   .insert(platformStateTable)
-                  .values({ key, value: String(value) })
+                  .values({ key: suggestKey, value: String(value) })
                   .onConflictDoUpdate({
                     target: platformStateTable.key,
                     set: { value: String(value), updatedAt: new Date() },
                   });
-                updated.push(`${key} = ${value}`);
+                written.push(`${key} → ${value}`);
               } else {
-                rejected.push(`${key} (not writable)`);
+                rejected.push(`${key} (not a valid setting key)`);
               }
             }
+
+            await db.insert(platformStateTable)
+              .values({ key: "ai_chat_suggestion_at", value: new Date().toISOString() })
+              .onConflictDoUpdate({ target: platformStateTable.key, set: { value: new Date().toISOString(), updatedAt: new Date() } });
+
             result = JSON.stringify({
-              updated,
+              written,
               rejected,
-              message: updated.length > 0 ? `Updated ${updated.length} setting(s)` : "No settings were updated",
+              message: written.length > 0
+                ? `Wrote ${written.length} suggestion(s). The user can review and apply them in the Settings page.`
+                : "No suggestions were written.",
+              reasoning,
             });
           } else {
             result = JSON.stringify({ error: "Unknown function" });
@@ -205,11 +236,11 @@ router.post("/ai/chat", async (req, res): Promise<void> => {
     }
 
     const reply = response.choices[0]?.message?.content || "I couldn't generate a response.";
-    const settingsChanged = chatMessages.some(
-      m => m.role === "tool" && typeof m.content === "string" && m.content.includes('"updated"')
+    const suggestionsWritten = chatMessages.some(
+      m => m.role === "tool" && typeof m.content === "string" && m.content.includes('"written"')
     );
 
-    res.json({ reply, settingsChanged });
+    res.json({ reply, settingsChanged: false, suggestionsWritten });
   } catch (err) {
     const message = err instanceof Error ? err.message : "AI chat failed";
     res.status(500).json({ error: message });

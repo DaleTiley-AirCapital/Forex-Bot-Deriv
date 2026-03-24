@@ -59,7 +59,7 @@ export function AiChat() {
       const data = await resp.json();
       setMessages([...updated, { role: "assistant", content: data.reply }]);
 
-      if (data.settingsChanged) {
+      if (data.suggestionsWritten || data.settingsChanged) {
         queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() });
       }
     } catch {

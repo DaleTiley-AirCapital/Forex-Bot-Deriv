@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { db, platformStateTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import app from "./app.js";
-import { getDerivClientWithDbToken, getEnabledSymbols, SUPPORTED_SYMBOLS } from "./lib/deriv.js";
+import { getDerivClientWithDbToken, getEnabledSymbols, V1_DEFAULT_SYMBOLS } from "./lib/deriv.js";
 import { startScheduler } from "./lib/scheduler.js";
 import { validateActiveSymbols } from "./lib/symbolValidator.js";
 
@@ -207,6 +207,31 @@ async function initDb(): Promise<void> {
   }
   console.log(`[DB] Ran ${migrations.length} column migrations.`);
 
+  console.log("[DB] Truncating all data tables for clean first-run state...");
+  await db.execute(sql`TRUNCATE TABLE backtest_trades CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE backtest_runs CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE trades CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE signal_log CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE features CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE model_runs CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE spike_events CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE candles CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE ticks CASCADE`);
+
+  const apiKeyKeys = ["deriv_api_token", "deriv_api_token_demo", "deriv_api_token_real", "openai_api_key"];
+  const existingKeys = await db.select().from(platformStateTable);
+  const savedApiKeys: { key: string; value: string }[] = [];
+  for (const row of existingKeys) {
+    if (apiKeyKeys.includes(row.key) && row.value) {
+      savedApiKeys.push({ key: row.key, value: row.value });
+    }
+  }
+  await db.execute(sql`TRUNCATE TABLE platform_state CASCADE`);
+
+  for (const { key, value } of savedApiKeys) {
+    await db.insert(platformStateTable).values({ key, value }).onConflictDoNothing();
+  }
+
   await db.execute(sql`
     INSERT INTO platform_state (key, value)
     SELECT * FROM (VALUES
@@ -221,10 +246,10 @@ async function initDb(): Promise<void> {
       ('streaming',           'false'),
       ('disabled_strategies', '')
     ) AS defaults(key, value)
-    WHERE NOT EXISTS (SELECT 1 FROM platform_state LIMIT 1);
+    WHERE NOT EXISTS (SELECT 1 FROM platform_state WHERE key = 'mode');
   `);
 
-  console.log("[DB] Schema ready.");
+  console.log("[DB] Schema ready — clean first-run state.");
 }
 
 async function autoConfigureAI(): Promise<void> {
@@ -262,7 +287,7 @@ async function autoStartStreaming(): Promise<void> {
       return;
     }
     const enabledSymbols = await getEnabledSymbols();
-    const validSymbols = enabledSymbols.filter(s => SUPPORTED_SYMBOLS.includes(s));
+    const validSymbols = enabledSymbols.filter(s => V1_DEFAULT_SYMBOLS.includes(s));
     if (validSymbols.length === 0) {
       console.log("[AutoStart] No valid symbols to stream");
       return;

@@ -30,8 +30,6 @@ const FAMILY_LABELS: Record<string, string> = {
   spike_event: "Spike",
 };
 
-const DEFAULT_CAPITAL = 10000;
-
 export default function Overview() {
   const queryOpts = { refetchInterval: 5000, retry: 2, retryDelay: 1000, staleTime: 10000 };
   const { data: overview } = useGetOverview({ query: queryOpts });
@@ -50,8 +48,6 @@ export default function Overview() {
   const isMulti         = overview?.mode === "multi";
   const activeModes     = overview?.activeModes || [];
   const perMode         = overview?.perMode || {};
-  const isDefaultCapital = !settings?.total_capital || Number(settings.total_capital) === DEFAULT_CAPITAL;
-
   const kpiSnap = perMode[kpiMode];
   const kpiCapital    = kpiSnap?.capital    ?? overview?.availableCapital;
   const kpiPnl        = kpiSnap?.realisedPnl ?? overview?.realisedPnl;
@@ -155,25 +151,6 @@ export default function Overview() {
           })()}
         </div>
       </div>
-
-      {/* Capital prompt */}
-      {isDefaultCapital && (
-        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-primary/8 border border-primary/25 text-sm">
-            <Settings className="w-4 h-4 text-primary shrink-0" />
-            <span className="text-foreground">
-              <span className="font-semibold">Set your capital:</span>{" "}
-              <span className="text-muted-foreground">
-                "Available Capital" is using the default ($10,000). Go to{" "}
-                <a href="/settings" className="text-primary underline underline-offset-2 hover:text-primary/80">
-                  Settings → Position Sizing → Total Capital
-                </a>{" "}
-                and enter the amount you plan to deposit (e.g. $600).
-              </span>
-            </span>
-          </div>
-        </motion.div>
-      )}
 
       {/* Dual account cards — Demo & Real side by side */}
       {(() => {

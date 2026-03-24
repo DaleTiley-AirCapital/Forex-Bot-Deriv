@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
-import { CheckCircle2, Circle, Loader2, AlertCircle, Database, BarChart3, Zap, ArrowRight, ArrowLeft, Key, Eye, EyeOff } from "lucide-react";
+import { CheckCircle2, Circle, Loader2, AlertCircle, Database, BarChart3, Zap, ArrowRight, ArrowLeft, Key, Eye, EyeOff, Brain, Radio } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL || "/";
 const api = (path: string) => `${BASE}api${path}`;
@@ -61,13 +61,15 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
   const [testResult, setTestResult] = useState<{ derivDemo: { ok: boolean; error?: string }; derivReal: { ok: boolean; error?: string }; openai: { ok: boolean; error?: string } } | null>(null);
 
   const [initProgress, setInitProgress] = useState(0);
-  const [initStage, setInitStage] = useState<"backfill" | "backtest" | "optimise" | "complete" | "error">("backfill");
+  const [initStage, setInitStage] = useState<"backfill" | "backtest" | "ai_review" | "optimise" | "streaming" | "complete" | "error">("backfill");
   const [initStatus, setInitStatus] = useState("");
   const [candleTotal, setCandleTotal] = useState(0);
   const [btCompleted, setBtCompleted] = useState(0);
   const [btTotal, setBtTotal] = useState(0);
   const [estRemainingSec, setEstRemainingSec] = useState(0);
   const [symbolProgress, setSymbolProgress] = useState<Record<string, { status: string; candles: number; oldestDate: string | null; pct?: number; error?: string }>>({});
+  const [btSymbolResults, setBtSymbolResults] = useState<Record<string, { strategy: string; winRate: number; profitFactor: number; score: number; tradeCount: number; avgHoldHours: number }>>({});
+  const [aiReviews, setAiReviews] = useState<Record<string, { summary: string | null; suggestions: string[] | null; bestStrategy: string; winRate: number; profitFactor: number }>>({});
 
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -143,6 +145,8 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
     setBtTotal(0);
     setEstRemainingSec(0);
     setSymbolProgress({});
+    setBtSymbolResults({});
+    setAiReviews({});
     abortRef.current = new AbortController();
     completedRef.current = false;
 
@@ -208,7 +212,7 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
             }));
           }
         } else if (phase === "backfill_complete") {
-          setInitProgress(50);
+          setInitProgress(40);
           setInitStatus(evt.message as string);
           setCandleTotal(evt.candleTotal as number || 0);
           setEstRemainingSec(0);
@@ -218,17 +222,72 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
           setInitStatus(evt.message as string);
         } else if (phase === "backtest_progress") {
           setInitStage("backtest");
-          setInitProgress(Math.max(pct, 50));
+          setInitProgress(Math.max(pct, 40));
           setBtCompleted(evt.btCompleted as number || 0);
           setBtTotal(evt.btTotal as number || 0);
           setCandleTotal(evt.candleTotal as number || 0);
           setEstRemainingSec(evt.estRemainingSec as number || 0);
           setInitStatus(evt.message as string);
-        } else if (phase === "optimising") {
-          setInitStage("optimise");
-          setInitProgress(95);
+          const sym = evt.symbol as string;
+          const strat = evt.strategy as string;
+          if (sym && strat) {
+            setBtSymbolResults(prev => {
+              const existing = prev[sym];
+              if (!existing) return { ...prev, [sym]: { strategy: strat, winRate: 0, profitFactor: 0, score: 0, tradeCount: 0, avgHoldHours: 0 } };
+              return prev;
+            });
+          }
+        } else if (phase === "backtest_symbol_summary") {
+          const sym = evt.symbol as string;
+          if (sym) {
+            setBtSymbolResults(prev => ({
+              ...prev,
+              [sym]: {
+                strategy: (evt.bestStrategy as string) || prev[sym]?.strategy || "",
+                winRate: (evt.avgWinRate as number) || 0,
+                profitFactor: (evt.avgProfitFactor as number) || 0,
+                score: (evt.bestScore as number) || 0,
+                tradeCount: (evt.tradeCount as number) || 0,
+                avgHoldHours: (evt.avgHoldHours as number) || 0,
+              },
+            }));
+          }
+        } else if (phase === "ai_review_start") {
+          setInitStage("ai_review");
+          setInitProgress(Math.max(pct, 70));
           setInitStatus(evt.message as string);
           setEstRemainingSec(0);
+        } else if (phase === "ai_review_symbol") {
+          setInitStage("ai_review");
+          setInitProgress(Math.max(pct, 70));
+          setInitStatus(evt.message as string);
+          setEstRemainingSec(0);
+          const sym = evt.symbol as string;
+          if (sym) {
+            setAiReviews(prev => ({
+              ...prev,
+              [sym]: {
+                summary: (evt.aiSummary as string) || null,
+                suggestions: (evt.aiSuggestions as string[]) || null,
+                bestStrategy: (evt.bestStrategy as string) || "none",
+                winRate: (evt.winRate as number) || 0,
+                profitFactor: (evt.profitFactor as number) || 0,
+              },
+            }));
+          }
+        } else if (phase === "ai_review_complete") {
+          setInitStage("ai_review");
+          setInitProgress(80);
+          setInitStatus(evt.message as string);
+        } else if (phase === "optimising" || phase === "optimise_complete") {
+          setInitStage("optimise");
+          setInitProgress(Math.max(pct, 80));
+          setInitStatus(evt.message as string);
+          setEstRemainingSec(0);
+        } else if (phase === "streaming_start" || phase === "streaming_complete") {
+          setInitStage("streaming");
+          setInitProgress(Math.max(pct, 90));
+          setInitStatus(evt.message as string);
         } else if (phase === "complete") {
           completedRef.current = true;
           setInitStage("complete");
@@ -339,22 +398,30 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                     recommend your optimal starting settings.
                   </p>
                 </div>
-                <div className="grid grid-cols-4 gap-3 max-w-lg mx-auto">
+                <div className="grid grid-cols-3 gap-2 max-w-lg mx-auto">
                   <div className="p-3 rounded-lg bg-muted/20 text-center">
                     <Key className="w-5 h-5 text-yellow-400 mx-auto mb-1.5" />
-                    <p className="text-[10px] text-muted-foreground">1. API Keys</p>
+                    <p className="text-[10px] text-muted-foreground">API Keys</p>
                   </div>
                   <div className="p-3 rounded-lg bg-muted/20 text-center">
                     <Database className="w-5 h-5 text-blue-400 mx-auto mb-1.5" />
-                    <p className="text-[10px] text-muted-foreground">2. Full Backfill</p>
+                    <p className="text-[10px] text-muted-foreground">Backfill</p>
                   </div>
                   <div className="p-3 rounded-lg bg-muted/20 text-center">
                     <BarChart3 className="w-5 h-5 text-purple-400 mx-auto mb-1.5" />
-                    <p className="text-[10px] text-muted-foreground">3. Backtests</p>
+                    <p className="text-[10px] text-muted-foreground">Strategy Replay</p>
                   </div>
                   <div className="p-3 rounded-lg bg-muted/20 text-center">
-                    <Zap className="w-5 h-5 text-green-400 mx-auto mb-1.5" />
-                    <p className="text-[10px] text-muted-foreground">4. AI Optimise</p>
+                    <Brain className="w-5 h-5 text-amber-400 mx-auto mb-1.5" />
+                    <p className="text-[10px] text-muted-foreground">AI Review</p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/20 text-center">
+                    <Zap className="w-5 h-5 text-emerald-400 mx-auto mb-1.5" />
+                    <p className="text-[10px] text-muted-foreground">AI Optimise</p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/20 text-center">
+                    <Radio className="w-5 h-5 text-cyan-400 mx-auto mb-1.5" />
+                    <p className="text-[10px] text-muted-foreground">Start Streaming</p>
                   </div>
                 </div>
                 <Button size="lg" onClick={() => { setError(null); setStep("apikeys"); }} className="px-8">
@@ -517,15 +584,19 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                   <div className="space-y-5">
                     <div className="text-center space-y-1">
                       <h2 className="text-lg font-semibold">
-                        {initStage === "backfill" && "Step 1 of 4: Downloading Historical Data"}
-                        {initStage === "backtest" && "Step 2 of 4: Running Backtests"}
-                        {initStage === "optimise" && "Step 3 of 4: AI Analysis"}
-                        {initStage === "complete" && "Step 4 of 4: Complete"}
+                        {initStage === "backfill" && "Step 1 of 6: Downloading Historical Data"}
+                        {initStage === "backtest" && "Step 2 of 6: Running Strategy Replay"}
+                        {initStage === "ai_review" && "Step 3 of 6: AI Review Per Symbol"}
+                        {initStage === "optimise" && "Step 4 of 6: AI-Optimised Settings"}
+                        {initStage === "streaming" && "Step 5 of 6: Starting Live Stream"}
+                        {initStage === "complete" && "Step 6 of 6: Complete"}
                       </h2>
                       <p className="text-xs text-muted-foreground">
                         {initStage === "backfill" && "Fetching all available 1m & 5m candle data from Deriv"}
                         {initStage === "backtest" && "Testing all strategies across every symbol"}
-                        {initStage === "optimise" && "Calculating optimal parameters from backtest results"}
+                        {initStage === "ai_review" && "Analysing each symbol's best strategy and performance"}
+                        {initStage === "optimise" && "Computing optimal parameters from backtest results"}
+                        {initStage === "streaming" && "Connecting to live market data feeds"}
                         {initStage === "complete" && "Your platform is ready"}
                       </p>
                     </div>
@@ -540,61 +611,38 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                       <Progress value={initProgress} className="h-3" />
                     </div>
 
-                    <div className="grid grid-cols-4 gap-2">
-                      <div className={`p-2.5 rounded-lg border text-center transition-colors ${
-                        initStage === "backfill" ? "bg-blue-500/10 border-blue-500/30" :
-                        initProgress >= 50 ? "bg-green-500/5 border-green-500/20" :
-                        "bg-muted/20 border-border/40"
-                      }`}>
-                        <Database className={`w-4 h-4 mx-auto mb-1 ${
-                          initStage === "backfill" ? "text-blue-400" :
-                          initProgress >= 50 ? "text-green-400" : "text-muted-foreground"
-                        }`} />
-                        <p className="text-[10px] font-medium">Data</p>
-                        <p className="text-xs font-bold tabular-nums mt-0.5">
-                          {candleTotal > 0 ? candleTotal.toLocaleString() : "—"}
-                        </p>
-                      </div>
-                      <div className={`p-2.5 rounded-lg border text-center transition-colors ${
-                        initStage === "backtest" ? "bg-purple-500/10 border-purple-500/30" :
-                        btCompleted > 0 && btCompleted >= btTotal ? "bg-green-500/5 border-green-500/20" :
-                        "bg-muted/20 border-border/40"
-                      }`}>
-                        <BarChart3 className={`w-4 h-4 mx-auto mb-1 ${
-                          initStage === "backtest" ? "text-purple-400" :
-                          btCompleted > 0 && btCompleted >= btTotal ? "text-green-400" : "text-muted-foreground"
-                        }`} />
-                        <p className="text-[10px] font-medium">Backtests</p>
-                        <p className="text-xs font-bold tabular-nums mt-0.5">
-                          {btTotal > 0 ? `${btCompleted}/${btTotal}` : "—"}
-                        </p>
-                      </div>
-                      <div className={`p-2.5 rounded-lg border text-center transition-colors ${
-                        initStage === "optimise" ? "bg-emerald-500/10 border-emerald-500/30" :
-                        initStage === "complete" ? "bg-green-500/5 border-green-500/20" :
-                        "bg-muted/20 border-border/40"
-                      }`}>
-                        <Zap className={`w-4 h-4 mx-auto mb-1 ${
-                          initStage === "optimise" ? "text-emerald-400 animate-pulse" :
-                          initStage === "complete" ? "text-green-400" : "text-muted-foreground"
-                        }`} />
-                        <p className="text-[10px] font-medium">AI</p>
-                        <p className="text-xs font-bold tabular-nums mt-0.5">
-                          {initStage === "complete" ? "Done" : initStage === "optimise" ? "Running" : "—"}
-                        </p>
-                      </div>
-                      <div className={`p-2.5 rounded-lg border text-center transition-colors ${
-                        initStage === "complete" ? "bg-green-500/10 border-green-500/30" :
-                        "bg-muted/20 border-border/40"
-                      }`}>
-                        <CheckCircle2 className={`w-4 h-4 mx-auto mb-1 ${
-                          initStage === "complete" ? "text-green-400" : "text-muted-foreground"
-                        }`} />
-                        <p className="text-[10px] font-medium">Ready</p>
-                        <p className="text-xs font-bold tabular-nums mt-0.5">
-                          {initStage === "complete" ? "Yes" : "—"}
-                        </p>
-                      </div>
+                    <div className="grid grid-cols-6 gap-1.5">
+                      {([
+                        { key: "backfill", icon: Database, label: "Backfill", activeBg: "bg-blue-500/10 border-blue-500/30", activeIcon: "text-blue-400", value: candleTotal > 0 ? candleTotal.toLocaleString() : "—" },
+                        { key: "backtest", icon: BarChart3, label: "Replay", activeBg: "bg-purple-500/10 border-purple-500/30", activeIcon: "text-purple-400", value: btTotal > 0 ? `${btCompleted}/${btTotal}` : "—" },
+                        { key: "ai_review", icon: Brain, label: "Review", activeBg: "bg-amber-500/10 border-amber-500/30", activeIcon: "text-amber-400 animate-pulse", value: null },
+                        { key: "optimise", icon: Zap, label: "Optimise", activeBg: "bg-emerald-500/10 border-emerald-500/30", activeIcon: "text-emerald-400 animate-pulse", value: null },
+                        { key: "streaming", icon: Radio, label: "Stream", activeBg: "bg-cyan-500/10 border-cyan-500/30", activeIcon: "text-cyan-400", value: null },
+                        { key: "complete", icon: CheckCircle2, label: "Ready", activeBg: "bg-green-500/10 border-green-500/30", activeIcon: "text-green-400", value: null },
+                      ] as const).map((s) => {
+                        const stageOrder = ["backfill", "backtest", "ai_review", "optimise", "streaming", "complete"];
+                        const currentIdx = stageOrder.indexOf(initStage);
+                        const thisIdx = stageOrder.indexOf(s.key);
+                        const isDone = thisIdx < currentIdx || initStage === "complete";
+                        const isActive = s.key === initStage && initStage !== "complete";
+                        const Icon = s.icon;
+                        return (
+                          <div key={s.key} className={`p-2 rounded-lg border text-center transition-colors ${
+                            isActive ? s.activeBg :
+                            isDone ? "bg-green-500/5 border-green-500/20" :
+                            "bg-muted/20 border-border/40"
+                          }`}>
+                            <Icon className={`w-3.5 h-3.5 mx-auto mb-0.5 ${
+                              isActive ? s.activeIcon :
+                              isDone ? "text-green-400" : "text-muted-foreground"
+                            }`} />
+                            <p className="text-[9px] font-medium leading-tight">{s.label}</p>
+                            <p className="text-[10px] font-bold tabular-nums mt-0.5">
+                              {s.value ? s.value : isDone ? <CheckCircle2 className="w-3 h-3 text-green-400 mx-auto" /> : isActive ? <Loader2 className="w-3 h-3 animate-spin mx-auto" /> : "—"}
+                            </p>
+                          </div>
+                        );
+                      })}
                     </div>
 
                     {initStage === "backfill" && Object.keys(symbolProgress).length > 0 && (
@@ -633,6 +681,51 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                             </div>
                           );
                         })}
+                      </div>
+                    )}
+
+                    {initStage === "backtest" && Object.keys(btSymbolResults).length > 0 && (
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto rounded-lg border border-border/30 p-3">
+                        <p className="text-xs font-medium text-muted-foreground mb-2">Per-Symbol Backtest Results</p>
+                        {Object.entries(btSymbolResults).map(([sym, info]) => (
+                          <div key={sym} className="flex items-center gap-2 text-xs py-1 border-b border-border/10 last:border-0">
+                            <span className="w-20 font-medium truncate">{sym}</span>
+                            <span className="flex-1 text-muted-foreground truncate text-[10px]">{info.strategy.replace(/-/g, " ")}</span>
+                            {info.tradeCount > 0 && (
+                              <>
+                                <span className="text-[10px] tabular-nums text-muted-foreground">{info.tradeCount} combos</span>
+                                <span className="text-[10px] tabular-nums text-blue-400">WR {(info.winRate * 100).toFixed(0)}%</span>
+                                <span className="text-[10px] tabular-nums text-purple-400">PF {info.profitFactor.toFixed(2)}</span>
+                                <span className="text-[10px] tabular-nums text-muted-foreground">{info.avgHoldHours.toFixed(0)}h avg</span>
+                              </>
+                            )}
+                            {info.tradeCount === 0 && <BarChart3 className="w-3 h-3 text-purple-400 animate-pulse" />}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {(initStage === "ai_review" || initStage === "optimise" || initStage === "streaming" || initStage === "complete") && Object.keys(aiReviews).length > 0 && (
+                      <div className="space-y-2 max-h-64 overflow-y-auto rounded-lg border border-border/30 p-3">
+                        <p className="text-xs font-medium text-muted-foreground mb-2">AI Review Per Symbol</p>
+                        {Object.entries(aiReviews).map(([sym, review]) => (
+                          <div key={sym} className="p-2 rounded-md bg-muted/10 border border-border/20 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-medium">{sym}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {review.bestStrategy} — WR {(review.winRate * 100).toFixed(0)}% / PF {review.profitFactor.toFixed(2)}
+                              </span>
+                            </div>
+                            {review.summary && (
+                              <p className="text-[11px] text-muted-foreground leading-snug">{review.summary}</p>
+                            )}
+                            {review.suggestions && review.suggestions.length > 0 && (
+                              <ul className="text-[10px] text-muted-foreground/80 list-disc list-inside">
+                                {review.suggestions.map((s, i) => <li key={i}>{s}</li>)}
+                              </ul>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     )}
 

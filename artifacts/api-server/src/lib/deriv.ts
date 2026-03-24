@@ -6,17 +6,6 @@ import { recordTick, validateActiveSymbols, isSymbolValid, markSymbolError, mark
 
 const DERIV_WS_URL = "wss://ws.binaryws.com/websockets/v3?app_id=1089";
 
-export const SUPPORTED_SYMBOLS = [
-  "BOOM1000", "CRASH1000", "BOOM900", "CRASH900",
-  "BOOM600", "CRASH600", "BOOM500", "CRASH500",
-  "BOOM300", "CRASH300",
-  "R_10", "R_25", "R_50", "R_75", "R_100",
-  "RDBULL", "RDBEAR",
-  "JD10", "JD25", "JD50", "JD75", "JD100",
-  "stpRNG", "STP2", "STP3", "STP4", "STP5",
-  "RDBR100", "RDBR200",
-];
-
 export const V1_DEFAULT_SYMBOLS = [
   "BOOM1000", "CRASH1000", "BOOM900", "CRASH900",
   "BOOM600", "CRASH600", "BOOM500", "CRASH500",
@@ -959,7 +948,7 @@ async function getEnabledSymbols(): Promise<string[]> {
   try {
     const rows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, "enabled_symbols"));
     if (rows.length > 0 && rows[0].value) {
-      const symbols = rows[0].value.split(",").filter((s: string) => SUPPORTED_SYMBOLS.includes(s));
+      const symbols = rows[0].value.split(",").filter((s: string) => V1_DEFAULT_SYMBOLS.includes(s));
       if (symbols.length > 0) return symbols;
     }
   } catch {}

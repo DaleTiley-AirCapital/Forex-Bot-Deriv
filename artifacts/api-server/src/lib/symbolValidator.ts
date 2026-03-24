@@ -40,25 +40,8 @@ const SYMBOL_ALIASES: Record<string, string[]> = {
   "CRASH500": ["CRASH500", "1HZ500V", "CRASH500_"],
   "BOOM300": ["BOOM300", "BOOM300N", "1HZ300V"],
   "CRASH300": ["CRASH300", "CRASH300N", "1HZ300V"],
-  "R_10": ["R_10", "1HZ10V"],
-  "R_25": ["R_25", "1HZ25V"],
-  "R_50": ["R_50", "1HZ50V"],
   "R_75": ["R_75", "1HZ75V"],
   "R_100": ["R_100", "1HZ100V"],
-  "RDBULL": ["RDBULL", "RDBULLV"],
-  "RDBEAR": ["RDBEAR", "RDBEARV"],
-  "JD10": ["JD10", "JD_10"],
-  "JD25": ["JD25", "JD_25"],
-  "JD50": ["JD50", "JD_50"],
-  "JD75": ["JD75", "JD_75"],
-  "JD100": ["JD100", "JD_100"],
-  "stpRNG": ["stpRNG", "STPIDX", "STP100"],
-  "STP2": ["STP2", "STP200"],
-  "STP3": ["STP3", "STP300"],
-  "STP4": ["STP4", "STP400"],
-  "STP5": ["STP5", "STP500"],
-  "RDBR100": ["RDBR100", "RANGEBREAK100"],
-  "RDBR200": ["RDBR200", "RANGEBREAK200"],
 };
 
 const symbolHealthStore: Map<string, {
@@ -116,10 +99,6 @@ function classifyInstrumentFamily(symbol: string): string {
   if (symbol.startsWith("BOOM")) return "Boom/Crash";
   if (symbol.startsWith("CRASH")) return "Boom/Crash";
   if (symbol.startsWith("R_")) return "Volatility";
-  if (symbol.startsWith("RDBULL") || symbol.startsWith("RDBEAR")) return "Bull/Bear";
-  if (symbol.startsWith("JD")) return "Jump";
-  if (symbol.startsWith("stpRNG") || symbol.startsWith("STP")) return "Step";
-  if (symbol.startsWith("RDBR")) return "Range Break";
   return "Other";
 }
 

@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
 import { eq, and, inArray, count } from "drizzle-orm";
-import { db, candlesTable, backtestRunsTable, backtestTradesTable, platformStateTable } from "@workspace/db";
+import { db, candlesTable, backtestRunsTable, backtestTradesTable, platformStateTable, tradesTable, signalLogTable, ticksTable, spikeEventsTable, featuresTable, modelRunsTable } from "@workspace/db";
 import { getDerivClientWithDbToken, getDbApiToken, getDbApiTokenForMode, V1_DEFAULT_SYMBOLS } from "../lib/deriv.js";
-import { checkOpenAiHealth, isOpenAIConfigured } from "../lib/openai.js";
+import { checkOpenAiHealth, isOpenAIConfigured, analyseBacktest, type BacktestMetrics } from "../lib/openai.js";
 import { runBacktestSimulation } from "../lib/backtestEngine.js";
 import { getApiSymbol, validateActiveSymbols } from "../lib/symbolValidator.js";
 
@@ -166,7 +166,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     send({
       phase: "backfill_start",
       stage: "backfill",
-      message: `Step 1 of 4: Downloading ALL available 1m & 5m price history for ${V1_DEFAULT_SYMBOLS.length} symbols...`,
+      message: `Step 1 of 6: Downloading ALL available 1m & 5m price history for ${V1_DEFAULT_SYMBOLS.length} symbols...`,
       totalSymbols: V1_DEFAULT_SYMBOLS.length,
       symbols: V1_DEFAULT_SYMBOLS.map(s => ({ symbol: s, status: "waiting", candles: 0, oldestDate: null })),
     });
@@ -269,7 +269,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
             const estPagesPerTf = Math.max(page + 20, 100);
             const tfFrac = Math.min(page / estPagesPerTf, 0.95);
             const jobFrac = (jobsDone + tfFrac) / totalJobs;
-            const overallPct = Math.round(jobFrac * 50);
+            const overallPct = Math.round(jobFrac * 40);
             const symbolJobsDone = jobsDone - si * timeframes.length;
             const symbolPct = Math.round(((symbolJobsDone + tfFrac) / timeframes.length) * 100);
             send({
@@ -298,7 +298,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
         return;
       }
 
-      const overallPct = Math.round((jobsDone / totalJobs) * 50);
+      const overallPct = Math.round((jobsDone / totalJobs) * 40);
       send({
         phase: "backfill_symbol_done", stage: "backfill", symbol,
         symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
@@ -311,7 +311,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
 
     send({
       phase: "backfill_complete", stage: "backfill", candleTotal,
-      overallPct: 50,
+      overallPct: 40,
       message: `Step 1 complete — ${candleTotal.toLocaleString()} candles downloaded. Starting backtests...`,
     });
 
@@ -334,8 +334,8 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     const btTotal = combinations.length;
     send({
       phase: "backtest_start", stage: "backtest",
-      btTotal, overallPct: 50,
-      message: `Step 2 of 4: Running ${STRATEGIES.length} strategies × ${enabledSymbols.length} symbols — ${btTotal} backtests`,
+      btTotal, overallPct: 40,
+      message: `Step 2 of 6: Running ${STRATEGIES.length} strategies × ${enabledSymbols.length} symbols — ${btTotal} backtests`,
     });
 
     const strategyAgg: Record<string, {
@@ -404,7 +404,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
       const btElapsed = (Date.now() - btStart) / 1000;
       const btRate = btCompleted / btElapsed;
       const btRemaining = btRate > 0 ? Math.ceil((btTotal - btCompleted) / btRate) : 0;
-      const overallPct = 50 + Math.round((btCompleted / btTotal) * 45);
+      const overallPct = 40 + Math.round((btCompleted / btTotal) * 30);
 
       send({
         phase: "backtest_progress", stage: "backtest",
@@ -415,12 +415,99 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
       });
     }
 
+    for (const sym of enabledSymbols) {
+      const symCombos = comboResults.filter(c => c.symbol === sym);
+      if (symCombos.length === 0) continue;
+      const bestCombo = [...symCombos].sort((a, b) => b.score - a.score)[0];
+      const avgWinRate = symCombos.reduce((s, c) => s + c.winRate, 0) / symCombos.length;
+      const avgPf = symCombos.reduce((s, c) => s + c.profitFactor, 0) / symCombos.length;
+      const avgHold = symCombos.reduce((s, c) => s + c.avgHold, 0) / symCombos.length;
+      send({
+        phase: "backtest_symbol_summary", stage: "backtest",
+        symbol: sym,
+        tradeCount: symCombos.length,
+        bestStrategy: bestCombo.strategy,
+        bestScore: bestCombo.score,
+        avgWinRate, avgProfitFactor: avgPf, avgHoldHours: avgHold,
+        message: `${sym}: ${symCombos.length} combos, best=${bestCombo.strategy} (WR=${(bestCombo.winRate * 100).toFixed(0)}%, PF=${bestCombo.profitFactor.toFixed(2)})`,
+      });
+    }
+
     send({
-      phase: "optimising", stage: "optimise", overallPct: 95,
-      message: "Step 3 of 4: AI analysing backtest results & optimising parameters...",
+      phase: "ai_review_start", stage: "ai_review", overallPct: 70,
+      message: `Step 3 of 6: AI reviewing backtest results per symbol...`,
     });
 
     const sortedCombos = [...comboResults].sort((a, b) => b.score - a.score);
+
+    const aiAvailable = await isOpenAIConfigured();
+    const symbolReviews: Record<string, { bestStrategy: string; bestScore: number; winRate: number; profitFactor: number; aiSummary?: string; aiSuggestions?: string[] }> = {};
+    for (let si = 0; si < enabledSymbols.length; si++) {
+      const sym = enabledSymbols[si];
+      const symCombos = comboResults.filter(c => c.symbol === sym).sort((a, b) => b.score - a.score);
+      const best = symCombos[0];
+      const review: typeof symbolReviews[string] = best
+        ? { bestStrategy: best.strategy, bestScore: best.score, winRate: best.winRate, profitFactor: best.profitFactor }
+        : { bestStrategy: "none", bestScore: 0, winRate: 0, profitFactor: 0 };
+
+      if (aiAvailable && best) {
+        try {
+          const btRows = await db.select().from(backtestRunsTable)
+            .where(and(eq(backtestRunsTable.symbol, sym), eq(backtestRunsTable.strategyName, best.strategy), eq(backtestRunsTable.status, "completed")));
+          const btRow = btRows[0];
+          if (btRow) {
+            const metrics: BacktestMetrics = {
+              id: btRow.id,
+              strategyName: btRow.strategyName,
+              symbol: btRow.symbol,
+              initialCapital: btRow.initialCapital,
+              totalReturn: btRow.totalReturn ?? 0,
+              netProfit: btRow.netProfit ?? 0,
+              winRate: btRow.winRate ?? 0,
+              profitFactor: btRow.profitFactor ?? 0,
+              maxDrawdown: btRow.maxDrawdown ?? 0,
+              tradeCount: btRow.tradeCount ?? 0,
+              avgHoldingHours: btRow.avgHoldingHours ?? 0,
+              expectancy: btRow.expectancy ?? 0,
+              sharpeRatio: btRow.sharpeRatio ?? 0,
+            };
+            const analysis = await analyseBacktest(metrics);
+            review.aiSummary = analysis.summary;
+            review.aiSuggestions = analysis.suggestions;
+          }
+        } catch (aiErr) {
+          console.warn(`[Setup] AI review failed for ${sym}:`, aiErr instanceof Error ? aiErr.message : aiErr);
+          review.aiSummary = "AI review unavailable";
+        }
+      }
+
+      symbolReviews[sym] = review;
+
+      send({
+        phase: "ai_review_symbol", stage: "ai_review",
+        symbol: sym, symbolIndex: si, totalSymbols: enabledSymbols.length,
+        overallPct: 70 + Math.round(((si + 1) / enabledSymbols.length) * 10),
+        bestStrategy: review.bestStrategy,
+        bestScore: review.bestScore,
+        winRate: review.winRate,
+        profitFactor: review.profitFactor,
+        aiSummary: review.aiSummary || null,
+        aiSuggestions: review.aiSuggestions || null,
+        message: review.aiSummary
+          ? `AI Review ${sym}: ${review.aiSummary.slice(0, 120)}`
+          : `Reviewed ${sym}: best=${review.bestStrategy} (score=${review.bestScore.toFixed(2)}, WR=${(review.winRate * 100).toFixed(1)}%)`,
+      });
+    }
+
+    send({
+      phase: "ai_review_complete", stage: "ai_review", overallPct: 80,
+      message: `Step 3 complete — ${enabledSymbols.length} symbols reviewed${aiAvailable ? " with AI analysis" : ""}.`,
+    });
+
+    send({
+      phase: "optimising", stage: "optimise", overallPct: 80,
+      message: "Step 4 of 6: Computing AI-optimised trading parameters...",
+    });
     const topCombos = sortedCombos.slice(0, Math.min(6, sortedCombos.length));
     const realStrategies = [...new Set(topCombos.map(c => c.strategy))];
     const realSymbols = [...new Set(topCombos.map(c => c.symbol))];
@@ -485,8 +572,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
       ai_time_exit_window_hours: String(optHold),
       ai_settings_locked: "true",
       ai_optimised_at: new Date().toISOString(),
-      initial_setup_complete: "true",
-      initial_setup_at: new Date().toISOString(),
+      enabled_symbols: allSymbols,
       streaming: "false",
       mode: "idle",
       paper_mode_active: "false",
@@ -513,6 +599,16 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
         .onConflictDoUpdate({ target: platformStateTable.key, set: { value, updatedAt: new Date() } });
     }
 
+    send({
+      phase: "optimise_complete", stage: "optimise", overallPct: 88,
+      message: "Step 4 complete — AI-optimised settings saved.",
+    });
+
+    send({
+      phase: "streaming_start", stage: "streaming", overallPct: 90,
+      message: "Step 5 of 6: Starting live data stream...",
+    });
+
     try {
       const streamClient = await getDerivClientWithDbToken();
       await streamClient.startStreaming(V1_DEFAULT_SYMBOLS);
@@ -520,14 +616,32 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
         .onConflictDoUpdate({ target: platformStateTable.key, set: { value: "true", updatedAt: new Date() } });
       console.log(`[Setup] Streaming started for ${V1_DEFAULT_SYMBOLS.length} symbols after setup complete`);
     } catch (streamErr) {
-      console.warn("[Setup] Could not auto-start streaming after setup:", streamErr instanceof Error ? streamErr.message : streamErr);
+      const errMsg = streamErr instanceof Error ? streamErr.message : String(streamErr);
+      console.error("[Setup] Streaming failed:", errMsg);
+      send({ phase: "error", stage: "streaming", message: `Streaming failed: ${errMsg}. Setup incomplete — please try again.` });
+      res.end();
+      return;
     }
+
+    const setupCompleteEntries: Record<string, string> = {
+      initial_setup_complete: "true",
+      initial_setup_at: new Date().toISOString(),
+    };
+    for (const [key, value] of Object.entries(setupCompleteEntries)) {
+      await db.insert(platformStateTable).values({ key, value })
+        .onConflictDoUpdate({ target: platformStateTable.key, set: { value, updatedAt: new Date() } });
+    }
+
+    send({
+      phase: "streaming_complete", stage: "streaming", overallPct: 95,
+      message: `Step 5 complete — streaming ${V1_DEFAULT_SYMBOLS.length} symbols.`,
+    });
 
     const totalSec = Math.round((Date.now() - globalStart) / 1000);
     send({
       phase: "complete", stage: "complete", overallPct: 100,
       candleTotal, btCompleted, btTotal,
-      message: `Step 4 of 4: Complete — ${candleTotal.toLocaleString()} candles, ${btCompleted} backtests, settings optimised (${totalSec}s)`,
+      message: `Step 6 of 6: Complete — ${candleTotal.toLocaleString()} candles, ${btCompleted} backtests, settings optimised, streaming live (${totalSec}s)`,
     });
 
     res.write("data: [DONE]\n\n");
@@ -551,11 +665,14 @@ router.post("/setup/reset", async (_req, res): Promise<void> => {
 
     await db.delete(backtestTradesTable);
     await db.delete(backtestRunsTable);
-    await db.delete(candlesTable);
-    await db.delete(platformStateTable);
-
-    const { tradesTable } = await import("@workspace/db");
     await db.delete(tradesTable);
+    await db.delete(signalLogTable);
+    await db.delete(featuresTable);
+    await db.delete(modelRunsTable);
+    await db.delete(spikeEventsTable);
+    await db.delete(candlesTable);
+    await db.delete(ticksTable);
+    await db.delete(platformStateTable);
 
     for (const [key, value] of Object.entries(savedKeys)) {
       await db.insert(platformStateTable).values({ key, value });

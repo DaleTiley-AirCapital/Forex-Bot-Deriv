@@ -125,12 +125,9 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
     const finalDecisions: AllocationDecision[] = [];
 
     for (const decision of decisions) {
-      if (isIntelOnly) {
-        decision.allowed = false;
-        decision.rejectionReason = "No execution mode active — intelligence only";
-      }
+      const compositeScore = decision.signal.compositeScore ?? 0;
 
-      if (decision.allowed && aiEnabled) {
+      if (aiEnabled && compositeScore >= 75) {
         try {
           const feats = await computeFeatures(decision.signal.symbol);
 
@@ -197,6 +194,12 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
           decision.aiReasoning = `Verification failed: ${err instanceof Error ? err.message : "unknown error"}`;
         }
       }
+
+      if (isIntelOnly) {
+        decision.allowed = false;
+        decision.rejectionReason = "No execution mode active — intelligence only";
+      }
+
       const sig = decision.signal;
       const composite = sig.compositeScore ?? 0;
       const modeTag = isIntelOnly ? "intel" : mode;

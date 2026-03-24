@@ -159,7 +159,7 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
     timeExitWindowHours: parseFloat(stateMap[`${prefix}_time_exit_window_hours`] || stateMap["time_exit_window_hours"] || "72"),
     minCompositeScore: parseFloat(stateMap["min_composite_score"] || "80"),
     minEvThreshold: parseFloat(stateMap["min_ev_threshold"] || "0.003"),
-    minRrRatio: parseFloat(stateMap["min_rr_ratio"] || "1.5"),
+    minRrRatio: parseFloat(stateMap["min_rr_ratio"] || "3.0"),
     correlatedFamilyCap,
     openTrades: openTrades.map(t => ({
       symbol: t.symbol,
@@ -331,7 +331,11 @@ export async function routeSignals(candidates: SignalCandidate[], tradingMode: T
     }
 
     if (allowed) {
-      const { pct, tier } = getAllocationPctByScore(signal.compositeScore, ctx.equityPctPerTrade);
+      const allocationMultiplier = ctx.allocationMode === "conservative" ? 0.7
+        : ctx.allocationMode === "aggressive" ? 1.3
+        : 1.0;
+      const adjustedEquityPct = ctx.equityPctPerTrade * allocationMultiplier;
+      const { pct, tier } = getAllocationPctByScore(signal.compositeScore, adjustedEquityPct);
       if (tier === "reject") {
         allowed = false;
         rejectionReason = `Score ${signal.compositeScore} below 80 allocation threshold`;

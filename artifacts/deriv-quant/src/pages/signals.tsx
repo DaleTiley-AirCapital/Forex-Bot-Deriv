@@ -3,7 +3,8 @@ import { useGetLatestSignals } from "@workspace/api-client-react";
 import type { ScoringDimensions, GetLatestSignalsParams } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, Badge } from "@/components/ui-elements";
 import { formatNumber, cn } from "@/lib/utils";
-import { ClipboardList, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, ChevronUp, Filter, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { ClipboardList, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, ChevronUp, Filter, X, ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { downloadCSV, downloadJSON } from "@/lib/export";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FAMILIES = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event"] as const;
@@ -198,6 +199,8 @@ export default function Signals() {
   const [familyFilter, setFamilyFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [aiFilter, setAiFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(0);
 
   const params: GetLatestSignalsParams = useMemo(() => {
@@ -215,7 +218,36 @@ export default function Signals() {
   const total = data?.total ?? 0;
   const visThreshold = data?.visibilityThreshold ?? 70;
   const totalPages = Math.ceil(total / PAGE_SIZE);
-  const hasFilters = symbolFilter || familyFilter || statusFilter || aiFilter;
+  const hasFilters = symbolFilter || familyFilter || statusFilter || aiFilter || dateFrom || dateTo;
+
+  const dateFilteredSignals = useMemo(() => {
+    if (!dateFrom && !dateTo) return signals;
+    return signals.filter(sig => {
+      const d = new Date(sig.ts);
+      if (dateFrom && d < new Date(dateFrom)) return false;
+      if (dateTo) {
+        const end = new Date(dateTo);
+        end.setDate(end.getDate() + 1);
+        if (d >= end) return false;
+      }
+      return true;
+    });
+  }, [signals, dateFrom, dateTo]);
+
+  function exportSignalsCSV() {
+    downloadCSV(dateFilteredSignals.map(s => ({
+      time: new Date(s.ts).toISOString(), symbol: s.symbol, family: s.strategyFamily,
+      strategy: s.strategyName, direction: s.direction, compositeScore: s.compositeScore,
+      score: s.score, expectedValue: s.expectedValue, regime: s.regime,
+      regimeConfidence: s.regimeConfidence, allocationPct: s.allocationPct,
+      status: s.allowedFlag ? "approved" : "blocked", rejectionReason: s.rejectionReason,
+      aiVerdict: s.aiVerdict, aiReasoning: s.aiReasoning,
+    })), "signals_log");
+  }
+
+  function exportSignalsJSON() {
+    downloadJSON(dateFilteredSignals, "signals_log");
+  }
 
   const symbols = useMemo(() => {
     const s = new Set<string>();
@@ -228,6 +260,8 @@ export default function Signals() {
     setFamilyFilter("");
     setStatusFilter("");
     setAiFilter("");
+    setDateFrom("");
+    setDateTo("");
     setPage(0);
   }
 
@@ -253,6 +287,11 @@ export default function Signals() {
             <FilterSelect value={statusFilter} onChange={v => { setStatusFilter(v); setPage(0); }} options={STATUSES} placeholder="Status" />
             <FilterSelect value={aiFilter} onChange={v => { setAiFilter(v); setPage(0); }} options={AI_VERDICTS} placeholder="AI" />
 
+            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(0); }}
+              className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground focus:border-primary/50 focus:outline-none" />
+            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(0); }}
+              className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground focus:border-primary/50 focus:outline-none" />
+
             {hasFilters && (
               <button
                 onClick={clearFilters}
@@ -272,6 +311,12 @@ export default function Signals() {
             Decision Log
           </CardTitle>
           <div className="flex items-center gap-3">
+            <button onClick={exportSignalsCSV} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
+              <Download className="w-3 h-3" /> CSV
+            </button>
+            <button onClick={exportSignalsJSON} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
+              <Download className="w-3 h-3" /> JSON
+            </button>
             {totalPages > 1 && (
               <div className="flex items-center gap-1">
                 <button

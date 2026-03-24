@@ -11,8 +11,9 @@ import {
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, Badge, Button } from "@/components/ui-elements";
 import { formatCurrency, formatNumber, cn } from "@/lib/utils";
+import { downloadCSV, downloadJSON } from "@/lib/export";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, ArrowDownRight, Clock, Target, ShieldAlert, TrendingUp, Filter, Square } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Clock, Target, ShieldAlert, TrendingUp, Filter, Square, Download, X } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 function formatHours(hours: number): string {
@@ -23,16 +24,38 @@ function formatHours(hours: number): string {
   return `${h}h`;
 }
 
-const MODE_COLORS: Record<string, string> = {
-  paper: "warning",
-  demo: "primary",
-  real: "destructive",
-};
+const SYMBOLS = ["BOOM1000","BOOM900","BOOM600","BOOM500","BOOM300","CRASH1000","CRASH900","CRASH600","CRASH500","CRASH300","R_75","R_100"];
+const SIDES = ["buy","sell"];
+const STRATEGIES = ["trend_continuation","mean_reversion","breakout_expansion","spike_event"];
+
+function FilterSelect({ value, onChange, options, placeholder }: {
+  value: string;
+  onChange: (v: string) => void;
+  options: readonly string[] | string[];
+  placeholder: string;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="bg-card border border-border/50 rounded-md px-2.5 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none"
+    >
+      <option value="">{placeholder}</option>
+      {options.map(opt => (
+        <option key={opt} value={opt}>{opt}</option>
+      ))}
+    </select>
+  );
+}
 
 export default function Trades() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'positions' | 'history'>('positions');
   const [modeFilter, setModeFilter] = useState<string>("paper");
+  const [symbolFilter, setSymbolFilter] = useState("");
+  const [sideFilter, setSideFilter] = useState("");
+  const [strategyFilter, setStrategyFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   
   const { data: status } = useGetDataStatus({ query: { refetchInterval: 3000 } });
   const { data: positions } = useGetLivePositions({ query: { refetchInterval: 2000 } });
@@ -51,15 +74,37 @@ export default function Trades() {
 
   const isTrading = status?.mode === 'paper' || status?.mode === 'live' || status?.mode === 'demo' || status?.mode === 'real' || status?.mode === 'multi';
 
+  const hasGridFilters = symbolFilter || sideFilter || strategyFilter || dateFrom || dateTo;
+
+  function applyGridFilters<T extends { symbol: string; side: string; strategyName?: string; entryTs: string | Date; mode?: string }>(items: T[]): T[] {
+    return items.filter(t => {
+      if (t.mode !== modeFilter) return false;
+      if (symbolFilter && t.symbol !== symbolFilter) return false;
+      if (sideFilter && t.side !== sideFilter) return false;
+      if (strategyFilter && t.strategyName !== strategyFilter) return false;
+      if (dateFrom) {
+        const d = new Date(t.entryTs);
+        if (d < new Date(dateFrom)) return false;
+      }
+      if (dateTo) {
+        const d = new Date(t.entryTs);
+        const end = new Date(dateTo);
+        end.setDate(end.getDate() + 1);
+        if (d >= end) return false;
+      }
+      return true;
+    });
+  }
+
   const filteredOpen = useMemo(() => {
     if (!openTrades) return [];
-    return openTrades.filter(t => t.mode === modeFilter);
-  }, [openTrades, modeFilter]);
+    return applyGridFilters(openTrades as any[]);
+  }, [openTrades, modeFilter, symbolFilter, sideFilter, strategyFilter, dateFrom, dateTo]);
 
   const filteredHistory = useMemo(() => {
     if (!historyTrades) return [];
-    return historyTrades.filter(t => t.mode === modeFilter);
-  }, [historyTrades, modeFilter]);
+    return applyGridFilters(historyTrades as any[]);
+  }, [historyTrades, modeFilter, symbolFilter, sideFilter, strategyFilter, dateFrom, dateTo]);
 
   const filteredPositions = useMemo(() => {
     if (!positions) return [];
@@ -76,6 +121,54 @@ export default function Trades() {
   }, [filteredHistory]);
 
   const totalFloatingPnl = filteredPositions.reduce((sum, p) => sum + p.floatingPnl, 0);
+
+  function clearGridFilters() {
+    setSymbolFilter("");
+    setSideFilter("");
+    setStrategyFilter("");
+    setDateFrom("");
+    setDateTo("");
+  }
+
+  function exportOpenCSV() {
+    downloadCSV(filteredOpen.map(t => ({
+      id: t.id, time: new Date(t.entryTs).toISOString(), symbol: t.symbol, side: t.side,
+      strategy: t.strategyName, size: t.size, entryPrice: t.entryPrice, sl: t.sl, tp: t.tp, pnl: t.pnl, mode: t.mode,
+    })), `open_trades_${modeFilter}`);
+  }
+
+  function exportHistoryCSV() {
+    downloadCSV(filteredHistory.map(t => ({
+      id: t.id, entryTime: new Date(t.entryTs).toISOString(), exitTime: t.exitTs ? new Date(t.exitTs).toISOString() : "",
+      symbol: t.symbol, side: t.side, strategy: t.strategyName, size: t.size,
+      entryPrice: t.entryPrice, exitPrice: t.exitPrice, sl: t.sl, tp: t.tp, pnl: t.pnl, mode: t.mode,
+    })), `trade_history_${modeFilter}`);
+  }
+
+  function exportHistoryJSON() {
+    downloadJSON(filteredHistory, `trade_history_${modeFilter}`);
+  }
+
+  const filterBar = (
+    <div className="flex flex-wrap items-center gap-2 p-3 border-b border-border/30">
+      <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+      <FilterSelect value={symbolFilter} onChange={setSymbolFilter} options={SYMBOLS} placeholder="Symbol" />
+      <FilterSelect value={sideFilter} onChange={setSideFilter} options={SIDES} placeholder="Side" />
+      <FilterSelect value={strategyFilter} onChange={setStrategyFilter} options={STRATEGIES} placeholder="Strategy" />
+      <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+        className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground focus:border-primary/50 focus:outline-none"
+        placeholder="From" />
+      <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+        className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground focus:border-primary/50 focus:outline-none"
+        placeholder="To" />
+      {hasGridFilters && (
+        <button onClick={clearGridFilters}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground transition-colors">
+          <X className="w-3 h-3" /> Clear
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
@@ -210,23 +303,17 @@ export default function Trades() {
       </Card>
 
       <Card>
-        <div className="flex border-b border-border/50">
-          {(['positions', 'history'] as const).map(t => (
-            <button
-              key={t}
-              className={cn(
-                "px-5 py-3 text-sm font-medium tracking-wide transition-colors capitalize",
-                tab === t
-                  ? "text-primary border-b-2 border-primary bg-primary/5"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-              onClick={() => setTab(t)}
-            >
-              {t === 'positions' ? `Open Positions (${openTrades?.length || 0})` : 'Trade History'}
+        <CardHeader>
+          <CardTitle>
+            Open Positions ({filteredOpen.length})
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <button onClick={exportOpenCSV} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
+              <Download className="w-3 h-3" /> CSV
             </button>
-          ))}
-        </div>
-        
+          </div>
+        </CardHeader>
+        {filterBar}
         <div className="overflow-x-auto">
           <table>
             <thead>
@@ -234,10 +321,10 @@ export default function Trades() {
                 <th>ID</th>
                 <th>Time</th>
                 <th>Symbol</th>
+                <th>Strategy</th>
                 <th>Side</th>
                 <th className="text-right">Size</th>
                 <th className="text-right">Entry</th>
-                {tab === 'history' && <th className="text-right">Exit</th>}
                 <th className="text-right">SL</th>
                 <th className="text-right">TP</th>
                 <th className="text-right">P&L</th>
@@ -245,64 +332,103 @@ export default function Trades() {
               </tr>
             </thead>
             <tbody>
-              {tab === 'positions' ? (
-                openLoading
-                  ? <tr><td colSpan={10} className="text-center py-10 text-muted-foreground">Loading…</td></tr>
-                  : !filteredOpen.length
-                  ? <tr><td colSpan={10} className="text-center py-10 text-muted-foreground">No open trades{modeFilter !== "all" ? ` in ${modeFilter} mode` : ""}.</td></tr>
-                  : filteredOpen.map(t => (
-                    <tr key={t.id}>
-                      <td className="mono-num text-muted-foreground">#{t.id}</td>
-                      <td className="mono-num text-xs">{new Date(t.entryTs).toLocaleTimeString()}</td>
-                      <td className="font-semibold text-foreground">{t.symbol}</td>
-                      <td>
-                        <Badge variant={t.side === 'buy' ? 'success' : 'destructive'}>
-                          {t.side === 'buy' ? <ArrowUpRight className="w-3 h-3"/> : <ArrowDownRight className="w-3 h-3"/>}
-                          {t.side}
-                        </Badge>
-                      </td>
-                      <td className="text-right mono-num">{formatNumber(t.size, 2)}</td>
-                      <td className="text-right mono-num">{formatNumber(t.entryPrice, 3)}</td>
-                      <td className="text-right mono-num text-destructive">{formatNumber(t.sl, 4)}</td>
-                      <td className="text-right mono-num text-success">{formatNumber(t.tp, 4)}</td>
-                      <td className="text-right mono-num">
-                        <span className={cn(t.pnl && t.pnl > 0 ? "text-success" : t.pnl && t.pnl < 0 ? "text-destructive" : "")}>
-                          {formatCurrency(t.pnl)}
-                        </span>
-                      </td>
-                      <td><Badge variant="outline">{t.mode}</Badge></td>
-                    </tr>
-                  ))
-              ) : (
-                historyLoading
-                  ? <tr><td colSpan={11} className="text-center py-10 text-muted-foreground">Loading…</td></tr>
-                  : !filteredHistory.length
-                  ? <tr><td colSpan={11} className="text-center py-10 text-muted-foreground">No trade history{modeFilter !== "all" ? ` in ${modeFilter} mode` : ""}.</td></tr>
-                  : filteredHistory.map(t => (
-                    <tr key={t.id}>
-                      <td className="mono-num text-muted-foreground">#{t.id}</td>
-                      <td className="mono-num text-xs">{new Date(t.entryTs).toLocaleDateString()} {new Date(t.entryTs).toLocaleTimeString()}</td>
-                      <td className="font-semibold text-foreground">{t.symbol}</td>
-                      <td>
-                        <Badge variant={t.side === 'buy' ? 'success' : 'destructive'}>
-                          {t.side === 'buy' ? <ArrowUpRight className="w-3 h-3"/> : <ArrowDownRight className="w-3 h-3"/>}
-                          {t.side}
-                        </Badge>
-                      </td>
-                      <td className="text-right mono-num">{formatNumber(t.size, 2)}</td>
-                      <td className="text-right mono-num text-muted-foreground">{formatNumber(t.entryPrice, 3)}</td>
-                      <td className="text-right mono-num">{formatNumber(t.exitPrice, 3)}</td>
-                      <td className="text-right mono-num text-destructive">{formatNumber(t.sl, 4)}</td>
-                      <td className="text-right mono-num text-success">{formatNumber(t.tp, 4)}</td>
-                      <td className="text-right mono-num">
-                        <span className={cn(t.pnl && t.pnl > 0 ? "text-success" : t.pnl && t.pnl < 0 ? "text-destructive" : "")}>
-                          {formatCurrency(t.pnl)}
-                        </span>
-                      </td>
-                      <td><Badge variant="outline">{t.mode}</Badge></td>
-                    </tr>
-                  ))
-              )}
+              {openLoading
+                ? <tr><td colSpan={11} className="text-center py-10 text-muted-foreground">Loading…</td></tr>
+                : !filteredOpen.length
+                ? <tr><td colSpan={11} className="text-center py-10 text-muted-foreground">No open trades{modeFilter !== "all" ? ` in ${modeFilter} mode` : ""}.</td></tr>
+                : filteredOpen.map(t => (
+                  <tr key={t.id}>
+                    <td className="mono-num text-muted-foreground">#{t.id}</td>
+                    <td className="mono-num text-xs">{new Date(t.entryTs).toLocaleTimeString()}</td>
+                    <td className="font-semibold text-foreground">{t.symbol}</td>
+                    <td className="text-xs text-muted-foreground">{t.strategyName}</td>
+                    <td>
+                      <Badge variant={t.side === 'buy' ? 'success' : 'destructive'}>
+                        {t.side === 'buy' ? <ArrowUpRight className="w-3 h-3"/> : <ArrowDownRight className="w-3 h-3"/>}
+                        {t.side}
+                      </Badge>
+                    </td>
+                    <td className="text-right mono-num">{formatNumber(t.size, 2)}</td>
+                    <td className="text-right mono-num">{formatNumber(t.entryPrice, 3)}</td>
+                    <td className="text-right mono-num text-destructive">{formatNumber(t.sl, 4)}</td>
+                    <td className="text-right mono-num text-success">{formatNumber(t.tp, 4)}</td>
+                    <td className="text-right mono-num">
+                      <span className={cn(t.pnl && t.pnl > 0 ? "text-success" : t.pnl && t.pnl < 0 ? "text-destructive" : "")}>
+                        {formatCurrency(t.pnl)}
+                      </span>
+                    </td>
+                    <td><Badge variant="outline">{t.mode}</Badge></td>
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Trade History ({filteredHistory.length})
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <button onClick={exportHistoryCSV} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
+              <Download className="w-3 h-3" /> CSV
+            </button>
+            <button onClick={exportHistoryJSON} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
+              <Download className="w-3 h-3" /> JSON
+            </button>
+          </div>
+        </CardHeader>
+        <div className="overflow-x-auto">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Time</th>
+                <th>Symbol</th>
+                <th>Strategy</th>
+                <th>Side</th>
+                <th className="text-right">Size</th>
+                <th className="text-right">Entry</th>
+                <th className="text-right">Exit</th>
+                <th className="text-right">SL</th>
+                <th className="text-right">TP</th>
+                <th className="text-right">P&L</th>
+                <th>Mode</th>
+              </tr>
+            </thead>
+            <tbody>
+              {historyLoading
+                ? <tr><td colSpan={12} className="text-center py-10 text-muted-foreground">Loading…</td></tr>
+                : !filteredHistory.length
+                ? <tr><td colSpan={12} className="text-center py-10 text-muted-foreground">No trade history{modeFilter !== "all" ? ` in ${modeFilter} mode` : ""}.</td></tr>
+                : filteredHistory.map(t => (
+                  <tr key={t.id}>
+                    <td className="mono-num text-muted-foreground">#{t.id}</td>
+                    <td className="mono-num text-xs">{new Date(t.entryTs).toLocaleDateString()} {new Date(t.entryTs).toLocaleTimeString()}</td>
+                    <td className="font-semibold text-foreground">{t.symbol}</td>
+                    <td className="text-xs text-muted-foreground">{t.strategyName}</td>
+                    <td>
+                      <Badge variant={t.side === 'buy' ? 'success' : 'destructive'}>
+                        {t.side === 'buy' ? <ArrowUpRight className="w-3 h-3"/> : <ArrowDownRight className="w-3 h-3"/>}
+                        {t.side}
+                      </Badge>
+                    </td>
+                    <td className="text-right mono-num">{formatNumber(t.size, 2)}</td>
+                    <td className="text-right mono-num text-muted-foreground">{formatNumber(t.entryPrice, 3)}</td>
+                    <td className="text-right mono-num">{formatNumber(t.exitPrice, 3)}</td>
+                    <td className="text-right mono-num text-destructive">{formatNumber(t.sl, 4)}</td>
+                    <td className="text-right mono-num text-success">{formatNumber(t.tp, 4)}</td>
+                    <td className="text-right mono-num">
+                      <span className={cn(t.pnl && t.pnl > 0 ? "text-success" : t.pnl && t.pnl < 0 ? "text-destructive" : "")}>
+                        {formatCurrency(t.pnl)}
+                      </span>
+                    </td>
+                    <td><Badge variant="outline">{t.mode}</Badge></td>
+                  </tr>
+                ))
+              }
             </tbody>
           </table>
         </div>

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   useGetBacktestResults,
   useRunBacktest,
@@ -10,7 +10,8 @@ import {
 import type { BacktestAnalysis, BacktestRun, BacktestTrade, OhlcCandle } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge, Input, Label, Select } from "@/components/ui-elements";
 import { formatCurrency, formatNumber, formatPercent, cn } from "@/lib/utils";
-import { Play, Search, Beaker, Brain, Lightbulb, X, CheckCircle2, ChevronRight, ChevronLeft, BarChart2, TrendingUp, List } from "lucide-react";
+import { Play, Search, Beaker, Brain, Lightbulb, X, CheckCircle2, ChevronRight, ChevronLeft, BarChart2, TrendingUp, List, Download, Filter } from "lucide-react";
+import { downloadCSV, downloadJSON } from "@/lib/export";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -629,9 +630,51 @@ const PAGE_SIZE = 40;
 export default function Research() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(0);
+  const [strategyResultFilter, setStrategyResultFilter] = useState("");
+  const [symbolResultFilter, setSymbolResultFilter] = useState("");
+  const [dateFromFilter, setDateFromFilter] = useState("");
+  const [dateToFilter, setDateToFilter] = useState("");
   const { data: paginatedData, isLoading } = useGetBacktestResults({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
-  const results = paginatedData?.data;
+  const rawResults = paginatedData?.data;
   const totalResults = paginatedData?.total ?? 0;
+  const hasResultFilters = strategyResultFilter || symbolResultFilter || dateFromFilter || dateToFilter;
+
+  const results = useMemo(() => {
+    if (!rawResults) return undefined;
+    return rawResults.filter(r => {
+      if (strategyResultFilter && r.strategyName !== strategyResultFilter) return false;
+      if (symbolResultFilter && r.symbol !== symbolResultFilter) return false;
+      if (dateFromFilter && new Date(r.createdAt) < new Date(dateFromFilter)) return false;
+      if (dateToFilter) {
+        const end = new Date(dateToFilter);
+        end.setDate(end.getDate() + 1);
+        if (new Date(r.createdAt) >= end) return false;
+      }
+      return true;
+    });
+  }, [rawResults, strategyResultFilter, symbolResultFilter, dateFromFilter, dateToFilter]);
+
+  function clearResultFilters() {
+    setStrategyResultFilter("");
+    setSymbolResultFilter("");
+    setDateFromFilter("");
+    setDateToFilter("");
+    setPage(0);
+  }
+
+  function exportResultsCSV() {
+    if (!results) return;
+    downloadCSV(results.map(r => ({
+      id: r.id, strategy: r.strategyName, symbol: r.symbol,
+      netProfit: r.netProfit, winRate: r.winRate, maxDrawdown: r.maxDrawdown,
+      status: r.status, date: new Date(r.createdAt).toISOString(),
+    })), "backtest_results");
+  }
+
+  function exportResultsJSON() {
+    if (!results) return;
+    downloadJSON(results, "backtest_results");
+  }
   const totalPages = Math.max(1, Math.ceil(totalResults / PAGE_SIZE));
 
   const { mutate: runBacktest, isPending } = useRunBacktest({
@@ -761,7 +804,52 @@ export default function Research() {
                 <Search className="w-4 h-4" />
                 Recent Results
               </CardTitle>
+              <div className="flex items-center gap-2">
+                <button onClick={exportResultsCSV} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
+                  <Download className="w-3 h-3" /> CSV
+                </button>
+                <button onClick={exportResultsJSON} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
+                  <Download className="w-3 h-3" /> JSON
+                </button>
+              </div>
             </CardHeader>
+            <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+              <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <select value={strategyResultFilter} onChange={e => { setStrategyResultFilter(e.target.value); setPage(0); }}
+                className="bg-card border border-border/50 rounded-md px-2.5 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none">
+                <option value="">Strategy</option>
+                <option value="trend_continuation">Trend Continuation</option>
+                <option value="mean_reversion">Mean Reversion</option>
+                <option value="breakout_expansion">Breakout / Expansion</option>
+                <option value="spike_event">Spike / Event</option>
+              </select>
+              <select value={symbolResultFilter} onChange={e => { setSymbolResultFilter(e.target.value); setPage(0); }}
+                className="bg-card border border-border/50 rounded-md px-2.5 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none">
+                <option value="">Symbol</option>
+                <option value="BOOM1000">BOOM1000</option>
+                <option value="BOOM900">BOOM900</option>
+                <option value="BOOM600">BOOM600</option>
+                <option value="BOOM500">BOOM500</option>
+                <option value="BOOM300">BOOM300</option>
+                <option value="CRASH1000">CRASH1000</option>
+                <option value="CRASH900">CRASH900</option>
+                <option value="CRASH600">CRASH600</option>
+                <option value="CRASH500">CRASH500</option>
+                <option value="CRASH300">CRASH300</option>
+                <option value="R_75">R_75</option>
+                <option value="R_100">R_100</option>
+              </select>
+              <input type="date" value={dateFromFilter} onChange={e => { setDateFromFilter(e.target.value); setPage(0); }}
+                className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground focus:border-primary/50 focus:outline-none" />
+              <input type="date" value={dateToFilter} onChange={e => { setDateToFilter(e.target.value); setPage(0); }}
+                className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground focus:border-primary/50 focus:outline-none" />
+              {hasResultFilters && (
+                <button onClick={clearResultFilters}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground transition-colors">
+                  <X className="w-3 h-3" /> Clear
+                </button>
+              )}
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>

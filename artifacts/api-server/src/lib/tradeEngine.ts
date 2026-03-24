@@ -379,7 +379,7 @@ export async function openPosition(decision: AllocationDecision, atrPct: number,
   });
 
   const entryTs = new Date();
-  const effectiveTimeExit = familyProfile.initialExitHours;
+  const effectiveTimeExit = Math.max(familyProfile.initialExitHours, timeExitHours);
   const maxExitTs = new Date(entryTs.getTime() + effectiveTimeExit * 60 * 60 * 1000);
 
   if ((mode === "demo" || mode === "real") && client) {

@@ -560,44 +560,40 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     const demoModeSettings = computeModeSettings(demoTop, "demo");
     const realModeSettings = computeModeSettings(realTop, "real");
 
-    const aiSettings: Record<string, string> = {
-      ai_equity_pct_per_trade: "8",
-      ai_paper_equity_pct_per_trade: "16",
-      ai_live_equity_pct_per_trade: "8",
-      ai_tp_multiplier_strong: String(optTpStrong),
-      ai_tp_multiplier_medium: String(optTpMed),
-      ai_tp_multiplier_weak: String(optTpWeak),
-      ai_sl_ratio: String(optSl),
-      ai_trailing_stop_pct: "25",
-      ai_time_exit_window_hours: String(optHold),
-      ai_settings_locked: "true",
-      ai_optimised_at: new Date().toISOString(),
-      enabled_symbols: allSymbols,
-      streaming: "false",
-      mode: "idle",
-      paper_mode_active: "false",
-      demo_mode_active: "false",
-      real_mode_active: "false",
-      kill_switch: "false",
-      min_composite_score: "85",
-      min_ev_threshold: "0.003",
-      min_rr_ratio: "1.5",
-      paper_enabled_strategies: allStrategies,
-      paper_enabled_symbols: allSymbols,
-      demo_enabled_strategies: allStrategies,
-      demo_enabled_symbols: allSymbols,
-      real_enabled_strategies: realStrategies.length > 0 ? realStrategies.join(",") : allStrategies,
-      real_enabled_symbols: realSymbols.length > 0 ? realSymbols.join(",") : allSymbols,
-      ai_recommended_strategies: realStrategies.join(","),
-      ai_recommended_symbols: realSymbols.join(","),
-      ...demoModeSettings,
-      ...realModeSettings,
-    };
+    const aiSuggestions: Record<string, string> = {};
+    aiSuggestions["paper_tp_multiplier_strong"] = String(optTpStrong);
+    aiSuggestions["paper_tp_multiplier_medium"] = String(optTpMed);
+    aiSuggestions["paper_tp_multiplier_weak"] = String(optTpWeak);
+    aiSuggestions["paper_sl_ratio"] = String(optSl);
+    aiSuggestions["paper_time_exit_window_hours"] = String(optHold);
+    aiSuggestions["paper_equity_pct_per_trade"] = String(optEquity);
 
-    for (const [key, value] of Object.entries(aiSettings)) {
-      await db.insert(platformStateTable).values({ key, value })
+    for (const [key, value] of Object.entries(demoModeSettings)) {
+      aiSuggestions[key] = value;
+    }
+    for (const [key, value] of Object.entries(realModeSettings)) {
+      aiSuggestions[key] = value;
+    }
+
+    if (realStrategies.length > 0) {
+      aiSuggestions["real_enabled_strategies"] = realStrategies.join(",");
+    }
+    if (realSymbols.length > 0) {
+      aiSuggestions["real_enabled_symbols"] = realSymbols.join(",");
+    }
+
+    for (const [key, value] of Object.entries(aiSuggestions)) {
+      const suggestKey = `ai_suggest_${key}`;
+      await db.insert(platformStateTable).values({ key: suggestKey, value })
         .onConflictDoUpdate({ target: platformStateTable.key, set: { value, updatedAt: new Date() } });
     }
+
+    await db.insert(platformStateTable).values({ key: "ai_optimised_at", value: new Date().toISOString() })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: new Date().toISOString(), updatedAt: new Date() } });
+    await db.insert(platformStateTable).values({ key: "ai_recommended_strategies", value: realStrategies.join(",") })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: realStrategies.join(","), updatedAt: new Date() } });
+    await db.insert(platformStateTable).values({ key: "ai_recommended_symbols", value: realSymbols.join(",") })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value: realSymbols.join(","), updatedAt: new Date() } });
 
     send({
       phase: "optimise_complete", stage: "optimise", overallPct: 88,

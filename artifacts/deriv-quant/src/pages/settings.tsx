@@ -232,12 +232,23 @@ function SettingField({ label, description, value, onChange, type = "number", op
           <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
         </div>
         <div className="flex items-center gap-2">
-          <input type={showPassword ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-            className="w-56 h-9 rounded-md border border-border bg-background/50 px-3 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors"
-          />
-          <button onClick={() => setShowPassword(!showPassword)} className="text-muted-foreground hover:text-foreground transition-colors">
-            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
+          {locked ? (
+            <>
+              <span className="text-sm font-mono text-muted-foreground">{value ? "****configured****" : "Not set"}</span>
+              <button onClick={onUnlock} className="p-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors" title="Unlock to edit">
+                <Lock className="w-3.5 h-3.5" />
+              </button>
+            </>
+          ) : (
+            <>
+              <input type={showPassword ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+                className="w-56 h-9 rounded-md border border-primary/40 bg-background/50 px-3 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors"
+              />
+              <button onClick={() => setShowPassword(!showPassword)} className="text-muted-foreground hover:text-foreground transition-colors">
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -893,7 +904,19 @@ function ModeSettingsTab({ mode, form, update, suggestions, onApplySuggestion, u
         <CardHeader><CardTitle className="flex items-center gap-2"><Crosshair className="w-4 h-4" />Instruments</CardTitle></CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground mb-3">Select which synthetic indices {modeLabel} mode will scan and trade.</p>
-          <InstrumentsPicker enabledSymbols={form[p("enabled_symbols")] || form.enabled_symbols || ""} onChange={(v) => update(p("enabled_symbols"), v)} />
+          {isLocked("instruments") ? (
+            <div className="flex items-center justify-between p-3 rounded-lg border border-border/30 bg-muted/10">
+              <span className="text-sm text-muted-foreground">{(form[p("enabled_symbols")] || form.enabled_symbols || "").split(",").filter(Boolean).length} instruments enabled</span>
+              <button onClick={() => handleUnlock("instruments")} className="p-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors" title="Unlock to edit">
+                <Lock className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <InstrumentsPicker enabledSymbols={form[p("enabled_symbols")] || form.enabled_symbols || ""} onChange={(v) => update(p("enabled_symbols"), v)} />
+              <SectionSaveButton sectionKeys={[p("enabled_symbols")]} form={form} saving={saving} onSave={onSaveSection} />
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -901,7 +924,19 @@ function ModeSettingsTab({ mode, form, update, suggestions, onApplySuggestion, u
         <CardHeader><CardTitle className="flex items-center gap-2"><BarChart3 className="w-4 h-4" />Strategies</CardTitle></CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground mb-3">Enable or disable strategies for {modeLabel} mode.</p>
-          <StrategyFamilySelector enabledStrategies={form[p("enabled_strategies")] ?? STRATEGY_FAMILIES.map(f => f.key).join(",")} onChange={(v) => update(p("enabled_strategies"), v)} />
+          {isLocked("strategies") ? (
+            <div className="flex items-center justify-between p-3 rounded-lg border border-border/30 bg-muted/10">
+              <span className="text-sm text-muted-foreground">{(form[p("enabled_strategies")] ?? STRATEGY_FAMILIES.map(f => f.key).join(",")).split(",").filter(Boolean).length} strategy families enabled</span>
+              <button onClick={() => handleUnlock("strategies")} className="p-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors" title="Unlock to edit">
+                <Lock className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <StrategyFamilySelector enabledStrategies={form[p("enabled_strategies")] ?? STRATEGY_FAMILIES.map(f => f.key).join(",")} onChange={(v) => update(p("enabled_strategies"), v)} />
+              <SectionSaveButton sectionKeys={[p("enabled_strategies")]} form={form} saving={saving} onSave={onSaveSection} />
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -1172,10 +1207,10 @@ export default function Settings() {
               <Card>
                 <CardHeader><CardTitle className="flex items-center gap-2"><Key className="w-4 h-4" />API Keys</CardTitle></CardHeader>
                 <CardContent>
-                  <SettingField label="Deriv Demo Token" description={form.deriv_api_token_demo_set === "true" ? "Demo token is configured" : "API token for your Deriv demo account"} value={form.deriv_api_token_demo || ""} onChange={(v) => update("deriv_api_token_demo", v)} type="password" placeholder={form.deriv_api_token_demo_set === "true" ? "****configured****" : "Enter Deriv demo API token"} locked={false} onUnlock={() => {}} />
-                  <SettingField label="Deriv Real Token" description={form.deriv_api_token_real_set === "true" ? "Real token is configured" : "API token for your Deriv real account"} value={form.deriv_api_token_real || ""} onChange={(v) => update("deriv_api_token_real", v)} type="password" placeholder={form.deriv_api_token_real_set === "true" ? "****configured****" : "Enter Deriv real API token"} locked={false} onUnlock={() => {}} />
-                  <SettingField label="OpenAI API Key" description={form.openai_api_key_set === "true" ? "Key is configured" : "Required for AI signal verification"} value={form.openai_api_key || ""} onChange={(v) => update("openai_api_key", v)} type="password" placeholder={form.openai_api_key_set === "true" ? "****configured****" : "Enter OpenAI API key (sk-...)"} locked={false} onUnlock={() => {}} />
-                  <SettingField label="AI Signal Verification" description={form.openai_api_key_set === "true" ? "AI will review signals before trades" : "Requires OpenAI API key above"} value={form.ai_verification_enabled || "false"} onChange={(v) => update("ai_verification_enabled", v)} type="toggle" locked={false} onUnlock={() => {}} />
+                  <SettingField label="Deriv Demo Token" description={form.deriv_api_token_demo_set === "true" ? "Demo token is configured" : "API token for your Deriv demo account"} value={form.deriv_api_token_demo || ""} onChange={(v) => update("deriv_api_token_demo", v)} type="password" placeholder={form.deriv_api_token_demo_set === "true" ? "****configured****" : "Enter Deriv demo API token"} locked={!unlockedSections.has("apikeys")} onUnlock={() => handleUnlockSection("apikeys")} />
+                  <SettingField label="Deriv Real Token" description={form.deriv_api_token_real_set === "true" ? "Real token is configured" : "API token for your Deriv real account"} value={form.deriv_api_token_real || ""} onChange={(v) => update("deriv_api_token_real", v)} type="password" placeholder={form.deriv_api_token_real_set === "true" ? "****configured****" : "Enter Deriv real API token"} locked={!unlockedSections.has("apikeys")} onUnlock={() => handleUnlockSection("apikeys")} />
+                  <SettingField label="OpenAI API Key" description={form.openai_api_key_set === "true" ? "Key is configured" : "Required for AI signal verification"} value={form.openai_api_key || ""} onChange={(v) => update("openai_api_key", v)} type="password" placeholder={form.openai_api_key_set === "true" ? "****configured****" : "Enter OpenAI API key (sk-...)"} locked={!unlockedSections.has("apikeys")} onUnlock={() => handleUnlockSection("apikeys")} />
+                  <SettingField label="AI Signal Verification" description={form.openai_api_key_set === "true" ? "AI will review signals before trades" : "Requires OpenAI API key above"} value={form.ai_verification_enabled || "false"} onChange={(v) => update("ai_verification_enabled", v)} type="toggle" locked={!unlockedSections.has("apikeys")} onUnlock={() => handleUnlockSection("apikeys")} />
                   {form.openai_api_key_set === "true" && (
                     <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border/30">
                       <button onClick={async () => { setAiHealthLoading(true); try { const resp = await fetch(`${base}api/settings/openai-health`); setAiHealth(await resp.json()); } catch { setAiHealth({ configured: false, working: false, error: "Request failed" }); } finally { setAiHealthLoading(false); } }} disabled={aiHealthLoading} className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted transition-colors disabled:opacity-50">
@@ -1184,12 +1219,14 @@ export default function Settings() {
                       {aiHealth && <span className={cn("text-xs font-medium", aiHealth.working ? "text-green-600" : "text-red-500")}>{aiHealth.working ? "Connected and working" : aiHealth.error || "Connection failed"}</span>}
                     </div>
                   )}
-                  <div className="pt-3 border-t border-border/30 mt-3">
-                    <button onClick={() => { const payload: PlatformSettings = { ...form }; save({ data: payload }); }} disabled={globalSaving}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium shadow-sm hover:shadow-md transition-all disabled:opacity-50">
-                      {globalSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}{globalSaving ? "Saving..." : "Save API Keys"}
-                    </button>
-                  </div>
+                  {unlockedSections.has("apikeys") && (
+                    <div className="pt-3 border-t border-border/30 mt-3">
+                      <button onClick={() => { const payload: PlatformSettings = { ...form }; save({ data: payload }); }} disabled={globalSaving}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium shadow-sm hover:shadow-md transition-all disabled:opacity-50">
+                        {globalSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}{globalSaving ? "Saving..." : "Save API Keys"}
+                      </button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 

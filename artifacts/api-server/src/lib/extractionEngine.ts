@@ -25,7 +25,7 @@ export interface PeakTracker {
 }
 
 const DEFAULT_EXTRACTION_TARGET_PCT = 50;
-const DEFAULT_PEAK_DRAWDOWN_EXIT_PCT = 30;
+const DEFAULT_PEAK_DRAWDOWN_EXIT_PCT = 40;
 const DEFAULT_PARTIAL_CLOSE_PCT = 50;
 
 export async function getExtractionCycle(mode: TradingMode): Promise<ExtractionCycle> {
@@ -110,8 +110,8 @@ export function evaluateProfitHarvest(params: {
   const {
     entryPrice, currentPrice, peakPrice, direction, tradeId,
     peakDrawdownExitPct = DEFAULT_PEAK_DRAWDOWN_EXIT_PCT,
-    minPeakProfitPct = 3.0,
-    largePeakThresholdPct = 8.0,
+    minPeakProfitPct = 8.0,
+    largePeakThresholdPct = 15.0,
   } = params;
 
   const currentPnlPct = direction === "buy"
@@ -161,8 +161,8 @@ export async function getHarvestSettings(mode: TradingMode): Promise<{
 
   return {
     peakDrawdownExitPct: parseFloat(stateMap[`${prefix}_peak_drawdown_exit_pct`] || stateMap["peak_drawdown_exit_pct"] || String(DEFAULT_PEAK_DRAWDOWN_EXIT_PCT)),
-    minPeakProfitPct: parseFloat(stateMap[`${prefix}_min_peak_profit_pct`] || stateMap["min_peak_profit_pct"] || "3"),
-    largePeakThresholdPct: parseFloat(stateMap[`${prefix}_large_peak_threshold_pct`] || stateMap["large_peak_threshold_pct"] || "8"),
+    minPeakProfitPct: parseFloat(stateMap[`${prefix}_min_peak_profit_pct`] || stateMap["min_peak_profit_pct"] || "8"),
+    largePeakThresholdPct: parseFloat(stateMap[`${prefix}_large_peak_threshold_pct`] || stateMap["large_peak_threshold_pct"] || "15"),
   };
 }
 
@@ -171,22 +171,22 @@ export function determineEntryStage(
   compositeScore: number,
 ): "probe" | "confirmation" | "momentum" | null {
   if (openTradesOnSymbol === 0) {
-    return compositeScore >= 85 ? "probe" : null;
+    return compositeScore >= 88 ? "probe" : null;
   }
   if (openTradesOnSymbol === 1) {
-    return compositeScore >= 88 ? "confirmation" : null;
+    return compositeScore >= 91 ? "confirmation" : null;
   }
   if (openTradesOnSymbol === 2) {
-    return compositeScore >= 92 ? "momentum" : null;
+    return compositeScore >= 94 ? "momentum" : null;
   }
   return null;
 }
 
 export function getEntrySizeMultiplier(stage: "probe" | "confirmation" | "momentum"): number {
   switch (stage) {
-    case "probe": return 0.40;
-    case "confirmation": return 0.35;
-    case "momentum": return 0.25;
+    case "probe": return 0.70;
+    case "confirmation": return 0.60;
+    case "momentum": return 0.50;
   }
 }
 

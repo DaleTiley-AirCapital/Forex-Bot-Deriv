@@ -10,9 +10,53 @@ const MAX_EQUITY_DEPLOYED_PCT = 0.80;
 const POSITION_SIZE_MIN_PCT = 0.20;
 const POSITION_SIZE_MAX_PCT = 0.25;
 const DEFAULT_TRAILING_STOP_PCT = 0.25;
-const INITIAL_EXIT_HOURS = 72;
-const EXTENSION_HOURS = 24;
-const MAX_EXIT_HOURS = 120;
+const INITIAL_EXIT_HOURS = 168;
+const EXTENSION_HOURS = 48;
+const MAX_EXIT_HOURS = 336;
+
+export type StrategyFamily = "trend_continuation" | "mean_reversion" | "breakout_expansion" | "spike_event";
+
+export const FAMILY_HOLD_PROFILE: Record<StrategyFamily, {
+  tpAtrMultiplier: number;
+  slAtrMultiplier: number;
+  initialExitHours: number;
+  extensionHours: number;
+  maxExitHours: number;
+  harvestSensitivity: number;
+}> = {
+  trend_continuation: {
+    tpAtrMultiplier: 6.0,
+    slAtrMultiplier: 2.5,
+    initialExitHours: 168,
+    extensionHours: 48,
+    maxExitHours: 336,
+    harvestSensitivity: 0.8,
+  },
+  mean_reversion: {
+    tpAtrMultiplier: 4.0,
+    slAtrMultiplier: 3.0,
+    initialExitHours: 120,
+    extensionHours: 36,
+    maxExitHours: 240,
+    harvestSensitivity: 1.0,
+  },
+  breakout_expansion: {
+    tpAtrMultiplier: 8.0,
+    slAtrMultiplier: 2.0,
+    initialExitHours: 168,
+    extensionHours: 48,
+    maxExitHours: 336,
+    harvestSensitivity: 0.7,
+  },
+  spike_event: {
+    tpAtrMultiplier: 4.0,
+    slAtrMultiplier: 1.5,
+    initialExitHours: 72,
+    extensionHours: 24,
+    maxExitHours: 168,
+    harvestSensitivity: 1.2,
+  },
+};
 
 interface PositionSizing {
   size: number;
@@ -58,15 +102,18 @@ export function calculateDynamicTP(params: {
   direction: "buy" | "sell";
   confidence: number;
   atrPct: number;
-  historicalAvgMovePct: number;
+  historicalAvgMovePct?: number;
   tpMultiplier?: number;
+  family?: StrategyFamily;
 }): number {
-  const { entryPrice, direction, confidence, atrPct, historicalAvgMovePct, tpMultiplier = 2.0 } = params;
+  const { entryPrice, direction, confidence, atrPct, tpMultiplier = 2.0, family } = params;
 
-  const effectiveHistMovePct = historicalAvgMovePct > 0 ? historicalAvgMovePct : atrPct * tpMultiplier;
-  const tpPct = confidence * atrPct * effectiveHistMovePct;
-  const minTPPct = atrPct * 1.5;
-  const maxTPPct = atrPct * 6.0;
+  const familyProfile = family ? FAMILY_HOLD_PROFILE[family] : null;
+  const effectiveMultiplier = familyProfile ? familyProfile.tpAtrMultiplier : tpMultiplier;
+
+  const tpPct = atrPct * effectiveMultiplier * confidence;
+  const minTPPct = atrPct * 2.5;
+  const maxTPPct = atrPct * 12.0;
   const clampedPct = Math.max(minTPPct, Math.min(maxTPPct, tpPct));
 
   if (direction === "buy") {
@@ -81,9 +128,12 @@ export function calculateInitialSL(params: {
   direction: "buy" | "sell";
   atrPct: number;
   slRatio?: number;
+  family?: StrategyFamily;
 }): number {
-  const { entryPrice, direction, atrPct, slRatio = 1.0 } = params;
-  const slPct = atrPct * 1.5 * slRatio;
+  const { entryPrice, direction, atrPct, slRatio = 1.0, family } = params;
+  const familyProfile = family ? FAMILY_HOLD_PROFILE[family] : null;
+  const baseMultiplier = familyProfile ? familyProfile.slAtrMultiplier : 2.5;
+  const slPct = atrPct * baseMultiplier * slRatio;
   if (direction === "buy") {
     return entryPrice * (1 - slPct);
   } else {
@@ -129,24 +179,32 @@ export function checkTimeExit(params: {
   entryTs: Date;
   maxExitTs: Date;
   currentPnl: number;
+  initialExitHours?: number;
+  extensionHours?: number;
+  maxExitHours?: number;
 }): { shouldExit: boolean; shouldExtend: boolean; newMaxExitTs: Date | null; exitReason: string | null } {
-  const { entryTs, maxExitTs, currentPnl } = params;
+  const {
+    entryTs, maxExitTs, currentPnl,
+    initialExitHours = INITIAL_EXIT_HOURS,
+    extensionHours = EXTENSION_HOURS,
+    maxExitHours = MAX_EXIT_HOURS,
+  } = params;
   const now = new Date();
   const hoursOpen = (now.getTime() - entryTs.getTime()) / (1000 * 60 * 60);
-  const hardMax = new Date(entryTs.getTime() + MAX_EXIT_HOURS * 60 * 60 * 1000);
+  const hardMax = new Date(entryTs.getTime() + maxExitHours * 60 * 60 * 1000);
 
   if (now >= hardMax) {
     return { shouldExit: true, shouldExtend: false, newMaxExitTs: null, exitReason: "hard_time_limit" };
   }
 
-  if (hoursOpen >= INITIAL_EXIT_HOURS && now >= maxExitTs) {
+  if (hoursOpen >= initialExitHours && now >= maxExitTs) {
     if (currentPnl > 0) {
-      return { shouldExit: true, shouldExtend: false, newMaxExitTs: null, exitReason: "profitable_at_72h" };
+      return { shouldExit: true, shouldExtend: false, newMaxExitTs: null, exitReason: "profitable_at_time_exit" };
     }
 
     const smallLossThreshold = -0.02;
     if (currentPnl < 0 && currentPnl > smallLossThreshold) {
-      const extensionEnd = new Date(maxExitTs.getTime() + EXTENSION_HOURS * 60 * 60 * 1000);
+      const extensionEnd = new Date(maxExitTs.getTime() + extensionHours * 60 * 60 * 1000);
       const cappedEnd = extensionEnd > hardMax ? hardMax : extensionEnd;
       if (cappedEnd > maxExitTs) {
         return { shouldExit: false, shouldExtend: true, newMaxExitTs: cappedEnd, exitReason: null };
@@ -154,7 +212,7 @@ export function checkTimeExit(params: {
       return { shouldExit: true, shouldExtend: false, newMaxExitTs: null, exitReason: "max_extensions_reached" };
     }
 
-    return { shouldExit: true, shouldExtend: false, newMaxExitTs: null, exitReason: "loss_at_72h" };
+    return { shouldExit: true, shouldExtend: false, newMaxExitTs: null, exitReason: "loss_at_time_exit" };
   }
 
   return { shouldExit: false, shouldExtend: false, newMaxExitTs: null, exitReason: null };
@@ -285,6 +343,9 @@ export async function openPosition(decision: AllocationDecision, atrPct: number,
   const trailingStopPct = parseFloat(stateMap[`${prefix}_trailing_stop_pct`] || stateMap["trailing_stop_pct"] || "25") / 100;
   const timeExitHours = parseFloat(stateMap[`${prefix}_time_exit_window_hours`] || stateMap["time_exit_window_hours"] || String(INITIAL_EXIT_HOURS));
 
+  const family = ((signal as any).strategyFamily || "trend_continuation") as StrategyFamily;
+  const familyProfile = FAMILY_HOLD_PROFILE[family] || FAMILY_HOLD_PROFILE.trend_continuation;
+
   const tpMultiplier = signal.confidence >= 0.75 ? tpMultiplierStrong
     : signal.confidence >= 0.65 ? tpMultiplierMedium
     : tpMultiplierWeak;
@@ -296,6 +357,7 @@ export async function openPosition(decision: AllocationDecision, atrPct: number,
     atrPct,
     historicalAvgMovePct,
     tpMultiplier,
+    family,
   });
 
   const sl = calculateInitialSL({
@@ -303,10 +365,12 @@ export async function openPosition(decision: AllocationDecision, atrPct: number,
     direction: signal.direction,
     atrPct,
     slRatio,
+    family,
   });
 
   const entryTs = new Date();
-  const maxExitTs = new Date(entryTs.getTime() + timeExitHours * 60 * 60 * 1000);
+  const effectiveTimeExit = Math.max(timeExitHours, familyProfile.initialExitHours);
+  const maxExitTs = new Date(entryTs.getTime() + effectiveTimeExit * 60 * 60 * 1000);
 
   if ((mode === "demo" || mode === "real") && client) {
     try {
@@ -444,15 +508,19 @@ export async function manageOpenPositions(): Promise<void> {
       }
 
       const harvestSettings = await getHarvestSettings(tradeMode);
+      const harvestFamily = (trade.strategyName as StrategyFamily) in FAMILY_HOLD_PROFILE
+        ? trade.strategyName as StrategyFamily
+        : "trend_continuation" as StrategyFamily;
+      const harvestSensitivity = FAMILY_HOLD_PROFILE[harvestFamily].harvestSensitivity;
       const harvestCheck = evaluateProfitHarvest({
         entryPrice: trade.entryPrice,
         currentPrice,
         peakPrice: newPeak,
         direction,
         tradeId: trade.id,
-        peakDrawdownExitPct: harvestSettings.peakDrawdownExitPct,
-        minPeakProfitPct: harvestSettings.minPeakProfitPct,
-        largePeakThresholdPct: harvestSettings.largePeakThresholdPct,
+        peakDrawdownExitPct: harvestSettings.peakDrawdownExitPct * harvestSensitivity,
+        minPeakProfitPct: harvestSettings.minPeakProfitPct / harvestSensitivity,
+        largePeakThresholdPct: harvestSettings.largePeakThresholdPct / harvestSensitivity,
       });
 
       if (harvestCheck.shouldHarvest) {
@@ -479,10 +547,18 @@ export async function manageOpenPositions(): Promise<void> {
       }
 
       if (trade.maxExitTs) {
+        const tradeFamily = (trade.strategyName as StrategyFamily) in FAMILY_HOLD_PROFILE
+          ? trade.strategyName as StrategyFamily
+          : "trend_continuation" as StrategyFamily;
+        const tradeFamilyProfile = FAMILY_HOLD_PROFILE[tradeFamily];
+
         const timeCheck = checkTimeExit({
           entryTs: trade.entryTs,
           maxExitTs: trade.maxExitTs,
           currentPnl: floatingPnl,
+          initialExitHours: tradeFamilyProfile.initialExitHours,
+          extensionHours: tradeFamilyProfile.extensionHours,
+          maxExitHours: tradeFamilyProfile.maxExitHours,
         });
 
         if (timeCheck.shouldExit) {

@@ -172,8 +172,8 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
 
 function getAllocationPctByScore(compositeScore: number, baseEquityPct: number): { pct: number; tier: string } {
   const basePct = baseEquityPct / 100;
-  if (compositeScore >= 90) return { pct: basePct + 0.04, tier: "large" };
-  if (compositeScore >= 85) return { pct: basePct + 0.02, tier: "medium" };
+  if (compositeScore >= 90) return { pct: basePct + 0.06, tier: "large" };
+  if (compositeScore >= 85) return { pct: basePct + 0.03, tier: "medium" };
   if (compositeScore >= 80) return { pct: basePct, tier: "base" };
   return { pct: 0, tier: "reject" };
 }

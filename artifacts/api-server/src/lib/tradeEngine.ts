@@ -602,9 +602,9 @@ export async function manageOpenPositions(): Promise<void> {
       if (trade.maxExitTs) {
         const tradeFamily = resolveFamilyFromStrategy(trade.strategyName);
         const tradeFamilyDefaults = FAMILY_HOLD_PROFILE[tradeFamily];
-        const tfInitialExitHours = parseFloat(stateMapForHarvest[`${harvestPrefix}_${tradeFamily}_initial_exit_hours`] || String(tradeFamilyDefaults.initialExitHours));
-        const tfExtensionHours = parseFloat(stateMapForHarvest[`${harvestPrefix}_${tradeFamily}_extension_hours`] || String(tradeFamilyDefaults.extensionHours));
-        const tfMaxExitHours = parseFloat(stateMapForHarvest[`${harvestPrefix}_${tradeFamily}_max_exit_hours`] || String(tradeFamilyDefaults.maxExitHours));
+        const tfInitialExitHours = parseFloat(cachedStateMap[`${harvestPrefix}_${tradeFamily}_initial_exit_hours`] || String(tradeFamilyDefaults.initialExitHours));
+        const tfExtensionHours = parseFloat(cachedStateMap[`${harvestPrefix}_${tradeFamily}_extension_hours`] || String(tradeFamilyDefaults.extensionHours));
+        const tfMaxExitHours = parseFloat(cachedStateMap[`${harvestPrefix}_${tradeFamily}_max_exit_hours`] || String(tradeFamilyDefaults.maxExitHours));
 
         const timeCheck = checkTimeExit({
           entryTs: trade.entryTs,

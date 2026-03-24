@@ -208,14 +208,16 @@ function SettingField({ label, description, value, onChange, type = "number", op
             )}
           </div>
         </div>
-        {hasSuggestion && onApplySuggestion && (
+        {hasSuggestion && (
           <div className="flex items-center justify-end gap-2 mt-1.5">
             <span className={cn("text-xs", suggestionHigher ? "text-emerald-500" : "text-amber-500")}>
               AI suggests: <span className="font-mono font-semibold">{aiSuggestion}</span>
             </span>
-            <button onClick={onApplySuggestion} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 transition-colors">
-              Apply
-            </button>
+            {!locked && onApplySuggestion && (
+              <button onClick={onApplySuggestion} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 transition-colors">
+                Apply
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -280,14 +282,16 @@ function SettingField({ label, description, value, onChange, type = "number", op
           )}
         </div>
       </div>
-      {hasSuggestion && onApplySuggestion && (
+      {hasSuggestion && (
         <div className="flex items-center justify-end gap-2 mt-1.5">
           <span className={cn("text-xs", suggestionHigher ? "text-emerald-500" : "text-amber-500")}>
             AI suggests: <span className="font-mono font-semibold">{aiSuggestion}</span>
           </span>
-          <button onClick={onApplySuggestion} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 transition-colors">
-            Apply
-          </button>
+          {!locked && onApplySuggestion && (
+            <button onClick={onApplySuggestion} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 transition-colors">
+              Apply
+            </button>
+          )}
         </div>
       )}
     </div>

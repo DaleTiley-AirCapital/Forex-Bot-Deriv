@@ -38,6 +38,22 @@ async function getCurrentSettings(): Promise<Record<string, string>> {
   return map;
 }
 
+const MODE_PREFIXES = ["paper", "demo", "real"];
+const FAMILIES = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event"];
+const PER_MODE_KEYS = [
+  "tp_multiplier_strong", "tp_multiplier_medium", "tp_multiplier_weak",
+  "sl_ratio", "trailing_stop_pct", "time_exit_window_hours",
+  "equity_pct_per_trade", "max_open_trades",
+  "max_daily_loss_pct", "max_weekly_loss_pct", "max_drawdown_pct",
+  "probe_threshold", "confirmation_threshold", "momentum_threshold",
+  "stage_multiplier_probe", "stage_multiplier_confirmation", "stage_multiplier_momentum",
+  "peak_drawdown_exit_pct", "min_peak_profit_pct",
+  "tp_capture_ratio", "allocation_mode",
+];
+const PER_FAMILY_KEYS = [
+  "tp_atr_multiplier", "sl_atr_multiplier", "initial_exit_hours",
+  "extension_hours", "max_exit_hours", "harvest_sensitivity",
+];
 const WRITABLE_SETTINGS = [
   "min_composite_score", "min_ev_threshold", "min_rr_ratio",
   "scoring_weight_regime_fit", "scoring_weight_setup_quality",
@@ -46,18 +62,8 @@ const WRITABLE_SETTINGS = [
   "scan_interval_seconds", "scan_stagger_seconds",
   "ai_verification_enabled", "kill_switch",
   "paper_mode_active", "demo_mode_active", "real_mode_active",
-  "paper_tp_multiplier_strong", "paper_tp_multiplier_medium", "paper_tp_multiplier_weak",
-  "paper_sl_ratio", "paper_trailing_stop_pct", "paper_time_exit_window_hours",
-  "paper_equity_pct_per_trade", "paper_max_open_trades",
-  "paper_max_daily_loss_pct", "paper_max_weekly_loss_pct", "paper_max_drawdown_pct",
-  "demo_tp_multiplier_strong", "demo_tp_multiplier_medium", "demo_tp_multiplier_weak",
-  "demo_sl_ratio", "demo_trailing_stop_pct", "demo_time_exit_window_hours",
-  "demo_equity_pct_per_trade", "demo_max_open_trades",
-  "demo_max_daily_loss_pct", "demo_max_weekly_loss_pct", "demo_max_drawdown_pct",
-  "real_tp_multiplier_strong", "real_tp_multiplier_medium", "real_tp_multiplier_weak",
-  "real_sl_ratio", "real_trailing_stop_pct", "real_time_exit_window_hours",
-  "real_equity_pct_per_trade", "real_max_open_trades",
-  "real_max_daily_loss_pct", "real_max_weekly_loss_pct", "real_max_drawdown_pct",
+  ...MODE_PREFIXES.flatMap(m => PER_MODE_KEYS.map(k => `${m}_${k}`)),
+  ...MODE_PREFIXES.flatMap(m => FAMILIES.flatMap(f => PER_FAMILY_KEYS.map(k => `${m}_${f}_${k}`))),
 ];
 
 const SYSTEM_PROMPT = `You are the AI assistant for a Deriv Capital Extraction trading platform. You help users understand settings, review AI suggestions, and learn about strategies.

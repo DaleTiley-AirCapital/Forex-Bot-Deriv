@@ -473,6 +473,39 @@ async function runWeeklyAnalysis(stateMap: Record<string, string>): Promise<void
       }
     }
 
+    const currentTpCapture = parseFloat(stateMap[`${mode}_tp_capture_ratio`] || (mode === "paper" ? "0.80" : mode === "demo" ? "0.70" : "0.60"));
+    if (tpHitRate > 0.5 && actualRR > 2) {
+      suggestions[`${mode}_tp_capture_ratio`] = String(Math.min(currentTpCapture + 0.05, 0.95).toFixed(2));
+    } else if (tpHitRate < 0.15) {
+      suggestions[`${mode}_tp_capture_ratio`] = String(Math.max(currentTpCapture - 0.05, 0.50).toFixed(2));
+    }
+
+    const currentAllocMode = stateMap[`${mode}_allocation_mode`] || "balanced";
+    if (winRate > 0.6 && avgPnl > 0 && mode !== "real") {
+      if (currentAllocMode === "conservative") suggestions[`${mode}_allocation_mode`] = "balanced";
+      if (currentAllocMode === "balanced" && mode === "paper") suggestions[`${mode}_allocation_mode`] = "aggressive";
+    } else if (winRate < 0.35) {
+      if (currentAllocMode === "aggressive") suggestions[`${mode}_allocation_mode`] = "balanced";
+      if (currentAllocMode === "balanced") suggestions[`${mode}_allocation_mode`] = "conservative";
+    }
+
+    const regimeDistribution: Record<string, number> = {};
+    for (const t of modeTrades) {
+      const regime = (t as Record<string, unknown>).regime as string || "unknown";
+      regimeDistribution[regime] = (regimeDistribution[regime] || 0) + 1;
+    }
+    const regimeWinRates: Record<string, number> = {};
+    for (const regime of Object.keys(regimeDistribution)) {
+      const regTrades = modeTrades.filter(t => ((t as Record<string, unknown>).regime as string || "unknown") === regime);
+      const regWins = regTrades.filter(t => (t.pnl ?? 0) > 0).length;
+      regimeWinRates[regime] = regTrades.length > 0 ? regWins / regTrades.length : 0;
+    }
+    const worstRegime = Object.entries(regimeWinRates).sort((a, b) => a[1] - b[1])[0];
+    if (worstRegime && worstRegime[1] < 0.25 && (regimeDistribution[worstRegime[0]] || 0) > 3) {
+      const curRegimeWeight = parseFloat(stateMap["scoring_weight_regime_fit"] || "16.67");
+      suggestions["scoring_weight_regime_fit"] = String(Math.min(curRegimeWeight * 1.15, 30).toFixed(2));
+    }
+
     for (const family of STRATEGY_FAMILIES) {
       const familyTrades = modeTrades.filter(t => t.strategyName === family);
       if (familyTrades.length < 3) continue;
@@ -497,6 +530,15 @@ async function runWeeklyAnalysis(stateMap: Record<string, string>): Promise<void
 
       if (famAvgDuration > curInitExit * 0.85) {
         suggestions[`${mode}_${family}_initial_exit_hours`] = String(Math.min(curInitExit * 1.2, 480).toFixed(0));
+      }
+
+      const curExtHours = parseFloat(stateMap[`${mode}_${family}_extension_hours`] || "48");
+      const curMaxExitHours = parseFloat(stateMap[`${mode}_${family}_max_exit_hours`] || "336");
+      if (famAvgDuration > curMaxExitHours * 0.8) {
+        suggestions[`${mode}_${family}_max_exit_hours`] = String(Math.min(curMaxExitHours * 1.15, 720).toFixed(0));
+        suggestions[`${mode}_${family}_extension_hours`] = String(Math.min(curExtHours * 1.1, 96).toFixed(0));
+      } else if (famAvgDuration < curMaxExitHours * 0.3 && timeExits > 1) {
+        suggestions[`${mode}_${family}_max_exit_hours`] = String(Math.max(curMaxExitHours * 0.85, 72).toFixed(0));
       }
 
       if (famWinRate < 0.4) {

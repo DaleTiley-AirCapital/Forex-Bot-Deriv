@@ -152,29 +152,44 @@ function SettingField({ label, description, value, onChange, type = "number", op
 
   if (type === "toggle") {
     const isOn = value === "true";
+    const toggleSuggestion = hasSuggestion;
     return (
-      <div className="flex items-center justify-between py-3 border-b border-border/30 last:border-0">
-        <div className="flex-1 pr-4">
-          <p className="text-sm font-medium text-foreground">{label}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {locked ? (
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-mono text-muted-foreground">{isOn ? "ON" : "OFF"}</span>
-              <button onClick={onUnlock} className="p-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors" title="Unlock to edit">
-                <Lock className="w-3.5 h-3.5" />
+      <div className="py-3 border-b border-border/30 last:border-0">
+        <div className="flex items-center justify-between">
+          <div className="flex-1 pr-4">
+            <p className="text-sm font-medium text-foreground">{label}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {locked ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-mono text-muted-foreground">{isOn ? "ON" : "OFF"}</span>
+                <button onClick={onUnlock} className="p-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors" title="Unlock to edit">
+                  <Lock className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => onChange(isOn ? "false" : "true")}
+                className={cn("relative inline-flex h-6 w-11 items-center rounded-full transition-colors", isOn ? "bg-destructive" : "bg-muted")}
+              >
+                <span className={cn("inline-block h-4 w-4 rounded-full bg-white transition-transform shadow-sm", isOn ? "translate-x-6" : "translate-x-1")} />
               </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => onChange(isOn ? "false" : "true")}
-              className={cn("relative inline-flex h-6 w-11 items-center rounded-full transition-colors", isOn ? "bg-destructive" : "bg-muted")}
-            >
-              <span className={cn("inline-block h-4 w-4 rounded-full bg-white transition-transform shadow-sm", isOn ? "translate-x-6" : "translate-x-1")} />
-            </button>
-          )}
+            )}
+          </div>
         </div>
+        {toggleSuggestion && (
+          <div data-ai-suggestion className="flex items-center justify-end gap-2 mt-1.5">
+            <span className={cn("text-xs", suggestionHigher ? "text-emerald-500" : "text-amber-500")}>
+              AI suggests: <span className="font-mono font-semibold">{aiSuggestion}</span>
+            </span>
+            {onApplySuggestion && (
+              <button onClick={locked ? onUnlock : onApplySuggestion} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 transition-colors">
+                {locked ? "Unlock to Apply" : "Apply"}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -209,13 +224,13 @@ function SettingField({ label, description, value, onChange, type = "number", op
           </div>
         </div>
         {hasSuggestion && (
-          <div className="flex items-center justify-end gap-2 mt-1.5">
+          <div data-ai-suggestion className="flex items-center justify-end gap-2 mt-1.5">
             <span className={cn("text-xs", suggestionHigher ? "text-emerald-500" : "text-amber-500")}>
               AI suggests: <span className="font-mono font-semibold">{aiSuggestion}</span>
             </span>
-            {!locked && onApplySuggestion && (
-              <button onClick={onApplySuggestion} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 transition-colors">
-                Apply
+            {onApplySuggestion && (
+              <button onClick={locked ? onUnlock : onApplySuggestion} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 transition-colors">
+                {locked ? "Unlock to Apply" : "Apply"}
               </button>
             )}
           </div>
@@ -283,13 +298,13 @@ function SettingField({ label, description, value, onChange, type = "number", op
         </div>
       </div>
       {hasSuggestion && (
-        <div className="flex items-center justify-end gap-2 mt-1.5">
+        <div data-ai-suggestion className="flex items-center justify-end gap-2 mt-1.5">
           <span className={cn("text-xs", suggestionHigher ? "text-emerald-500" : "text-amber-500")}>
             AI suggests: <span className="font-mono font-semibold">{aiSuggestion}</span>
           </span>
-          {!locked && onApplySuggestion && (
-            <button onClick={onApplySuggestion} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 transition-colors">
-              Apply
+          {onApplySuggestion && (
+            <button onClick={locked ? onUnlock : onApplySuggestion} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 transition-colors">
+              {locked ? "Unlock to Apply" : "Apply"}
             </button>
           )}
         </div>
@@ -799,7 +814,18 @@ function SuggestionSummaryCard({ mode, form, suggestions, aiMeta }: { mode: "pap
           </div>
         </div>
         {suggestionCount > 0 && (
-          <p className="text-xs text-muted-foreground mt-3">Unlock fields and look for green/amber badges to review individual suggestions.</p>
+          <div className="flex items-center justify-between mt-3">
+            <p className="text-xs text-muted-foreground">Unlock fields and look for green/amber badges to review individual suggestions.</p>
+            <button
+              onClick={() => {
+                const el = document.querySelector("[data-ai-suggestion]");
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+              }}
+              className="ml-3 shrink-0 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 font-medium transition-colors"
+            >
+              <Bot className="w-3 h-3" /> Review Suggestions
+            </button>
+          </div>
         )}
       </CardContent>
     </Card>

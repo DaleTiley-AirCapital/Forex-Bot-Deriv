@@ -12,6 +12,7 @@ import accountRouter from "./account";
 import setupRouter from "./setup";
 import aiChatRouter from "./aiChat";
 import diagnosticsRouter from "./diagnostics";
+import researchRouter from "./research";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use(accountRouter);
 router.use(setupRouter);
 router.use(aiChatRouter);
 router.use(diagnosticsRouter);
+router.use(researchRouter);
 
 export default router;

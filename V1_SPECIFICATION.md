@@ -118,8 +118,11 @@ Trades are only placed when Paper, Demo, or Real mode is explicitly enabled. Eac
 4. Listen on PORT (required for health checks)
 5. Start scheduler (signal scan every 30s, position management every 10s)
 6. AI auto-configuration (enable AI verification if OpenAI key present)
-7. If initial setup is complete: auto-start tick streaming for enabled symbols
-8. Health endpoint available at /api/healthz
+7. Symbol validation against Deriv active_symbols API
+8. 12-month candle backfill (paginated, 5000 candles per page, all 12 symbols, partial success if ≥8/12 succeed)
+9. Tick streaming begins
+10. If initial setup is complete: auto-start tick streaming for enabled symbols
+11. Health endpoint available at /api/healthz
 
 ### Setup Wizard Flow
 
@@ -745,6 +748,7 @@ API keys are stored encrypted in the database (not as environment variables):
 
 ### Data Backfill
 
+<<<<<<< HEAD
 The setup wizard handles initial data backfill for all 12 instruments:
 - Probing phase queries each symbol's oldest available data from the Deriv API
 - 1-minute and 5-minute timeframes downloaded in paginated API calls (5,000 candles per page)
@@ -753,6 +757,39 @@ The setup wizard handles initial data backfill for all 12 instruments:
 - Automatic WebSocket reconnection with up to 5 retry attempts per symbol
 - Rate-limited API calls (150ms between requests) to avoid throttling
 - Partial failure resilience: individual symbol failures do not block the remaining symbols
+=======
+On startup, the system automatically backfills 12 months of candle history for all 12 instruments:
+- 1-minute and 5-minute timeframes
+- Paginated Deriv API calls (5,000 candles per page)
+- 12-month rolling window: candles older than 12 months are automatically pruned
+- Uses conflict-safe inserts so re-runs fill gaps without duplicating
+- Partial success model: setup proceeds if ≥8 of 12 symbols succeed; failed symbols can be re-downloaded from Research > Data Status
+- Per-symbol progress tracking with visual progress bars
+>>>>>>> d764284 (V1 Research Page Overhaul, Setup Failure Handling & Backtest Restructure)
+
+### Backtest Structure
+
+Backtesting runs 1 pass per symbol, executing all 4 strategy families in a single pass:
+- Produces 12 backtests (1 per symbol) instead of 48 (4 strategies × 12 symbols)
+- Only profitable strategies (net profit > 0 and trade count > 0) are stored
+- Each backtest run stores a `strategyBreakdown` in `metricsJson` with per-strategy metrics
+- Uses `strategyName: "all_strategies"` in `backtest_runs` table
+
+### Research Page
+
+The Research page provides data health monitoring and per-symbol analysis:
+- **Data Status section**: Per-symbol health cards showing candle counts, date ranges, and backtest freshness (healthy/stale/no_data)
+- **Download & Simulate**: Per-symbol SSE-powered download of 12 months of data followed by automatic backtesting
+- **Re-run Backtest**: Re-run all strategies on existing data for a symbol
+- **Grouped Results**: Backtest results grouped by symbol, showing only profitable strategies
+- **AI Chat**: Per-backtest AI chat powered by OpenAI, with full context of the backtest metrics and trade log
+
+### Data Retention
+
+Candles older than 12 months are automatically pruned:
+- `pruneOldCandles()` runs at the start of setup initialisation and download-simulate operations
+- Manual trigger available via Research > Data Status "Prune Old" button
+- Cutoff calculated as `now - (365 * 24 * 3600)` seconds
 
 ### Symbol Validation
 

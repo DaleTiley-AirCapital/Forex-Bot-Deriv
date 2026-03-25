@@ -1135,3 +1135,97 @@ export async function runBacktestSimulation(
     equityCurve: pm.equityCurve,
   };
 }
+
+export interface SymbolBacktestResult {
+  symbol: string;
+  profitableStrategies: {
+    strategyName: string;
+    winRate: number;
+    profitFactor: number;
+    netProfit: number;
+    tradeCount: number;
+    avgHoldingHours: number;
+    sharpeRatio: number;
+    expectancy: number;
+  }[];
+  portfolioMetrics: StrategyMetrics;
+  trades: BacktestTrade[];
+}
+
+export async function runSymbolBacktest(
+  symbol: string,
+  initialCapital: number,
+  allocationMode: string,
+): Promise<SymbolBacktestResult> {
+  const mode = allocationMode === "aggressive" ? "live" as const : "paper" as const;
+  const basePct = allocationMode === "aggressive" ? 0.25
+    : allocationMode === "conservative" ? 0.10 : 0.15;
+
+  const states = await db.select().from(platformStateTable);
+  const stateMap: Record<string, string> = {};
+  for (const s of states) stateMap[s.key] = s.value;
+  const weightKeys: (keyof ScoringWeights)[] = [
+    "regimeFit", "setupQuality", "trendAlignment",
+    "volatilityCondition", "rewardRisk", "probabilityOfSuccess",
+  ];
+  const weightStateMap: Record<keyof ScoringWeights, string> = {
+    regimeFit: "scoring_weight_regime_fit",
+    setupQuality: "scoring_weight_setup_quality",
+    trendAlignment: "scoring_weight_trend_alignment",
+    volatilityCondition: "scoring_weight_volatility_condition",
+    rewardRisk: "scoring_weight_reward_risk",
+    probabilityOfSuccess: "scoring_weight_probability_of_success",
+  };
+  const hasWeights = weightKeys.some(k => stateMap[weightStateMap[k]] !== undefined);
+  let scoringWeights: ScoringWeights | undefined;
+  if (hasWeights) {
+    scoringWeights = {} as ScoringWeights;
+    for (const k of weightKeys) scoringWeights[k] = parseFloat(stateMap[weightStateMap[k]] || "1");
+  }
+
+  const result = await runFullBacktest({
+    symbol,
+    symbols: [symbol],
+    initialCapital,
+    mode,
+    basePct,
+    minCompositeScore: parseFloat(stateMap["min_composite_score"] || "85"),
+    minEvThreshold: parseFloat(stateMap["min_ev_threshold"] || "0.003"),
+    minRrRatio: parseFloat(stateMap["min_rr_ratio"] || "1.5"),
+    scoringWeights,
+  });
+
+  const strategies = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event"];
+  const profitableStrategies: SymbolBacktestResult["profitableStrategies"] = [];
+
+  for (const stratName of strategies) {
+    const stratTrades = result.trades.filter(t => t.strategyName === stratName);
+    if (stratTrades.length === 0) continue;
+
+    const netProfit = stratTrades.reduce((s, t) => s + t.pnl, 0);
+    if (netProfit <= 0) continue;
+
+    const wins = stratTrades.filter(t => t.pnl > 0);
+    const losses = stratTrades.filter(t => t.pnl <= 0);
+    const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
+    const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+
+    profitableStrategies.push({
+      strategyName: stratName,
+      winRate: wins.length / stratTrades.length,
+      profitFactor: grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Infinity : 0),
+      netProfit,
+      tradeCount: stratTrades.length,
+      avgHoldingHours: stratTrades.reduce((s, t) => s + t.holdingHours, 0) / stratTrades.length,
+      sharpeRatio: result.strategyMetrics[stratName]?.sharpeRatio ?? 0,
+      expectancy: netProfit / stratTrades.length,
+    });
+  }
+
+  return {
+    symbol,
+    profitableStrategies,
+    portfolioMetrics: result.portfolioMetrics,
+    trades: result.trades,
+  };
+}

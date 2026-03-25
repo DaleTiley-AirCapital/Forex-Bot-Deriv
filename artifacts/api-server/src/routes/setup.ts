@@ -3,8 +3,9 @@ import { eq, and, inArray, count } from "drizzle-orm";
 import { db, candlesTable, backtestRunsTable, backtestTradesTable, platformStateTable, tradesTable, signalLogTable, ticksTable, spikeEventsTable, featuresTable, modelRunsTable } from "@workspace/db";
 import { getDerivClientWithDbToken, getDbApiToken, getDbApiTokenForMode, V1_DEFAULT_SYMBOLS } from "../lib/deriv.js";
 import { checkOpenAiHealth, isOpenAIConfigured, analyseBacktest, type BacktestMetrics } from "../lib/openai.js";
-import { runBacktestSimulation } from "../lib/backtestEngine.js";
+import { runBacktestSimulation, runSymbolBacktest } from "../lib/backtestEngine.js";
 import { getApiSymbol, validateActiveSymbols } from "../lib/symbolValidator.js";
+import { pruneOldCandles } from "./research.js";
 
 const router: IRouter = Router();
 
@@ -15,6 +16,8 @@ const MAX_BATCH = 5000;
 const MAX_CONSECUTIVE_ERRORS = 5;
 const DEFAULT_CAPITAL = 600;
 const API_RATE_DELAY_MS = 150;
+const TWELVE_MONTHS_SECONDS = 365 * 24 * 3600;
+const MIN_SYMBOLS_FOR_PROCEED = 8;
 const AI_LOCKABLE_KEYS = [
   "equity_pct_per_trade", "paper_equity_pct_per_trade", "live_equity_pct_per_trade",
   "tp_multiplier_strong", "tp_multiplier_medium", "tp_multiplier_weak",
@@ -149,16 +152,17 @@ async function queryOldestAvailableEpoch(
   granularity: number
 ): Promise<number | null> {
   try {
-    const earlyEpoch = Math.floor(new Date("2020-01-01").getTime() / 1000);
-    const resp = await client.getCandleHistoryWithEnd(apiSymbol, granularity, 1, earlyEpoch, true);
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    const oneYearAgoEpoch = nowEpoch - TWELVE_MONTHS_SECONDS;
+    const resp = await client.getCandleHistoryWithEnd(apiSymbol, granularity, 1, oneYearAgoEpoch, true);
     if (resp && resp.length > 0) {
-      return resp[0].epoch;
+      return Math.max(resp[0].epoch, oneYearAgoEpoch);
     }
     const resp2 = await client.getCandleHistoryWithEnd(apiSymbol, granularity, 1, undefined, true);
     if (resp2 && resp2.length > 0) {
-      return resp2[0].epoch;
+      return Math.max(resp2[0].epoch, oneYearAgoEpoch);
     }
-    return null;
+    return oneYearAgoEpoch;
   } catch {
     return null;
   }
@@ -185,15 +189,18 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     ];
     const totalJobs = V1_DEFAULT_SYMBOLS.length * timeframes.length;
 
+    await pruneOldCandles();
+
     send({
       phase: "backfill_probing",
       stage: "backfill",
-      message: `Probing Deriv API for available history ranges across ${V1_DEFAULT_SYMBOLS.length} symbols...`,
+      message: `Probing Deriv API for available history ranges across ${V1_DEFAULT_SYMBOLS.length} symbols (12-month limit)...`,
       totalSymbols: V1_DEFAULT_SYMBOLS.length,
     });
 
     const symbolExpected: Record<string, { oldestEpoch: number | null; totalExpected1m: number; totalExpected5m: number; connected: boolean }> = {};
     const nowEpoch = Math.floor(Date.now() / 1000);
+    const oneYearAgoEpoch = nowEpoch - TWELVE_MONTHS_SECONDS;
 
     for (let si = 0; si < V1_DEFAULT_SYMBOLS.length; si++) {
       const symbol = V1_DEFAULT_SYMBOLS[si];
@@ -223,9 +230,10 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
         await new Promise(r => setTimeout(r, API_RATE_DELAY_MS));
       }
 
-      const rangeSeconds = oldestEpoch ? (nowEpoch - oldestEpoch) : 0;
-      const expected1m = oldestEpoch ? Math.ceil(rangeSeconds / 60) : 0;
-      const expected5m = oldestEpoch ? Math.ceil(rangeSeconds / 300) : 0;
+      const effectiveOldest = oldestEpoch ? Math.max(oldestEpoch, oneYearAgoEpoch) : oneYearAgoEpoch;
+      const rangeSeconds = effectiveOldest ? (nowEpoch - effectiveOldest) : 0;
+      const expected1m = rangeSeconds > 0 ? Math.ceil(rangeSeconds / 60) : 0;
+      const expected5m = rangeSeconds > 0 ? Math.ceil(rangeSeconds / 300) : 0;
 
       symbolExpected[symbol] = { oldestEpoch, totalExpected1m: expected1m, totalExpected5m: expected5m, connected };
 
@@ -399,17 +407,20 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
 
           const sorted = [...candles].sort((a, b) => a.epoch - b.epoch);
           const earliestEpoch = sorted[0].epoch;
-          oldestDateStr = new Date(earliestEpoch * 1000).toISOString().slice(0, 10);
+          oldestDateStr = new Date(Math.max(earliestEpoch, oneYearAgoEpoch) * 1000).toISOString().slice(0, 10);
+
+          const filteredByDate = sorted.filter(c => c.epoch >= oneYearAgoEpoch);
+          if (filteredByDate.length === 0) break;
 
           const existingTs = await db.select({ openTs: candlesTable.openTs })
             .from(candlesTable)
             .where(and(
               eq(candlesTable.symbol, symbol),
               eq(candlesTable.timeframe, tf),
-              inArray(candlesTable.openTs, sorted.map(c => c.epoch))
+              inArray(candlesTable.openTs, filteredByDate.map(c => c.epoch))
             ));
           const existingSet = new Set(existingTs.map(r => r.openTs));
-          const newRows = sorted.filter(c => !existingSet.has(c.epoch)).map(c => ({
+          const newRows = filteredByDate.filter(c => !existingSet.has(c.epoch)).map(c => ({
             symbol, timeframe: tf, openTs: c.epoch, closeTs: c.epoch + granularity,
             open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close), tickCount: 0,
           }));
@@ -423,9 +434,10 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
           }
 
           if (candles.length < MAX_BATCH) break;
+          if (earliestEpoch <= oneYearAgoEpoch) break;
 
           const newEnd = earliestEpoch - 1;
-          if (newEnd >= endEpoch) break;
+          if (newEnd >= endEpoch || newEnd < oneYearAgoEpoch) break;
           endEpoch = newEnd;
 
           const symbolPct = tfExpected > 0
@@ -482,8 +494,8 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
       });
     }
 
-    const successCount = V1_DEFAULT_SYMBOLS.length - failedSymbols.length;
     const uniqueFailedSymbols = [...new Set(failedSymbols.map(f => f.symbol))];
+    const successCount = V1_DEFAULT_SYMBOLS.length - uniqueFailedSymbols.length;
 
     if (successCount === 0) {
       send({
@@ -496,6 +508,16 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
       return;
     }
 
+    if (successCount < MIN_SYMBOLS_FOR_PROCEED) {
+      send({
+        phase: "backfill_partial_warning", stage: "backfill",
+        successCount,
+        failedCount: uniqueFailedSymbols.length,
+        failedSymbols: failedSymbols.map(f => ({ symbol: f.symbol, error: f.error, timeframe: f.timeframe })),
+        message: `Warning: Only ${successCount}/${V1_DEFAULT_SYMBOLS.length} symbols succeeded. Failed: ${uniqueFailedSymbols.join(", ")}. Proceeding with available data — fix failed symbols from Research > Data Status.`,
+      });
+    }
+
     send({
       phase: "backfill_complete", stage: "backfill", candleTotal,
       overallPct: 40,
@@ -503,8 +525,8 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
       failedCount: uniqueFailedSymbols.length,
       failedSymbols: failedSymbols.map(f => ({ symbol: f.symbol, error: f.error, timeframe: f.timeframe })),
       message: successCount === V1_DEFAULT_SYMBOLS.length
-        ? `Step 1 complete — ${candleTotal.toLocaleString()} candles downloaded for all ${V1_DEFAULT_SYMBOLS.length} symbols.`
-        : `Step 1 complete — ${candleTotal.toLocaleString()} candles downloaded (${successCount}/${V1_DEFAULT_SYMBOLS.length} symbols succeeded, ${uniqueFailedSymbols.length} failed: ${uniqueFailedSymbols.join(", ")}).`,
+        ? `Step 1 complete — ${candleTotal.toLocaleString()} candles downloaded for all ${V1_DEFAULT_SYMBOLS.length} symbols (12-month history).`
+        : `Step 1 complete — ${candleTotal.toLocaleString()} candles downloaded (${successCount}/${V1_DEFAULT_SYMBOLS.length} symbols succeeded, ${uniqueFailedSymbols.length} failed: ${uniqueFailedSymbols.join(", ")}). Re-download failed symbols from Research > Data Status.`,
     });
 
     const states = await db.select().from(platformStateTable);
@@ -513,21 +535,14 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
 
     const enabledSymbols = stateMap["enabled_symbols"]
       ? stateMap["enabled_symbols"].split(",").filter(Boolean)
-      : V1_DEFAULT_SYMBOLS;
+      : V1_DEFAULT_SYMBOLS.filter(s => !uniqueFailedSymbols.includes(s));
     const initialCapital = parseFloat(stateMap["total_capital"] || String(DEFAULT_CAPITAL));
 
-    const combinations: { strategy: string; symbol: string }[] = [];
-    for (const strategy of STRATEGIES) {
-      for (const symbol of enabledSymbols) {
-        combinations.push({ strategy, symbol });
-      }
-    }
-
-    const btTotal = combinations.length;
+    const btTotal = enabledSymbols.length;
     send({
       phase: "backtest_start", stage: "backtest",
       btTotal, overallPct: 40,
-      message: `Step 2 of 6: Running ${STRATEGIES.length} strategies × ${enabledSymbols.length} symbols — ${btTotal} backtests`,
+      message: `Step 2 of 6: Running all ${STRATEGIES.length} strategies on ${enabledSymbols.length} symbols — ${btTotal} backtests (1 per symbol)`,
     });
 
     const strategyAgg: Record<string, {
@@ -543,52 +558,74 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     let btCompleted = 0;
     const btStart = Date.now();
 
-    for (const { strategy, symbol } of combinations) {
+    for (const symbol of enabledSymbols) {
       try {
-        const result = await runBacktestSimulation(strategy, symbol, initialCapital, "balanced");
+        const btResult = await runSymbolBacktest(symbol, initialCapital, "balanced");
 
         const [row] = await db.insert(backtestRunsTable).values({
-          strategyName: strategy, symbol, initialCapital,
-          totalReturn: result.totalReturn, netProfit: result.netProfit,
-          winRate: result.winRate, profitFactor: result.profitFactor,
-          maxDrawdown: result.maxDrawdown, tradeCount: result.tradeCount,
-          avgHoldingHours: result.avgHoldingHours, expectancy: result.expectancy,
-          sharpeRatio: result.sharpeRatio,
-          configJson: { allocationMode: "balanced", symbol, strategyName: strategy, source: "initial-setup" },
+          strategyName: "all_strategies",
+          symbol,
+          initialCapital,
+          totalReturn: btResult.portfolioMetrics.totalReturn,
+          netProfit: btResult.portfolioMetrics.netProfit,
+          winRate: btResult.portfolioMetrics.winRate,
+          profitFactor: btResult.portfolioMetrics.profitFactor,
+          maxDrawdown: btResult.portfolioMetrics.maxDrawdown,
+          tradeCount: btResult.portfolioMetrics.tradeCount,
+          avgHoldingHours: btResult.portfolioMetrics.avgHoldingHours,
+          expectancy: btResult.portfolioMetrics.expectancy,
+          sharpeRatio: btResult.portfolioMetrics.sharpeRatio,
+          configJson: {
+            allocationMode: "balanced",
+            symbol,
+            strategies: btResult.profitableStrategies.map(s => s.strategyName),
+            source: "initial-setup",
+          },
           metricsJson: {
-            equityCurve: result.equityCurve, grossProfit: result.grossProfit,
-            grossLoss: result.grossLoss, avgWin: result.avgWin, avgLoss: result.avgLoss,
-            maxDrawdownDuration: result.maxDrawdownDuration, monthlyReturns: result.monthlyReturns,
-            returnBySymbol: result.returnBySymbol, returnByRegime: result.returnByRegime,
+            equityCurve: btResult.portfolioMetrics.equityCurve,
+            strategyBreakdown: btResult.profitableStrategies,
           },
           status: "completed",
         }).returning();
 
-        if (row && result.trades.length > 0) {
-          await db.insert(backtestTradesTable).values(
-            result.trades.map(t => ({
-              backtestRunId: row.id, entryTs: t.entryTs, exitTs: t.exitTs,
-              direction: t.direction, entryPrice: t.entryPrice, exitPrice: t.exitPrice,
-              pnl: t.pnl, exitReason: t.exitReason,
-            }))
+        if (row && btResult.trades.length > 0) {
+          const profitableTrades = btResult.trades.filter(t =>
+            btResult.profitableStrategies.some(s => s.strategyName === t.strategyName)
           );
+          for (let i = 0; i < profitableTrades.length; i += 500) {
+            const batch = profitableTrades.slice(i, i + 500);
+            await db.insert(backtestTradesTable).values(
+              batch.map(t => ({
+                backtestRunId: row.id, entryTs: t.entryTs, exitTs: t.exitTs,
+                direction: t.direction, entryPrice: t.entryPrice, exitPrice: t.exitPrice,
+                pnl: t.pnl, exitReason: t.exitReason,
+              }))
+            );
+          }
         }
 
-        const r = strategyAgg[strategy];
-        r.count++;
-        if (result.sharpeRatio > 0 && result.tradeCount > 0) { r.sharpeSum += result.sharpeRatio; r.sharpeCount++; }
-        r.holdSum += result.avgHoldingHours;
-        r.drawdownSum += Math.abs(result.maxDrawdown);
-        r.winRateSum += result.winRate;
-        if (result.profitFactor > 0) {
-          r.tpSum += Math.min(Math.max(1.5 + result.profitFactor * 0.4, 1.2), 4.0);
-          r.slSum += Math.min(Math.max(1.0 / result.profitFactor, 0.5), 2.0);
-        } else { r.tpSum += 2.0; r.slSum += 1.0; }
-        r.equitySum += Math.min(Math.max(result.winRate * 20, 8), 15);
+        for (const ps of btResult.profitableStrategies) {
+          const r = strategyAgg[ps.strategyName as keyof typeof strategyAgg];
+          if (!r) continue;
+          r.count++;
+          if (ps.sharpeRatio > 0) { r.sharpeSum += ps.sharpeRatio; r.sharpeCount++; }
+          r.holdSum += ps.avgHoldingHours;
+          r.winRateSum += ps.winRate;
+          if (ps.profitFactor > 0 && ps.profitFactor !== Infinity) {
+            r.tpSum += Math.min(Math.max(1.5 + ps.profitFactor * 0.4, 1.2), 4.0);
+            r.slSum += Math.min(Math.max(1.0 / ps.profitFactor, 0.5), 2.0);
+          } else { r.tpSum += 2.0; r.slSum += 1.0; }
+          r.equitySum += Math.min(Math.max(ps.winRate * 20, 8), 15);
 
-        if (result.tradeCount >= 3) {
-          const comboScore = (result.sharpeRatio * 0.4) + (result.winRate * 0.25) + (result.profitFactor * 0.2) + (result.expectancy * 0.15);
-          comboResults.push({ strategy, symbol, sharpe: result.sharpeRatio, winRate: result.winRate, profitFactor: result.profitFactor, avgHold: result.avgHoldingHours, score: comboScore });
+          if (ps.tradeCount >= 3) {
+            const comboScore = (ps.sharpeRatio * 0.4) + (ps.winRate * 0.25) + (ps.profitFactor * 0.2) + (ps.expectancy * 0.15);
+            comboResults.push({
+              strategy: ps.strategyName, symbol,
+              sharpe: ps.sharpeRatio, winRate: ps.winRate,
+              profitFactor: ps.profitFactor, avgHold: ps.avgHoldingHours,
+              score: comboScore,
+            });
+          }
         }
       } catch { /* skip */ }
 
@@ -601,9 +638,9 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
       send({
         phase: "backtest_progress", stage: "backtest",
         btCompleted, btTotal, candleTotal,
-        strategy, symbol, overallPct,
+        strategy: "all_strategies", symbol, overallPct,
         estRemainingSec: btRemaining,
-        message: `Backtesting ${strategy.replace(/-/g, " ")} on ${symbol} (${btCompleted}/${btTotal})`,
+        message: `Backtesting all strategies on ${symbol} (${btCompleted}/${btTotal})`,
       });
     }
 
@@ -621,7 +658,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
         bestStrategy: bestCombo.strategy,
         bestScore: bestCombo.score,
         avgWinRate, avgProfitFactor: avgPf, avgHoldHours: avgHold,
-        message: `${sym}: ${symCombos.length} combos, best=${bestCombo.strategy} (WR=${(bestCombo.winRate * 100).toFixed(0)}%, PF=${bestCombo.profitFactor.toFixed(2)})`,
+        message: `${sym}: ${symCombos.length} profitable strategies — best=${bestCombo.strategy} (WR=${(bestCombo.winRate * 100).toFixed(0)}%, PF=${bestCombo.profitFactor.toFixed(2)})`,
       });
     }
 
@@ -645,8 +682,8 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
       if (aiAvailable && best) {
         try {
           const btRows = await db.select().from(backtestRunsTable)
-            .where(and(eq(backtestRunsTable.symbol, sym), eq(backtestRunsTable.strategyName, best.strategy), eq(backtestRunsTable.status, "completed")));
-          const btRow = btRows[0];
+            .where(and(eq(backtestRunsTable.symbol, sym), eq(backtestRunsTable.strategyName, "all_strategies"), eq(backtestRunsTable.status, "completed")));
+          const btRow = btRows[btRows.length - 1];
           if (btRow) {
             const metrics: BacktestMetrics = {
               id: btRow.id,

@@ -326,6 +326,12 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
               },
             }));
           }
+        } else if (phase === "backfill_partial_warning") {
+          setInitStatus(evt.message as string);
+          const failed = evt.failedSymbols as Array<{ symbol: string; error: string; timeframe: string }>;
+          if (failed && failed.length > 0) {
+            setFailedSymbols(failed);
+          }
         } else if (phase === "backfill_complete") {
           setInitProgress(40);
           setInitStatus(evt.message as string);
@@ -1031,8 +1037,8 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                     <Database className="w-10 h-10 text-blue-400 mx-auto" />
                     <h2 className="text-lg font-semibold">System Initialisation</h2>
                     <p className="text-muted-foreground text-sm max-w-md mx-auto">
-                      Download ALL available 1m & 5m price history, run all strategies as backtests
-                      across every symbol, and AI-optimise your settings. This may take a while.
+                      Download 12 months of 1m & 5m price history, run all 4 strategies per symbol
+                      as backtests, and AI-optimise your settings. This may take a while.
                     </p>
                     <div className="flex justify-center gap-3">
                       <Button variant="outline" onClick={goBack} className="px-6">
@@ -1074,7 +1080,7 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                         {[...new Set(failedSymbols.map(f => f.symbol))].length} symbol(s) had download issues
                       </p>
                       <p className="text-[10px] text-muted-foreground">
-                        {[...new Set(failedSymbols.map(f => f.symbol))].join(", ")} — you can re-download from Settings &gt; Data tab later.
+                        {[...new Set(failedSymbols.map(f => f.symbol))].join(", ")} — re-download from Research &gt; Data Status.
                       </p>
                     </div>
                   )}

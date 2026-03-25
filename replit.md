@@ -62,9 +62,11 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 
 **System Modes:** `idle` (no stream), `scanning` (stream on, no execution modes), `paper`/`demo`/`live` (execution modes active).
 
-**Startup Order (Railway/production):** DB init → Listen on PORT → Start scheduler → AI auto-config → Symbol validation → 3-year candle backfill (paginated) → Tick streaming → Health at /api/healthz
+**Startup Order (Railway/production):** DB init → Listen on PORT → Start scheduler → AI auto-config → Symbol validation → 12-month candle backfill (paginated, partial success ≥8/12) → Tick streaming → Health at /api/healthz
 
-**Data Backfill:** On startup, auto-backfills 3 years of 1m and 5m candle history for all 12 symbols via paginated Deriv API calls (5,000 candles per page). Uses `onConflictDoNothing` so re-runs fill gaps without duplicating. Settings > Data tab provides manual trigger, per-symbol progress bars, and stored data summary table. API endpoints: `POST /api/data/backfill/start`, `GET /api/data/backfill/progress`, `GET /api/data/backfill/summary`.
+**Data Backfill:** On startup, auto-backfills 12 months of 1m and 5m candle history for all 12 symbols via paginated Deriv API calls (5,000 candles per page). Uses `onConflictDoNothing` so re-runs fill gaps without duplicating. Partial success model: proceeds if ≥8/12 symbols succeed; failed symbols shown with "Re-download from Research > Data Status". Data older than 12 months is automatically pruned.
+
+**Research Page:** Overhauled with Data Status section (per-symbol health cards), Download & Simulate (SSE per-symbol), Re-run Backtest, grouped backtest results by symbol (only profitable strategies), and AI Chat per backtest. Routes in `artifacts/api-server/src/routes/research.ts`. Backtests now run 1 pass per symbol with all 4 strategies, storing strategyBreakdown in metricsJson (12 backtests instead of 48).
 
 ## External Dependencies
 

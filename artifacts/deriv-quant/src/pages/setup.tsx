@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
-import { CheckCircle2, Circle, Loader2, AlertCircle, Database, BarChart3, Zap, ArrowRight, ArrowLeft, Key, Eye, EyeOff, Brain, Radio } from "lucide-react";
+import { CheckCircle2, Circle, Loader2, AlertCircle, Database, BarChart3, Zap, ArrowRight, ArrowLeft, Key, Eye, EyeOff, Brain, Radio, RefreshCw, RotateCcw, Wifi, WifiOff, AlertTriangle, ChevronDown, ChevronUp, XCircle } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL || "/";
 const api = (path: string) => `${BASE}api${path}`;
@@ -50,6 +50,27 @@ function formatTime(seconds: number): string {
   return `${seconds}s`;
 }
 
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toLocaleString();
+}
+
+interface SymbolBackfillInfo {
+  status: "probing" | "waiting" | "downloading" | "done" | "error" | "retrying";
+  candles: number;
+  oldestDate: string | null;
+  pct: number;
+  error?: string;
+  errorCode?: string;
+  connected: boolean;
+  expected: number;
+  apiSymbol?: string;
+  timeframe?: string;
+  retryAttempt?: number;
+  retryMax?: number;
+}
+
 export default function SetupWizard({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState<Step>("welcome");
   const [derivTokenDemo, setDerivTokenDemo] = useState("");
@@ -67,9 +88,13 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
   const [btCompleted, setBtCompleted] = useState(0);
   const [btTotal, setBtTotal] = useState(0);
   const [estRemainingSec, setEstRemainingSec] = useState(0);
-  const [symbolProgress, setSymbolProgress] = useState<Record<string, { status: string; candles: number; oldestDate: string | null; pct?: number; error?: string }>>({});
+  const [symbolProgress, setSymbolProgress] = useState<Record<string, SymbolBackfillInfo>>({});
   const [btSymbolResults, setBtSymbolResults] = useState<Record<string, { strategy: string; winRate: number; profitFactor: number; score: number; tradeCount: number; avgHoldHours: number }>>({});
   const [aiReviews, setAiReviews] = useState<Record<string, { summary: string | null; suggestions: string[] | null; bestStrategy: string; winRate: number; profitFactor: number }>>({});
+  const [failedSymbols, setFailedSymbols] = useState<{ symbol: string; error: string; timeframe: string }[]>([]);
+  const [grandTotalExpected, setGrandTotalExpected] = useState(0);
+  const [backfillExpanded, setBackfillExpanded] = useState(true);
+  const [resetting, setResetting] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -139,7 +164,7 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
     setError(null);
     setInitProgress(1);
     setInitStage("backfill");
-    setInitStatus("Starting initialisation...");
+    setInitStatus("Probing Deriv API for available data ranges...");
     setCandleTotal(0);
     setBtCompleted(0);
     setBtTotal(0);
@@ -147,6 +172,9 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
     setSymbolProgress({});
     setBtSymbolResults({});
     setAiReviews({});
+    setFailedSymbols([]);
+    setGrandTotalExpected(0);
+    setBackfillExpanded(true);
     abortRef.current = new AbortController();
     completedRef.current = false;
 
@@ -155,18 +183,60 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
         const phase = evt.phase as string;
         const pct = (evt.overallPct as number) || 0;
 
-        if (phase === "backfill_start") {
+        if (phase === "backfill_probing") {
           setInitStage("backfill");
           setInitStatus(evt.message as string);
-          const syms = evt.symbols as Array<{ symbol: string; status: string; candles: number; oldestDate: string | null }>;
+        } else if (phase === "backfill_probe_result") {
+          const sym = evt.symbol as string;
+          const connected = evt.connected as boolean;
+          setSymbolProgress(prev => ({
+            ...prev,
+            [sym]: {
+              status: connected ? "probing" : "error",
+              candles: 0,
+              oldestDate: (evt.oldestAvailableDate as string) || null,
+              pct: 0,
+              connected,
+              expected: (evt.totalExpected as number) || 0,
+              error: connected ? undefined : "Connection failed — unable to reach Deriv API for this symbol",
+              errorCode: connected ? undefined : "CONNECTION_FAILED",
+            },
+          }));
+          setInitStatus(evt.message as string);
+        } else if (phase === "backfill_start") {
+          setInitStage("backfill");
+          setInitStatus(evt.message as string);
+          setGrandTotalExpected((evt.grandTotalExpected as number) || 0);
+          const syms = evt.symbols as Array<{ symbol: string; status: string; candles: number; oldestDate: string | null; expected: number; connected: boolean; error: string | null }>;
           if (syms) {
-            const map: Record<string, { status: string; candles: number; oldestDate: string | null; pct?: number }> = {};
-            for (const s of syms) map[s.symbol] = { status: s.status, candles: s.candles, oldestDate: s.oldestDate, pct: 0 };
+            const map: Record<string, SymbolBackfillInfo> = {};
+            for (const s of syms) {
+              map[s.symbol] = {
+                status: s.connected ? "waiting" : "error",
+                candles: s.candles,
+                oldestDate: s.oldestDate,
+                pct: 0,
+                connected: s.connected,
+                expected: s.expected || 0,
+                error: s.error || undefined,
+                errorCode: s.connected ? undefined : "CONNECTION_FAILED",
+              };
+            }
             setSymbolProgress(map);
           }
         } else if (phase === "backfill_symbol_start") {
           const sym = evt.symbol as string;
-          setSymbolProgress(prev => ({ ...prev, [sym]: { status: "downloading", candles: 0, oldestDate: null, pct: 0 } }));
+          setSymbolProgress(prev => ({
+            ...prev,
+            [sym]: {
+              ...prev[sym],
+              status: "downloading",
+              candles: 0,
+              pct: 0,
+              apiSymbol: (evt.apiSymbol as string) || undefined,
+              expected: (evt.totalExpected as number) || prev[sym]?.expected || 0,
+            },
+          }));
           setInitStatus(evt.message as string);
         } else if (phase === "backfill_progress") {
           setInitStage("backfill");
@@ -178,24 +248,62 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
             setSymbolProgress(prev => ({
               ...prev,
               [sym]: {
+                ...prev[sym],
                 status: "downloading",
                 candles: evt.candlesForSymbol as number || 0,
-                oldestDate: evt.oldestDate as string || null,
+                oldestDate: evt.oldestDate as string || prev[sym]?.oldestDate || null,
                 pct: evt.symbolPct as number || prev[sym]?.pct || 0,
+                expected: evt.totalExpected as number || prev[sym]?.expected || 0,
+                connected: true,
+                timeframe: evt.timeframe as string || undefined,
               },
             }));
           }
+        } else if (phase === "backfill_retry") {
+          const sym = evt.symbol as string;
+          if (sym) {
+            setSymbolProgress(prev => ({
+              ...prev,
+              [sym]: {
+                ...prev[sym],
+                status: "retrying",
+                retryAttempt: evt.attempt as number || 0,
+                retryMax: evt.maxAttempts as number || MAX_CONSECUTIVE_ERRORS,
+                error: evt.error as string || "Retrying...",
+                errorCode: evt.errorCode as string || "RETRYING",
+              },
+            }));
+          }
+          setInitStatus(evt.message as string);
         } else if (phase === "backfill_symbol_error") {
           const sym = evt.symbol as string;
           if (sym) {
             setSymbolProgress(prev => ({
               ...prev,
               [sym]: {
+                ...prev[sym],
                 status: "error",
-                candles: prev[sym]?.candles || 0,
-                oldestDate: prev[sym]?.oldestDate || null,
-                pct: prev[sym]?.pct || 0,
                 error: evt.error as string || "Failed",
+                errorCode: evt.errorCode as string || "UNKNOWN",
+                candles: evt.candlesForSymbol as number || prev[sym]?.candles || 0,
+              },
+            }));
+            setFailedSymbols(prev => [...prev, {
+              symbol: sym,
+              error: evt.error as string || "Unknown error",
+              timeframe: evt.timeframe as string || "unknown",
+            }]);
+          }
+          setInitStatus(evt.message as string);
+        } else if (phase === "backfill_symbol_failed") {
+          const sym = evt.symbol as string;
+          if (sym) {
+            setSymbolProgress(prev => ({
+              ...prev,
+              [sym]: {
+                ...prev[sym],
+                status: "error",
+                candles: evt.candlesForSymbol as number || prev[sym]?.candles || 0,
               },
             }));
           }
@@ -208,7 +316,14 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
           if (sym) {
             setSymbolProgress(prev => ({
               ...prev,
-              [sym]: { status: "done", candles: evt.candlesForSymbol as number || 0, oldestDate: prev[sym]?.oldestDate || null, pct: 100 },
+              [sym]: {
+                ...prev[sym],
+                status: "done",
+                candles: evt.candlesForSymbol as number || 0,
+                pct: 100,
+                connected: true,
+                expected: evt.totalExpected as number || prev[sym]?.expected || 0,
+              },
             }));
           }
         } else if (phase === "backfill_complete") {
@@ -216,6 +331,10 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
           setInitStatus(evt.message as string);
           setCandleTotal(evt.candleTotal as number || 0);
           setEstRemainingSec(0);
+          const failed = evt.failedSymbols as Array<{ symbol: string; error: string; timeframe: string }>;
+          if (failed && failed.length > 0) {
+            setFailedSymbols(failed);
+          }
         } else if (phase === "backtest_start") {
           setInitStage("backtest");
           setBtTotal(evt.btTotal as number || 0);
@@ -296,6 +415,8 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
           setCandleTotal(evt.candleTotal as number || 0);
           setBtCompleted(evt.btCompleted as number || 0);
           setEstRemainingSec(0);
+          const failed = evt.failedSymbols as Array<{ symbol: string; error: string; timeframe: string }>;
+          if (failed && failed.length > 0) setFailedSymbols(failed);
           queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
           queryClient.invalidateQueries({ queryKey: ["/api/setup/status"] });
           setStep("complete");
@@ -303,6 +424,8 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
           completedRef.current = true;
           setError(evt.message as string);
           setInitStage("error");
+          const failed = evt.failedSymbols as Array<{ symbol: string; error: string; timeframe: string }>;
+          if (failed && failed.length > 0) setFailedSymbols(failed);
         }
       }, abortRef.current.signal);
 
@@ -316,10 +439,40 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
     }
   }, [queryClient]);
 
+  const handleResetSetup = useCallback(async () => {
+    setResetting(true);
+    try {
+      const res = await fetch(api("/setup/reset"), { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setError(null);
+        setInitProgress(0);
+        setInitStage("backfill");
+        setInitStatus("");
+        setCandleTotal(0);
+        setBtCompleted(0);
+        setBtTotal(0);
+        setSymbolProgress({});
+        setBtSymbolResults({});
+        setAiReviews({});
+        setFailedSymbols([]);
+        setGrandTotalExpected(0);
+        completedRef.current = false;
+        queryClient.invalidateQueries({ queryKey: ["/api/setup/status"] });
+      } else {
+        setError(data.message || "Reset failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reset failed");
+    } finally {
+      setResetting(false);
+    }
+  }, [queryClient]);
+
   const stepDefs = [
     { label: "Welcome" },
     { label: "API Keys" },
-    { label: "Backfill → Backtest → AI" },
+    { label: "Backfill \u2192 Backtest \u2192 AI" },
     { label: "Ready" },
   ];
 
@@ -341,9 +494,14 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
     setStep(indexToStep[targetIndex]);
   };
 
+  const connectedCount = Object.values(symbolProgress).filter(s => s.connected).length;
+  const doneCount = Object.values(symbolProgress).filter(s => s.status === "done").length;
+  const errorCount = Object.values(symbolProgress).filter(s => s.status === "error").length;
+  const downloadingCount = Object.values(symbolProgress).filter(s => s.status === "downloading" || s.status === "retrying").length;
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl">
+      <div className="w-full max-w-3xl">
         <div className="text-center mb-8">
           <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
             <Zap className="w-8 h-8 text-primary" />
@@ -379,12 +537,35 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
         <Card className="border-border/50 bg-card">
           <CardContent className="p-8">
             {error && (
-              <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-destructive">Error</p>
-                  <p className="text-sm text-destructive/80 mt-1">{error}</p>
+              <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-destructive">Error</p>
+                    <p className="text-sm text-destructive/80 mt-1">{error}</p>
+                  </div>
                 </div>
+                {(initStage === "error" || (failedSymbols.length > 0 && initProgress > 0)) && (
+                  <div className="flex gap-2 mt-4 ml-8">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={runInitialise}
+                      className="text-xs border-primary/30 text-primary hover:bg-primary/10"
+                    >
+                      <RefreshCw className="w-3 h-3 mr-1.5" /> Retry Setup
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleResetSetup}
+                      disabled={resetting}
+                      className="text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
+                    >
+                      <RotateCcw className="w-3 h-3 mr-1.5" /> {resetting ? "Resetting..." : "Reset & Start Over"}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -590,20 +771,24 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                         {initStage === "optimise" && "Step 4 of 6: AI-Optimised Settings"}
                         {initStage === "streaming" && "Step 5 of 6: Starting Live Stream"}
                         {initStage === "complete" && "Step 6 of 6: Complete"}
+                        {initStage === "error" && "Setup Failed"}
                       </h2>
                       <p className="text-xs text-muted-foreground">
-                        {initStage === "backfill" && "Fetching all available 1m & 5m candle data from Deriv"}
+                        {initStage === "backfill" && (grandTotalExpected > 0
+                          ? `Fetching ~${formatNumber(grandTotalExpected)} total records (1m & 5m candles) from Deriv`
+                          : "Fetching all available 1m & 5m candle data from Deriv")}
                         {initStage === "backtest" && "Testing all strategies across every symbol"}
                         {initStage === "ai_review" && "Analysing each symbol's best strategy and performance"}
                         {initStage === "optimise" && "Computing optimal parameters from backtest results"}
                         {initStage === "streaming" && "Connecting to live market data feeds"}
                         {initStage === "complete" && "Your platform is ready"}
+                        {initStage === "error" && "An error occurred during setup"}
                       </p>
                     </div>
 
                     <div className="space-y-2">
                       <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
-                        <span>{initProgress}%</span>
+                        <span>{initProgress}%{candleTotal > 0 && initStage === "backfill" ? ` \u2022 ${formatNumber(candleTotal)} records` : ""}</span>
                         {estRemainingSec > 0 && (
                           <span>~{formatTime(estRemainingSec)} remaining</span>
                         )}
@@ -611,10 +796,31 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                       <Progress value={initProgress} className="h-3" />
                     </div>
 
+                    {initStage === "backfill" && (
+                      <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+                        <div className="flex gap-3">
+                          <span className="flex items-center gap-1">
+                            <Wifi className="w-3 h-3 text-green-400" /> {connectedCount} connected
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Database className="w-3 h-3 text-blue-400" /> {downloadingCount} downloading
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-green-400" /> {doneCount} done
+                          </span>
+                          {errorCount > 0 && (
+                            <span className="flex items-center gap-1 text-red-400">
+                              <XCircle className="w-3 h-3" /> {errorCount} failed
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-6 gap-1.5">
                       {([
-                        { key: "backfill", icon: Database, label: "Backfill", activeBg: "bg-blue-500/10 border-blue-500/30", activeIcon: "text-blue-400", value: candleTotal > 0 ? candleTotal.toLocaleString() : "—" },
-                        { key: "backtest", icon: BarChart3, label: "Replay", activeBg: "bg-purple-500/10 border-purple-500/30", activeIcon: "text-purple-400", value: btTotal > 0 ? `${btCompleted}/${btTotal}` : "—" },
+                        { key: "backfill", icon: Database, label: "Backfill", activeBg: "bg-blue-500/10 border-blue-500/30", activeIcon: "text-blue-400", value: candleTotal > 0 ? formatNumber(candleTotal) : "\u2014" },
+                        { key: "backtest", icon: BarChart3, label: "Replay", activeBg: "bg-purple-500/10 border-purple-500/30", activeIcon: "text-purple-400", value: btTotal > 0 ? `${btCompleted}/${btTotal}` : "\u2014" },
                         { key: "ai_review", icon: Brain, label: "Review", activeBg: "bg-amber-500/10 border-amber-500/30", activeIcon: "text-amber-400 animate-pulse", value: null },
                         { key: "optimise", icon: Zap, label: "Optimise", activeBg: "bg-emerald-500/10 border-emerald-500/30", activeIcon: "text-emerald-400 animate-pulse", value: null },
                         { key: "streaming", icon: Radio, label: "Stream", activeBg: "bg-cyan-500/10 border-cyan-500/30", activeIcon: "text-cyan-400", value: null },
@@ -638,7 +844,7 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                             }`} />
                             <p className="text-[9px] font-medium leading-tight">{s.label}</p>
                             <p className="text-[10px] font-bold tabular-nums mt-0.5">
-                              {s.value ? s.value : isDone ? <CheckCircle2 className="w-3 h-3 text-green-400 mx-auto" /> : isActive ? <Loader2 className="w-3 h-3 animate-spin mx-auto" /> : "—"}
+                              {s.value ? s.value : isDone ? <CheckCircle2 className="w-3 h-3 text-green-400 mx-auto" /> : isActive ? <Loader2 className="w-3 h-3 animate-spin mx-auto" /> : "\u2014"}
                             </p>
                           </div>
                         );
@@ -646,41 +852,114 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                     </div>
 
                     {initStage === "backfill" && Object.keys(symbolProgress).length > 0 && (
-                      <div className="space-y-1.5 max-h-64 overflow-y-auto rounded-lg border border-border/30 p-3">
-                        <p className="text-xs font-medium text-muted-foreground mb-2">Per-Symbol Progress</p>
-                        {Object.entries(symbolProgress).map(([sym, info]) => {
-                          const barPct = info.status === "done" ? 100 : info.status === "error" ? (info.pct || 0) : (info.pct || 0);
-                          return (
-                            <div key={sym} className="flex items-center gap-2 text-xs">
-                              <span className="w-24 font-medium truncate">{sym}</span>
-                              <div className="flex-1 h-2 bg-muted/40 rounded-full overflow-hidden">
-                                <div
-                                  className={`h-full rounded-full transition-all duration-300 ${
-                                    info.status === "done" ? "bg-green-500" :
-                                    info.status === "error" ? "bg-red-500" :
-                                    info.status === "downloading" ? "bg-blue-500" :
-                                    "bg-muted"
-                                  }`}
-                                  style={{ width: `${Math.max(barPct, info.status === "downloading" ? 2 : 0)}%` }}
-                                />
-                              </div>
-                              <span className="w-20 text-right tabular-nums text-muted-foreground">
-                                {info.status === "done" ? (
-                                  <span className="text-green-400">{info.candles.toLocaleString()}</span>
-                                ) : info.status === "error" ? (
-                                  <span className="text-red-400">Error</span>
-                                ) : info.status === "downloading" ? (
-                                  <span className="text-blue-400">{info.candles > 0 ? info.candles.toLocaleString() : `${barPct}%`}</span>
-                                ) : (
-                                  "waiting"
-                                )}
-                              </span>
-                              {info.oldestDate && (
-                                <span className="w-20 text-right text-[10px] text-muted-foreground/70">{info.oldestDate}</span>
-                              )}
-                            </div>
-                          );
-                        })}
+                      <div className="rounded-lg border border-border/30 overflow-hidden">
+                        <button
+                          onClick={() => setBackfillExpanded(!backfillExpanded)}
+                          className="w-full flex items-center justify-between px-3 py-2 bg-muted/10 hover:bg-muted/20 transition-colors"
+                        >
+                          <span className="text-xs font-medium text-muted-foreground">
+                            Per-Symbol Status ({doneCount}/{Object.keys(symbolProgress).length} complete)
+                          </span>
+                          {backfillExpanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+                        </button>
+                        {backfillExpanded && (
+                          <div className="p-3 space-y-2 max-h-[400px] overflow-y-auto">
+                            {Object.entries(symbolProgress).map(([sym, info]) => {
+                              const progressPct = info.status === "done" ? 100 : info.pct || 0;
+                              return (
+                                <div key={sym} className={`rounded-lg border p-2.5 transition-colors ${
+                                  info.status === "done" ? "border-green-500/20 bg-green-500/5" :
+                                  info.status === "error" ? "border-red-500/20 bg-red-500/5" :
+                                  info.status === "downloading" ? "border-blue-500/20 bg-blue-500/5" :
+                                  info.status === "retrying" ? "border-amber-500/20 bg-amber-500/5" :
+                                  "border-border/20 bg-muted/5"
+                                }`}>
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <div className="flex items-center gap-2">
+                                      {info.status === "done" ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400" /> :
+                                       info.status === "error" ? <XCircle className="w-3.5 h-3.5 text-red-400" /> :
+                                       info.status === "downloading" ? <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" /> :
+                                       info.status === "retrying" ? <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin" /> :
+                                       info.status === "probing" ? <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" /> :
+                                       <Circle className="w-3.5 h-3.5 text-muted-foreground" />}
+                                      <span className="text-xs font-semibold text-foreground">{sym}</span>
+                                      {info.connected ? (
+                                        <span className="flex items-center gap-0.5 text-[9px] text-green-400/80">
+                                          <Wifi className="w-2.5 h-2.5" /> API OK
+                                        </span>
+                                      ) : (
+                                        <span className="flex items-center gap-0.5 text-[9px] text-red-400/80">
+                                          <WifiOff className="w-2.5 h-2.5" /> No Connection
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2 text-[10px] tabular-nums">
+                                      {info.status === "done" && (
+                                        <span className="text-green-400 font-semibold">{formatNumber(info.candles)} records</span>
+                                      )}
+                                      {info.status === "downloading" && info.expected > 0 && (
+                                        <span className="text-blue-400">
+                                          {formatNumber(info.candles)} / {formatNumber(info.expected)}
+                                          <span className="text-muted-foreground ml-1">({progressPct}%)</span>
+                                        </span>
+                                      )}
+                                      {info.status === "downloading" && info.expected === 0 && info.candles > 0 && (
+                                        <span className="text-blue-400">{formatNumber(info.candles)} records</span>
+                                      )}
+                                      {info.status === "retrying" && (
+                                        <span className="text-amber-400">
+                                          Retry {info.retryAttempt}/{info.retryMax}
+                                        </span>
+                                      )}
+                                      {info.status === "error" && info.candles > 0 && (
+                                        <span className="text-muted-foreground">{formatNumber(info.candles)} partial</span>
+                                      )}
+                                      {info.timeframe && info.status === "downloading" && (
+                                        <span className="text-muted-foreground/60">{info.timeframe}</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {(info.status === "downloading" || info.status === "done" || info.status === "retrying") && (
+                                    <div className="h-1.5 bg-muted/30 rounded-full overflow-hidden">
+                                      <div
+                                        className={`h-full rounded-full transition-all duration-500 ${
+                                          info.status === "done" ? "bg-green-500" :
+                                          info.status === "retrying" ? "bg-amber-500" :
+                                          "bg-blue-500"
+                                        }`}
+                                        style={{ width: `${Math.max(progressPct, info.status === "downloading" ? 1 : 0)}%` }}
+                                      />
+                                    </div>
+                                  )}
+
+                                  {info.oldestDate && (
+                                    <div className="mt-1 text-[9px] text-muted-foreground/60">
+                                      Data available from: {info.oldestDate}
+                                      {info.expected > 0 && ` \u2022 ~${formatNumber(info.expected)} total expected`}
+                                    </div>
+                                  )}
+
+                                  {info.status === "error" && info.error && (
+                                    <div className="mt-1.5 p-2 rounded bg-red-500/5 border border-red-500/10">
+                                      <div className="flex items-start gap-1.5">
+                                        <AlertTriangle className="w-3 h-3 text-red-400 mt-0.5 shrink-0" />
+                                        <div>
+                                          {info.errorCode && (
+                                            <span className="text-[9px] font-mono text-red-400/80 block mb-0.5">
+                                              {info.errorCode}
+                                            </span>
+                                          )}
+                                          <p className="text-[10px] text-red-400/70 leading-snug">{info.error}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -730,6 +1009,22 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                     )}
 
                     <p className="text-sm text-muted-foreground text-center">{initStatus}</p>
+
+                    {initStage === "error" && (
+                      <div className="flex justify-center gap-3 mt-2">
+                        <Button variant="outline" onClick={runInitialise} className="px-6">
+                          <RefreshCw className="w-4 h-4 mr-2" /> Retry Setup
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={handleResetSetup}
+                          disabled={resetting}
+                          className="px-6 border-destructive/30 text-destructive hover:bg-destructive/10"
+                        >
+                          <RotateCcw className="w-4 h-4 mr-2" /> {resetting ? "Resetting..." : "Reset & Start Over"}
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-center space-y-4">
@@ -766,13 +1061,23 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                   <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto text-sm">
                     <div className="p-3 rounded-lg bg-muted/20 border border-border/40">
                       <p className="text-xs text-muted-foreground">Candles Loaded</p>
-                      <p className="font-bold tabular-nums">{candleTotal > 0 ? candleTotal.toLocaleString() : "—"}</p>
+                      <p className="font-bold tabular-nums">{candleTotal > 0 ? candleTotal.toLocaleString() : "\u2014"}</p>
                     </div>
                     <div className="p-3 rounded-lg bg-muted/20 border border-border/40">
                       <p className="text-xs text-muted-foreground">Backtests Run</p>
-                      <p className="font-bold tabular-nums">{btCompleted > 0 ? btCompleted : "—"}</p>
+                      <p className="font-bold tabular-nums">{btCompleted > 0 ? btCompleted : "\u2014"}</p>
                     </div>
                   </div>
+                  {failedSymbols.length > 0 && (
+                    <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 max-w-sm mx-auto">
+                      <p className="text-xs text-amber-400 font-medium mb-1">
+                        {[...new Set(failedSymbols.map(f => f.symbol))].length} symbol(s) had download issues
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {[...new Set(failedSymbols.map(f => f.symbol))].join(", ")} — you can re-download from Settings &gt; Data tab later.
+                      </p>
+                    </div>
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground max-w-md mx-auto">
                   All modes start inactive. Enable Paper, Demo, or Real trading from the Settings page

@@ -14,6 +14,7 @@ const GRANULARITY_5M = 300;
 const MAX_BATCH = 5000;
 const MAX_CONSECUTIVE_ERRORS = 5;
 const DEFAULT_CAPITAL = 600;
+const API_RATE_DELAY_MS = 150;
 const AI_LOCKABLE_KEYS = [
   "equity_pct_per_trade", "paper_equity_pct_per_trade", "live_equity_pct_per_trade",
   "tp_multiplier_strong", "tp_multiplier_medium", "tp_multiplier_weak",
@@ -142,6 +143,27 @@ router.get("/setup/status", async (_req, res): Promise<void> => {
   }
 });
 
+async function queryOldestAvailableEpoch(
+  client: Awaited<ReturnType<typeof getDerivClientWithDbToken>>,
+  apiSymbol: string,
+  granularity: number
+): Promise<number | null> {
+  try {
+    const earlyEpoch = Math.floor(new Date("2020-01-01").getTime() / 1000);
+    const resp = await client.getCandleHistoryWithEnd(apiSymbol, granularity, 1, earlyEpoch, true);
+    if (resp && resp.length > 0) {
+      return resp[0].epoch;
+    }
+    const resp2 = await client.getCandleHistoryWithEnd(apiSymbol, granularity, 1, undefined, true);
+    if (resp2 && resp2.length > 0) {
+      return resp2[0].epoch;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 router.post("/setup/initialise", async (_req, res): Promise<void> => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -164,14 +186,92 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     const totalJobs = V1_DEFAULT_SYMBOLS.length * timeframes.length;
 
     send({
+      phase: "backfill_probing",
+      stage: "backfill",
+      message: `Probing Deriv API for available history ranges across ${V1_DEFAULT_SYMBOLS.length} symbols...`,
+      totalSymbols: V1_DEFAULT_SYMBOLS.length,
+    });
+
+    const symbolExpected: Record<string, { oldestEpoch: number | null; totalExpected1m: number; totalExpected5m: number; connected: boolean }> = {};
+    const nowEpoch = Math.floor(Date.now() / 1000);
+
+    for (let si = 0; si < V1_DEFAULT_SYMBOLS.length; si++) {
+      const symbol = V1_DEFAULT_SYMBOLS[si];
+      const apiSymbol = getApiSymbol(symbol);
+      let connected = false;
+      let oldestEpoch: number | null = null;
+
+      try {
+        const probeResult = await client.getCandleHistoryWithEnd(apiSymbol, GRANULARITY_1M, 1, undefined, true);
+        if (probeResult && probeResult.length > 0) {
+          connected = true;
+        }
+      } catch {
+        try {
+          await client.connect();
+          const probeResult2 = await client.getCandleHistoryWithEnd(apiSymbol, GRANULARITY_1M, 1, undefined, true);
+          if (probeResult2 && probeResult2.length > 0) {
+            connected = true;
+          }
+        } catch {
+          connected = false;
+        }
+      }
+
+      if (connected) {
+        oldestEpoch = await queryOldestAvailableEpoch(client, apiSymbol, GRANULARITY_1M);
+        await new Promise(r => setTimeout(r, API_RATE_DELAY_MS));
+      }
+
+      const rangeSeconds = oldestEpoch ? (nowEpoch - oldestEpoch) : 0;
+      const expected1m = oldestEpoch ? Math.ceil(rangeSeconds / 60) : 0;
+      const expected5m = oldestEpoch ? Math.ceil(rangeSeconds / 300) : 0;
+
+      symbolExpected[symbol] = { oldestEpoch, totalExpected1m: expected1m, totalExpected5m: expected5m, connected };
+
+      const oldestDateStr = oldestEpoch ? new Date(oldestEpoch * 1000).toISOString().slice(0, 10) : null;
+
+      send({
+        phase: "backfill_probe_result",
+        stage: "backfill",
+        symbol,
+        symbolIndex: si,
+        totalSymbols: V1_DEFAULT_SYMBOLS.length,
+        connected,
+        oldestAvailableDate: oldestDateStr,
+        oldestEpoch,
+        expected1m,
+        expected5m,
+        totalExpected: expected1m + expected5m,
+        message: connected
+          ? `${symbol}: connected — data from ${oldestDateStr || "unknown"} (~${(expected1m + expected5m).toLocaleString()} records)`
+          : `${symbol}: connection failed`,
+      });
+    }
+
+    const connectedCount = Object.values(symbolExpected).filter(s => s.connected).length;
+    const grandTotalExpected = Object.values(symbolExpected).reduce((s, e) => s + e.totalExpected1m + e.totalExpected5m, 0);
+
+    send({
       phase: "backfill_start",
       stage: "backfill",
-      message: `Step 1 of 6: Downloading ALL available 1m & 5m price history for ${V1_DEFAULT_SYMBOLS.length} symbols...`,
+      message: `Step 1 of 6: Downloading history for ${connectedCount}/${V1_DEFAULT_SYMBOLS.length} symbols (~${grandTotalExpected.toLocaleString()} total records)...`,
       totalSymbols: V1_DEFAULT_SYMBOLS.length,
-      symbols: V1_DEFAULT_SYMBOLS.map(s => ({ symbol: s, status: "waiting", candles: 0, oldestDate: null })),
+      connectedCount,
+      grandTotalExpected,
+      symbols: V1_DEFAULT_SYMBOLS.map(s => ({
+        symbol: s,
+        status: symbolExpected[s].connected ? "waiting" : "error",
+        candles: 0,
+        oldestDate: symbolExpected[s].oldestEpoch ? new Date(symbolExpected[s].oldestEpoch! * 1000).toISOString().slice(0, 10) : null,
+        expected: symbolExpected[s].totalExpected1m + symbolExpected[s].totalExpected5m,
+        connected: symbolExpected[s].connected,
+        error: symbolExpected[s].connected ? null : "Could not connect to Deriv API for this symbol",
+      })),
     });
 
     let jobsDone = 0;
+    const failedSymbols: { symbol: string; error: string; timeframe: string }[] = [];
 
     for (let si = 0; si < V1_DEFAULT_SYMBOLS.length; si++) {
       const symbol = V1_DEFAULT_SYMBOLS[si];
@@ -179,11 +279,29 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
       let symbolTotalInserted = 0;
       let symbolFailed = false;
 
+      if (!symbolExpected[symbol].connected) {
+        send({
+          phase: "backfill_symbol_error", stage: "backfill", symbol,
+          symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
+          status: "error", timeframe: "1m",
+          errorCode: "CONNECTION_FAILED",
+          error: `Cannot connect to Deriv API for ${symbol} (API name: ${apiSymbol}). The symbol may be temporarily unavailable.`,
+          message: `${symbol}: skipped — connection failed`,
+        });
+        failedSymbols.push({ symbol, error: "CONNECTION_FAILED", timeframe: "1m" });
+        jobsDone += timeframes.length;
+        continue;
+      }
+
+      const symbolTotalExpected = symbolExpected[symbol].totalExpected1m + symbolExpected[symbol].totalExpected5m;
+
       send({
         phase: "backfill_symbol_start", stage: "backfill", symbol,
         symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
         status: "downloading", symbolPct: 0,
-        message: `Starting ${symbol} (${si + 1}/${V1_DEFAULT_SYMBOLS.length})...`,
+        apiSymbol,
+        totalExpected: symbolTotalExpected,
+        message: `Starting ${symbol} (${si + 1}/${V1_DEFAULT_SYMBOLS.length}) — ~${symbolTotalExpected.toLocaleString()} records expected...`,
       });
 
       for (const { tf, granularity } of timeframes) {
@@ -192,6 +310,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
         let oldestDateStr: string | null = null;
         let page = 0;
         let consecutiveErrors = 0;
+        const tfExpected = tf === "1m" ? symbolExpected[symbol].totalExpected1m : symbolExpected[symbol].totalExpected5m;
 
         while (true) {
           page++;
@@ -203,20 +322,32 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
             consecutiveErrors++;
             const errMsg = err instanceof Error ? err.message : String(err);
             if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+              const errorCode = errMsg.includes("not connected") ? "WS_DISCONNECTED"
+                : errMsg.includes("timed out") ? "REQUEST_TIMEOUT"
+                : errMsg.includes("rate") ? "RATE_LIMITED"
+                : "API_ERROR";
               send({
                 phase: "backfill_symbol_error", stage: "backfill", symbol,
                 symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
                 status: "error", timeframe: tf,
+                errorCode,
                 error: `Failed after ${consecutiveErrors} retries: ${errMsg}`,
                 message: `${symbol} ${tf} failed: ${errMsg}`,
+                candlesForSymbol: symbolTotalInserted,
               });
+              failedSymbols.push({ symbol, error: `${errorCode}: ${errMsg}`, timeframe: tf });
               symbolFailed = true;
               break;
             }
             if (errMsg.includes("not connected") || errMsg.includes("timed out") || errMsg.includes("WebSocket")) {
               send({
-                phase: "backfill_progress", stage: "backfill", symbol,
+                phase: "backfill_retry", stage: "backfill", symbol,
                 symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
+                timeframe: tf,
+                attempt: consecutiveErrors,
+                maxAttempts: MAX_CONSECUTIVE_ERRORS,
+                errorCode: "WS_RECONNECTING",
+                error: errMsg,
                 message: `${symbol} ${tf}: connection lost, reconnecting (attempt ${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS})...`,
               });
               await new Promise(r => setTimeout(r, 3000));
@@ -226,6 +357,16 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
                 await new Promise(r => setTimeout(r, 5000));
               }
             } else {
+              send({
+                phase: "backfill_retry", stage: "backfill", symbol,
+                symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
+                timeframe: tf,
+                attempt: consecutiveErrors,
+                maxAttempts: MAX_CONSECUTIVE_ERRORS,
+                errorCode: "RETRYING",
+                error: errMsg,
+                message: `${symbol} ${tf}: error, retrying (attempt ${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS})...`,
+              });
               await new Promise(r => setTimeout(r, 2000));
             }
             continue;
@@ -237,9 +378,12 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
                 phase: "backfill_symbol_error", stage: "backfill", symbol,
                 symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
                 status: "error", timeframe: tf,
+                errorCode: "NULL_RESPONSE",
                 error: `API returned null after ${consecutiveErrors} retries`,
-                message: `${symbol} ${tf} failed: API returned null data`,
+                message: `${symbol} ${tf} failed: API returned empty response`,
+                candlesForSymbol: symbolTotalInserted,
               });
+              failedSymbols.push({ symbol, error: `NULL_RESPONSE: API returned null after ${consecutiveErrors} retries`, timeframe: tf });
               symbolFailed = true;
               break;
             }
@@ -284,24 +428,31 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
           if (newEnd >= endEpoch) break;
           endEpoch = newEnd;
 
-          if (page % 3 === 0) {
-            const estPagesPerTf = Math.max(page + 20, 100);
-            const tfFrac = Math.min(page / estPagesPerTf, 0.95);
-            const jobFrac = (jobsDone + tfFrac) / totalJobs;
-            const overallPct = Math.round(jobFrac * 40);
-            const symbolJobsDone = jobsDone - si * timeframes.length;
-            const symbolPct = Math.round(((symbolJobsDone + tfFrac) / timeframes.length) * 100);
+          const symbolPct = tfExpected > 0
+            ? Math.min(Math.round((symbolTotalInserted / symbolTotalExpected) * 100), 99)
+            : Math.min(Math.round((page / Math.max(page + 20, 50)) * 100), 99);
+
+          if (page % 2 === 0) {
+            const jobFrac = (jobsDone + (symbolTotalInserted / Math.max(symbolTotalExpected, 1))) / totalJobs;
+            const overallPct = Math.max(Math.round(jobFrac * 40), 1);
             send({
               phase: "backfill_progress", stage: "backfill", symbol,
               symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
-              timeframe: tf, candlesForSymbol: symbolTotalInserted, candleTotal,
+              timeframe: tf,
+              candlesForSymbol: symbolTotalInserted,
+              candleTotal,
               oldestDate: oldestDateStr,
-              overallPct, symbolPct: Math.min(symbolPct, 99),
+              overallPct,
+              symbolPct,
+              totalExpected: symbolTotalExpected,
+              tfExpected,
+              tfFetched: tfInserted,
+              page,
               message: `${symbol} ${tf}: ${tfInserted.toLocaleString()} candles (oldest: ${oldestDateStr})`,
             });
           }
 
-          await new Promise(r => setTimeout(r, 100));
+          await new Promise(r => setTimeout(r, API_RATE_DELAY_MS));
         }
 
         if (symbolFailed) break;
@@ -310,11 +461,13 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
 
       if (symbolFailed) {
         send({
-          phase: "error", stage: "backfill",
-          message: `Setup failed: could not download history for ${symbol}. Please check your connection and try again.`,
+          phase: "backfill_symbol_failed", stage: "backfill", symbol,
+          symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
+          candlesForSymbol: symbolTotalInserted, candleTotal,
+          status: "failed",
+          message: `${symbol} failed — ${symbolTotalInserted.toLocaleString()} candles downloaded before error`,
         });
-        res.end();
-        return;
+        continue;
       }
 
       const overallPct = Math.round((jobsDone / totalJobs) * 40);
@@ -323,15 +476,35 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
         symbolIndex: si, totalSymbols: V1_DEFAULT_SYMBOLS.length,
         candlesForSymbol: symbolTotalInserted, candleTotal,
         overallPct, symbolPct: 100,
+        totalExpected: symbolExpected[symbol].totalExpected1m + symbolExpected[symbol].totalExpected5m,
         status: "done",
         message: `${symbol} done — ${symbolTotalInserted.toLocaleString()} candles`,
       });
     }
 
+    const successCount = V1_DEFAULT_SYMBOLS.length - failedSymbols.length;
+    const uniqueFailedSymbols = [...new Set(failedSymbols.map(f => f.symbol))];
+
+    if (successCount === 0) {
+      send({
+        phase: "error", stage: "backfill",
+        errorCode: "ALL_SYMBOLS_FAILED",
+        failedSymbols: failedSymbols.map(f => ({ symbol: f.symbol, error: f.error, timeframe: f.timeframe })),
+        message: `Setup failed: all ${V1_DEFAULT_SYMBOLS.length} symbols failed to download. Check your Deriv API connection and try again.`,
+      });
+      res.end();
+      return;
+    }
+
     send({
       phase: "backfill_complete", stage: "backfill", candleTotal,
       overallPct: 40,
-      message: `Step 1 complete — ${candleTotal.toLocaleString()} candles downloaded. Starting backtests...`,
+      successCount,
+      failedCount: uniqueFailedSymbols.length,
+      failedSymbols: failedSymbols.map(f => ({ symbol: f.symbol, error: f.error, timeframe: f.timeframe })),
+      message: successCount === V1_DEFAULT_SYMBOLS.length
+        ? `Step 1 complete — ${candleTotal.toLocaleString()} candles downloaded for all ${V1_DEFAULT_SYMBOLS.length} symbols.`
+        : `Step 1 complete — ${candleTotal.toLocaleString()} candles downloaded (${successCount}/${V1_DEFAULT_SYMBOLS.length} symbols succeeded, ${uniqueFailedSymbols.length} failed: ${uniqueFailedSymbols.join(", ")}).`,
     });
 
     const states = await db.select().from(platformStateTable);
@@ -656,6 +829,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     send({
       phase: "complete", stage: "complete", overallPct: 100,
       candleTotal, btCompleted, btTotal,
+      failedSymbols: failedSymbols.map(f => ({ symbol: f.symbol, error: f.error, timeframe: f.timeframe })),
       message: `Step 6 of 6: Complete — ${candleTotal.toLocaleString()} candles, ${btCompleted} backtests, settings optimised, streaming live (${totalSec}s)`,
     });
 

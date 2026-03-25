@@ -307,7 +307,7 @@ router.post("/settings", async (req, res): Promise<void> => {
 
     if (!ALL_SETTING_KEYS.includes(key)) continue;
 
-    const BOOLEAN_KEYS = ["kill_switch", "ai_verification_enabled", "paper_mode_active", "demo_mode_active", "real_mode_active"];
+    const BOOLEAN_KEYS = ["kill_switch", "ai_verification_enabled", "paper_mode_active", "demo_mode_active", "real_mode_active", "paper_auto_extraction", "demo_auto_extraction", "real_auto_extraction"];
     const ALLOCATION_KEYS = ["allocation_mode", "paper_allocation_mode", "demo_allocation_mode", "real_allocation_mode"];
     const STRING_LIST_KEYS = [
       "enabled_symbols", "paper_enabled_symbols", "demo_enabled_symbols", "real_enabled_symbols",

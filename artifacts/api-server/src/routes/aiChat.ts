@@ -349,7 +349,9 @@ async function buildDynamicContext(): Promise<string> {
 
       recentTradesSummary = `Last 7 days: ${recentTrades.length} trades (${openCount} open, ${closedRecent.length} closed) | Win rate: ${winRate}% | Total PnL: $${totalPnl.toFixed(2)}`;
     }
-  } catch { /* table may be empty */ }
+  } catch (err) {
+    console.warn("[AiChat] Failed to query recent trades for context:", err instanceof Error ? err.message : err);
+  }
 
   let sections = `\n--- CURRENT SYSTEM STATE ---\n`;
   sections += `\nActive Modes:\n${modesSummary}\n`;
@@ -661,7 +663,7 @@ async function handleAnalyzeSignals(args: { days?: number; focus: string }): Pro
       const rejected = total - allowed;
       const byFamily: Record<string, { total: number; allowed: number }> = {};
       for (const s of signals) {
-        const fam = (s as any).strategyFamily || s.strategyName;
+        const fam = s.strategyFamily || s.strategyName;
         if (!byFamily[fam]) byFamily[fam] = { total: 0, allowed: 0 };
         byFamily[fam].total++;
         if (s.allowedFlag) byFamily[fam].allowed++;
@@ -699,7 +701,7 @@ async function handleAnalyzeSignals(args: { days?: number; focus: string }): Pro
     case "regime_distribution": {
       const regimes: Record<string, number> = {};
       for (const s of signals) {
-        const r = (s as any).regime || "unknown";
+        const r = s.regime || "unknown";
         regimes[r] = (regimes[r] || 0) + 1;
       }
       return JSON.stringify({

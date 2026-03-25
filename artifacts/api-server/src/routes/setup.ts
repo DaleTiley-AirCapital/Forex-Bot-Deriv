@@ -180,6 +180,13 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
   };
   const globalStart = Date.now();
 
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(`: heartbeat ${Date.now()}\n\n`);
+      if (typeof (res as any).flush === "function") (res as any).flush();
+    } catch {}
+  }, 10_000);
+
   try {
     const nowEpoch = Math.floor(Date.now() / 1000);
     const oneYearAgoEpoch = nowEpoch - TWELVE_MONTHS_SECONDS;
@@ -474,6 +481,7 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
         failedSymbols: failedSymbols.map(f => ({ symbol: f.symbol, error: f.error, timeframe: f.timeframe })),
         message: `Setup failed: all ${V1_DEFAULT_SYMBOLS.length} symbols failed to download. Check your Deriv API connection and try again.`,
       });
+      clearInterval(heartbeat);
       res.end();
       return;
     }
@@ -841,8 +849,10 @@ router.post("/setup/initialise", async (_req, res): Promise<void> => {
     });
 
     res.write("data: [DONE]\n\n");
+    clearInterval(heartbeat);
     res.end();
   } catch (err) {
+    clearInterval(heartbeat);
     send({ phase: "error", message: err instanceof Error ? err.message : "Initialisation failed" });
     res.end();
   }

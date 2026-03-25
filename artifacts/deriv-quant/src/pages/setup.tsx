@@ -436,11 +436,16 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
       }, abortRef.current.signal);
 
       if (!completedRef.current) {
-        setError("Setup stream ended unexpectedly. Please try again.");
+        setError("Connection to server lost during setup. Click 'Retry Setup' to reconnect — data already downloaded is preserved.");
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        setError(err instanceof Error ? err.message : "Initialisation failed");
+        const msg = err instanceof Error ? err.message : "Initialisation failed";
+        if (msg === "Load failed" || msg === "Failed to fetch" || msg === "NetworkError when attempting to fetch resource.") {
+          setError("Network connection lost. The server may still be downloading data. Click 'Retry Setup' to reconnect.");
+        } else {
+          setError(msg);
+        }
       }
     }
   }, [queryClient]);

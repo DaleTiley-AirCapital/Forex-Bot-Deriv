@@ -70,4 +70,13 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 
 -   **Deriv:** For synthetic indices trading, market data, and account management via WebSocket API.
 -   **PostgreSQL:** Primary database for persistent storage.
--   **OpenAI GPT-4o:** Used for AI-powered backtest analysis and signal verification.
+-   **OpenAI GPT-4o:** Used for AI-powered backtest analysis, signal verification, and the AI chatbot advisor.
+
+## AI Chatbot System
+The AI chatbot (`/api/ai/chat`) is a comprehensive trading advisor with:
+- **Full system knowledge**: 12-section knowledge base covering all platform concepts, strategy families, signal pipeline, position sizing formulas, trade lifecycle, capital extraction, settings glossary, regime definitions, and technical glossary
+- **Dynamic context injection**: Each conversation includes live system state (active modes, capital, recent performance, pending AI suggestions)
+- **Trade analysis tool** (`analyze_trades`): Queries recent trades with 7 focus modes (overview, by_strategy, by_symbol, durations, tp_sl_effectiveness, recent_closed, open_positions)
+- **Signal analysis tool** (`analyze_signals`): Queries signal logs with 5 focus modes (hit_rates, rejection_reasons, regime_distribution, score_distribution, by_symbol)
+- **Suggestion writing** (`write_suggestions`): Writes ai_suggest_ keys only — never changes actual settings
+- **Changelog section**: Tracks recent system changes so the AI stays current

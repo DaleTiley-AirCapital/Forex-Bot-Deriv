@@ -14,7 +14,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 
 **Core Layers:**
 1.  **Data Collector:** Handles tick ingestion, candle building, and spike event detection.
-2.  **Backtesting Engine:** A production-grade simulator for strategies, including trailing stops, multi-layer time exits, confidence-scaled position sizing, and portfolio-level equity management. Supports walk-forward testing and provides comprehensive metrics.
+2.  **Backtesting Engine (V2):** A production-grade simulator mirroring live V2 logic — S/R + Fibonacci TP/SL, 30% profit-based trailing stop, 72h/168h time exits, confidence-scaled position sizing, and portfolio-level equity management. Supports walk-forward testing and provides comprehensive metrics.
 3.  **Probability Model:** Focuses on feature engineering and gradient boost scoring.
 4.  **Strategy Engine:** Incorporates four strategy families: trend_continuation (trend pullback), mean_reversion (exhaustion rebound, liquidity sweep), breakout_expansion (volatility breakout, volatility expansion), spike_event (spike hazard).
 5.  **Risk & Capital Manager:** Manages portfolio allocation, daily/weekly/max-drawdown limits, correlated family caps, and includes a kill switch mechanism.
@@ -37,8 +37,8 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
     -   **Signal Router:** Manages conflict resolution, multi-asset ranking, and tiered allocation.
     -   **AI Signal Verification:** GPT-4o powered verification of signals.
     -   **Signal Scheduler:** Manages staggered symbol scanning and position management.
-    -   **Trade Engine:** Implements a 3-stage position building, dynamic TP, trailing stop, profit harvesting, and a 3-layer time exit mechanism.
-    -   **Extraction Engine:** Manages capital cycles, targeting profit percentages for auto-extraction. All harvesting thresholds (peak drawdown exit, min peak profit, large peak threshold) are configurable per-mode via settings UI.
+    -   **Trade Engine (V2):** S/R + Fibonacci confluence TP/SL (swing highs/lows, fib retracement/extension, BB bands), 30% profit-based trailing stop, simplified time exits (72h profitable close, 168h hard cap). One position per symbol (no multi-stage building). See `V2_SPECIFICATION.md`.
+    -   **Extraction Engine:** Manages capital cycles, targeting profit percentages for auto-extraction.
     -   **Symbol Diagnostics:** `/api/diagnostics/symbols` endpoint and Settings > Diagnostics tab show per-symbol stream health, validation status, tick counts, and errors.
 -   **Database Schema:** Key tables include `ticks`, `candles`, `spike_events`, `features`, `model_runs`, `backtest_trades`, `backtest_runs`, `trades`, `signal_log`, and `platform_state`.
 

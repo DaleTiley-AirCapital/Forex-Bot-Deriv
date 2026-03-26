@@ -1,9 +1,12 @@
 import type { FeatureVector } from "./features.js";
+import { db, platformStateTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 export type RegimeState =
   | "trend_up"
   | "trend_down"
   | "mean_reversion"
+  | "ranging"
   | "compression"
   | "breakout_expansion"
   | "spike_zone"
@@ -32,14 +35,27 @@ export function classifyInstrument(symbol: string): InstrumentFamily {
 }
 
 const STRATEGY_PERMISSION_MATRIX: Record<RegimeState, StrategyFamily[]> = {
-  trend_up: ["trend_continuation"],
-  trend_down: ["trend_continuation"],
+  trend_up: ["trend_continuation", "breakout_expansion"],
+  trend_down: ["trend_continuation", "breakout_expansion"],
   mean_reversion: ["mean_reversion"],
+  ranging: ["mean_reversion", "spike_event"],
   compression: ["breakout_expansion"],
-  breakout_expansion: ["breakout_expansion"],
+  breakout_expansion: ["breakout_expansion", "trend_continuation"],
   spike_zone: ["spike_event"],
   no_trade: [],
 };
+
+const REGIME_CACHE_TTL_MS = 60 * 60 * 1000;
+
+interface CachedRegime {
+  regime: RegimeState;
+  confidence: number;
+  allowedFamilies: StrategyFamily[];
+  instrumentFamily: InstrumentFamily;
+  cachedAt: number;
+}
+
+const inMemoryRegimeCache: Record<string, CachedRegime> = {};
 
 export function classifyRegime(features: FeatureVector): RegimeClassification {
   const instrumentFamily = classifyInstrument(features.symbol);
@@ -76,27 +92,79 @@ export function classifyRegime(features: FeatureVector): RegimeClassification {
   } else if (strongTrend && !isOverstretched) {
     regime = features.emaSlope > 0 ? "trend_up" : "trend_down";
     confidence = Math.min(0.80, 0.4 + slopeAbs * 400);
+  } else if (isOverstretched || rsiExtreme) {
+    regime = "mean_reversion";
+    confidence = 0.55;
   } else {
-    const conflictingSignals =
-      (features.rsi14 > 40 && features.rsi14 < 60) &&
-      slopeAbs < 0.0002 &&
-      features.bbWidth > 0.003 && features.bbWidth < 0.012;
-
-    if (conflictingSignals) {
-      regime = "no_trade";
-      confidence = 0.6;
-    } else if (isOverstretched || rsiExtreme) {
-      regime = "mean_reversion";
-      confidence = 0.55;
-    } else {
-      regime = "no_trade";
-      confidence = 0.5;
-    }
+    regime = "ranging";
+    confidence = 0.60;
   }
 
   const allowedFamilies = STRATEGY_PERMISSION_MATRIX[regime];
 
   return { regime, confidence, allowedFamilies, instrumentFamily };
+}
+
+export async function getCachedRegime(symbol: string, features?: FeatureVector): Promise<RegimeClassification | null> {
+  const now = Date.now();
+  const cached = inMemoryRegimeCache[symbol];
+  if (cached && (now - cached.cachedAt) < REGIME_CACHE_TTL_MS) {
+    return {
+      regime: cached.regime,
+      confidence: cached.confidence,
+      allowedFamilies: cached.allowedFamilies,
+      instrumentFamily: cached.instrumentFamily,
+    };
+  }
+
+  const cacheKey = `regime_cache_${symbol}`;
+  try {
+    const rows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, cacheKey));
+    if (rows.length > 0) {
+      const parsed = JSON.parse(rows[0].value);
+      if (parsed.cachedAt && (now - parsed.cachedAt) < REGIME_CACHE_TTL_MS) {
+        const result: RegimeClassification = {
+          regime: parsed.regime,
+          confidence: parsed.confidence,
+          allowedFamilies: STRATEGY_PERMISSION_MATRIX[parsed.regime as RegimeState] || [],
+          instrumentFamily: parsed.instrumentFamily,
+        };
+        inMemoryRegimeCache[symbol] = { ...result, cachedAt: parsed.cachedAt };
+        return result;
+      }
+    }
+  } catch {
+  }
+
+  if (features) {
+    const fresh = classifyRegime(features);
+    await cacheRegime(symbol, fresh);
+    return fresh;
+  }
+
+  return null;
+}
+
+export async function cacheRegime(symbol: string, regime: RegimeClassification): Promise<void> {
+  const now = Date.now();
+  const cacheKey = `regime_cache_${symbol}`;
+  const value = JSON.stringify({
+    regime: regime.regime,
+    confidence: regime.confidence,
+    instrumentFamily: regime.instrumentFamily,
+    cachedAt: now,
+  });
+
+  inMemoryRegimeCache[symbol] = {
+    ...regime,
+    cachedAt: now,
+  };
+
+  try {
+    await db.insert(platformStateTable).values({ key: cacheKey, value })
+      .onConflictDoUpdate({ target: platformStateTable.key, set: { value, updatedAt: new Date() } });
+  } catch {
+  }
 }
 
 export function isStrategyAllowedForRegime(family: StrategyFamily, regime: RegimeState): boolean {

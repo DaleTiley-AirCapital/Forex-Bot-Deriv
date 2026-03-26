@@ -4,7 +4,7 @@ import { routeSignals, logSignalDecisions } from "./signalRouter.js";
 import type { ScoringWeights } from "./scoring.js";
 import { openPosition, manageOpenPositions } from "./tradeEngine.js";
 import { verifySignal } from "./openai.js";
-import { classifyRegime, classifyInstrument } from "./regimeEngine.js";
+import { classifyRegime, classifyInstrument, getCachedRegime, cacheRegime } from "./regimeEngine.js";
 import { db, platformStateTable, tradesTable, candlesTable, backtestRunsTable, backtestTradesTable } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
 import { runBacktestSimulation } from "./backtestEngine.js";
@@ -81,7 +81,11 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
     return;
   }
 
-  const regime = classifyRegime(features);
+  const cachedRegime = await getCachedRegime(symbol, features);
+  const regime = cachedRegime ?? classifyRegime(features);
+  if (!cachedRegime) {
+    await cacheRegime(symbol, regime);
+  }
 
   if (regime.regime === "no_trade") {
     console.log(`[Scan] ${symbol} | regime=${regime.regime} | conf=${regime.confidence.toFixed(2)} | SKIP=no_trade_regime`);
@@ -178,7 +182,6 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
             instrumentFamily: classifyInstrument(decision.signal.symbol),
             macroBiasModifier: 0,
             compositeScore: decision.signal.compositeScore,
-            entryStage: (decision.signal as any).entryStage || "probe",
             expectedValue: decision.signal.expectedValue,
             suggestedTp: decision.signal.suggestedTp ?? undefined,
             suggestedSl: decision.signal.suggestedSl ?? undefined,
@@ -340,15 +343,13 @@ const STRATEGIES_LIST = [
   "spike_event",
 ] as const;
 const AI_LOCKABLE_KEYS = [
-  "equity_pct_per_trade", "paper_equity_pct_per_trade", "live_equity_pct_per_trade",
-  "tp_multiplier_strong", "tp_multiplier_medium", "tp_multiplier_weak",
-  "sl_ratio", "trailing_stop_pct", "time_exit_window_hours",
-  "paper_tp_multiplier_strong", "paper_tp_multiplier_medium", "paper_tp_multiplier_weak",
-  "paper_sl_ratio", "paper_trailing_stop_pct", "paper_time_exit_window_hours",
-  "demo_tp_multiplier_strong", "demo_tp_multiplier_medium", "demo_tp_multiplier_weak",
-  "demo_sl_ratio", "demo_trailing_stop_pct", "demo_equity_pct_per_trade", "demo_time_exit_window_hours",
-  "real_tp_multiplier_strong", "real_tp_multiplier_medium", "real_tp_multiplier_weak",
-  "real_sl_ratio", "real_trailing_stop_pct", "real_equity_pct_per_trade", "real_time_exit_window_hours",
+  "equity_pct_per_trade", "paper_equity_pct_per_trade", "demo_equity_pct_per_trade", "real_equity_pct_per_trade",
+  "max_open_trades", "paper_max_open_trades", "demo_max_open_trades", "real_max_open_trades",
+  "min_composite_score", "paper_min_composite_score", "demo_min_composite_score", "real_min_composite_score",
+  "min_ev_threshold", "min_rr_ratio",
+  "max_daily_loss_pct", "max_weekly_loss_pct", "max_drawdown_pct",
+  "correlated_family_cap", "extraction_target_pct",
+  "allocation_mode", "paper_allocation_mode", "demo_allocation_mode", "real_allocation_mode",
 ];
 let monthlyHandle: ReturnType<typeof setInterval> | null = null;
 let weeklyHandle: ReturnType<typeof setInterval> | null = null;
@@ -372,10 +373,6 @@ async function runWeeklyAnalysis(stateMap: Record<string, string>): Promise<void
     const losses = modeTrades.filter(t => (t.pnl ?? 0) <= 0);
     const winRate = wins.length / modeTrades.length;
     const avgPnl = modeTrades.reduce((s, t) => s + (t.pnl ?? 0), 0) / modeTrades.length;
-    const avgDurationHrs = modeTrades.reduce((s, t) => {
-      if (!t.entryTs || !t.exitTs) return s;
-      return s + (t.exitTs.getTime() - t.entryTs.getTime()) / 3600000;
-    }, 0) / modeTrades.length;
 
     const avgWinPnl = wins.length > 0 ? wins.reduce((s, t) => s + (t.pnl ?? 0), 0) / wins.length : 0;
     const avgLossPnl = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + (t.pnl ?? 0), 0) / losses.length) : 1;
@@ -383,30 +380,14 @@ async function runWeeklyAnalysis(stateMap: Record<string, string>): Promise<void
 
     const tpHits = modeTrades.filter(t => t.exitReason?.includes("tp")).length;
     const slHits = modeTrades.filter(t => t.exitReason?.includes("sl")).length;
-    const timeExits = modeTrades.filter(t => t.exitReason?.includes("time")).length;
-    const harvestExits = modeTrades.filter(t => t.exitReason?.includes("harvest")).length;
     const tpHitRate = modeTrades.length > 0 ? tpHits / modeTrades.length : 0;
     const slHitRate = modeTrades.length > 0 ? slHits / modeTrades.length : 0;
 
     const currentEquityPct = parseFloat(stateMap[`${mode}_equity_pct_per_trade`] || "15");
     const currentMaxTrades = parseInt(stateMap[`${mode}_max_open_trades`] || "3");
-    const currentTpStrong = parseFloat(stateMap[`${mode}_tp_multiplier_strong`] || "3.0");
-    const currentTpMed = parseFloat(stateMap[`${mode}_tp_multiplier_medium`] || "2.5");
-    const currentTpWeak = parseFloat(stateMap[`${mode}_tp_multiplier_weak`] || "2.0");
-    const currentSlRatio = parseFloat(stateMap[`${mode}_sl_ratio`] || "1.0");
-    const currentTrailing = parseFloat(stateMap[`${mode}_trailing_stop_pct`] || "25");
-    const currentTimeExit = parseFloat(stateMap[`${mode}_time_exit_window_hours`] || "168");
     const currentMaxDaily = parseFloat(stateMap[`${mode}_max_daily_loss_pct`] || "5");
     const currentMaxWeekly = parseFloat(stateMap[`${mode}_max_weekly_loss_pct`] || "10");
     const currentMaxDD = parseFloat(stateMap[`${mode}_max_drawdown_pct`] || "15");
-    const currentProbe = parseFloat(stateMap[`${mode}_probe_threshold`] || "80");
-    const currentConfirm = parseFloat(stateMap[`${mode}_confirmation_threshold`] || "85");
-    const currentMomentum = parseFloat(stateMap[`${mode}_momentum_threshold`] || "90");
-    const currentProbeMult = parseFloat(stateMap[`${mode}_stage_multiplier_probe`] || "1.0");
-    const currentConfirmMult = parseFloat(stateMap[`${mode}_stage_multiplier_confirmation`] || "0.85");
-    const currentMomentumMult = parseFloat(stateMap[`${mode}_stage_multiplier_momentum`] || "0.70");
-    const currentPeakDD = parseFloat(stateMap[`${mode}_peak_drawdown_exit_pct`] || "30");
-    const currentMinPeak = parseFloat(stateMap[`${mode}_min_peak_profit_pct`] || "3");
 
     const conservatism = mode === "real" ? 0.85 : mode === "demo" ? 0.95 : 1.05;
 
@@ -422,34 +403,6 @@ async function runWeeklyAnalysis(stateMap: Record<string, string>): Promise<void
       suggestions[`${mode}_max_open_trades`] = String(Math.max(currentMaxTrades - 1, 2));
     }
 
-    if (tpHitRate < 0.2 && tpHits + slHits > 5) {
-      suggestions[`${mode}_tp_multiplier_strong`] = String(Math.max(currentTpStrong * 0.9, 1.5).toFixed(2));
-      suggestions[`${mode}_tp_multiplier_medium`] = String(Math.max(currentTpMed * 0.9, 1.2).toFixed(2));
-      suggestions[`${mode}_tp_multiplier_weak`] = String(Math.max(currentTpWeak * 0.9, 1.0).toFixed(2));
-    } else if (tpHitRate > 0.5) {
-      suggestions[`${mode}_tp_multiplier_strong`] = String(Math.min(currentTpStrong * 1.1, 6.0).toFixed(2));
-      suggestions[`${mode}_tp_multiplier_medium`] = String(Math.min(currentTpMed * 1.1, 5.0).toFixed(2));
-      suggestions[`${mode}_tp_multiplier_weak`] = String(Math.min(currentTpWeak * 1.1, 4.0).toFixed(2));
-    }
-
-    if (slHitRate > 0.4) {
-      suggestions[`${mode}_sl_ratio`] = String(Math.min(currentSlRatio * 1.15, 2.5).toFixed(2));
-    } else if (slHitRate < 0.15 && actualRR > 1.5) {
-      suggestions[`${mode}_sl_ratio`] = String(Math.max(currentSlRatio * 0.9, 0.5).toFixed(2));
-    }
-
-    if (harvestExits > timeExits && harvestExits > 3) {
-      suggestions[`${mode}_trailing_stop_pct`] = String(Math.max(currentTrailing - 2, 10).toFixed(0));
-    }
-
-    if (avgDurationHrs > 0) {
-      if (avgDurationHrs > currentTimeExit * 0.9) {
-        suggestions[`${mode}_time_exit_window_hours`] = String(Math.min(currentTimeExit * 1.2, 336).toFixed(0));
-      } else if (avgDurationHrs < currentTimeExit * 0.3 && timeExits > 2) {
-        suggestions[`${mode}_time_exit_window_hours`] = String(Math.max(currentTimeExit * 0.8, 24).toFixed(0));
-      }
-    }
-
     if (winRate < 0.4) {
       suggestions[`${mode}_max_daily_loss_pct`] = String(Math.max(currentMaxDaily * 0.85, 2).toFixed(1));
       suggestions[`${mode}_max_weekly_loss_pct`] = String(Math.max(currentMaxWeekly * 0.85, 4).toFixed(1));
@@ -459,35 +412,13 @@ async function runWeeklyAnalysis(stateMap: Record<string, string>): Promise<void
       suggestions[`${mode}_max_weekly_loss_pct`] = String(Math.min(currentMaxWeekly * 1.1, mode === "real" ? 10 : 20).toFixed(1));
     }
 
-    if (winRate > 0.55) {
-      suggestions[`${mode}_probe_threshold`] = String(Math.max(currentProbe - 1, mode === "real" ? 82 : 75).toFixed(0));
-      suggestions[`${mode}_confirmation_threshold`] = String(Math.max(currentConfirm - 1, mode === "real" ? 86 : 80).toFixed(0));
-      suggestions[`${mode}_momentum_threshold`] = String(Math.max(currentMomentum - 1, mode === "real" ? 90 : 85).toFixed(0));
+    const currentAllocMode = stateMap[`${mode}_allocation_mode`] || "balanced";
+    if (winRate > 0.6 && avgPnl > 0 && mode !== "real") {
+      if (currentAllocMode === "conservative") suggestions[`${mode}_allocation_mode`] = "balanced";
+      if (currentAllocMode === "balanced" && mode === "paper") suggestions[`${mode}_allocation_mode`] = "aggressive";
     } else if (winRate < 0.35) {
-      suggestions[`${mode}_probe_threshold`] = String(Math.min(currentProbe + 2, 95).toFixed(0));
-      suggestions[`${mode}_confirmation_threshold`] = String(Math.min(currentConfirm + 2, 97).toFixed(0));
-      suggestions[`${mode}_momentum_threshold`] = String(Math.min(currentMomentum + 2, 99).toFixed(0));
-    }
-
-    if (avgPnl > 0 && winRate > 0.5) {
-      suggestions[`${mode}_stage_multiplier_probe`] = String(Math.min(currentProbeMult * 1.05, 1.5).toFixed(2));
-      suggestions[`${mode}_stage_multiplier_confirmation`] = String(Math.min(currentConfirmMult * 1.05, 1.2).toFixed(2));
-      suggestions[`${mode}_stage_multiplier_momentum`] = String(Math.min(currentMomentumMult * 1.05, 1.0).toFixed(2));
-    }
-
-    if (harvestExits > 0 && wins.length > 0) {
-      const harvestWinPct = modeTrades.filter(t => t.exitReason?.includes("harvest") && (t.pnl ?? 0) > 0).length / Math.max(harvestExits, 1);
-      if (harvestWinPct < 0.5) {
-        suggestions[`${mode}_peak_drawdown_exit_pct`] = String(Math.min(currentPeakDD + 5, 50).toFixed(0));
-        suggestions[`${mode}_min_peak_profit_pct`] = String(Math.min(currentMinPeak + 1, 10).toFixed(1));
-      }
-    }
-
-    const currentMinSlAtr = parseFloat(stateMap[`${mode}_min_sl_atr_multiplier`] || "3.0");
-    if (slHitRate > 0.4 && actualRR < 1) {
-      suggestions[`${mode}_min_sl_atr_multiplier`] = String(Math.min(currentMinSlAtr * 1.1, 8).toFixed(1));
-    } else if (slHitRate < 0.1 && winRate > 0.5) {
-      suggestions[`${mode}_min_sl_atr_multiplier`] = String(Math.max(currentMinSlAtr * 0.9, 2).toFixed(1));
+      if (currentAllocMode === "aggressive") suggestions[`${mode}_allocation_mode`] = "balanced";
+      if (currentAllocMode === "balanced") suggestions[`${mode}_allocation_mode`] = "conservative";
     }
 
     const currentCorrelatedCap = parseInt(stateMap[`${mode}_correlated_family_cap`] || "3");
@@ -504,84 +435,21 @@ async function runWeeklyAnalysis(stateMap: Record<string, string>): Promise<void
       suggestions[`${mode}_extraction_target_pct`] = String(Math.min(currentExtractionTarget * 1.1, 200).toFixed(0));
     }
 
-    const currentLargePeak = parseFloat(stateMap[`${mode}_large_peak_threshold_pct`] || "8");
-    if (winRate > 0.55 && harvestExits > 2) {
-      suggestions[`${mode}_large_peak_threshold_pct`] = String(Math.min(currentLargePeak * 1.1, 20).toFixed(1));
-    }
-
-    const currentTpCapture = parseFloat(stateMap[`${mode}_tp_capture_ratio`] || (mode === "paper" ? "0.80" : mode === "demo" ? "0.70" : "0.60"));
-    if (tpHitRate > 0.5 && actualRR > 2) {
-      suggestions[`${mode}_tp_capture_ratio`] = String(Math.min(currentTpCapture + 0.05, 0.95).toFixed(2));
-    } else if (tpHitRate < 0.15) {
-      suggestions[`${mode}_tp_capture_ratio`] = String(Math.max(currentTpCapture - 0.05, 0.50).toFixed(2));
-    }
-
-    const currentAllocMode = stateMap[`${mode}_allocation_mode`] || "balanced";
-    if (winRate > 0.6 && avgPnl > 0 && mode !== "real") {
-      if (currentAllocMode === "conservative") suggestions[`${mode}_allocation_mode`] = "balanced";
-      if (currentAllocMode === "balanced" && mode === "paper") suggestions[`${mode}_allocation_mode`] = "aggressive";
-    } else if (winRate < 0.35) {
-      if (currentAllocMode === "aggressive") suggestions[`${mode}_allocation_mode`] = "balanced";
-      if (currentAllocMode === "balanced") suggestions[`${mode}_allocation_mode`] = "conservative";
-    }
-
     const regimeDistribution: Record<string, number> = {};
     for (const t of modeTrades) {
-      const regime = (t as Record<string, unknown>).regime as string || "unknown";
-      regimeDistribution[regime] = (regimeDistribution[regime] || 0) + 1;
+      const tradeRegime = (t as Record<string, unknown>).regime as string || "unknown";
+      regimeDistribution[tradeRegime] = (regimeDistribution[tradeRegime] || 0) + 1;
     }
     const regimeWinRates: Record<string, number> = {};
-    for (const regime of Object.keys(regimeDistribution)) {
-      const regTrades = modeTrades.filter(t => ((t as Record<string, unknown>).regime as string || "unknown") === regime);
+    for (const regKey of Object.keys(regimeDistribution)) {
+      const regTrades = modeTrades.filter(t => ((t as Record<string, unknown>).regime as string || "unknown") === regKey);
       const regWins = regTrades.filter(t => (t.pnl ?? 0) > 0).length;
-      regimeWinRates[regime] = regTrades.length > 0 ? regWins / regTrades.length : 0;
+      regimeWinRates[regKey] = regTrades.length > 0 ? regWins / regTrades.length : 0;
     }
     const worstRegime = Object.entries(regimeWinRates).sort((a, b) => a[1] - b[1])[0];
     if (worstRegime && worstRegime[1] < 0.25 && (regimeDistribution[worstRegime[0]] || 0) > 3) {
       const curRegimeWeight = parseFloat(stateMap["scoring_weight_regime_fit"] || "16.67");
       suggestions["scoring_weight_regime_fit"] = String(Math.min(curRegimeWeight * 1.15, 30).toFixed(2));
-    }
-
-    for (const family of STRATEGY_FAMILIES) {
-      const familyTrades = modeTrades.filter(t => t.strategyName === family);
-      if (familyTrades.length < 3) continue;
-      const famWins = familyTrades.filter(t => (t.pnl ?? 0) > 0);
-      const famWinRate = famWins.length / familyTrades.length;
-      const famAvgDuration = familyTrades.reduce((s, t) => {
-        if (!t.entryTs || !t.exitTs) return s;
-        return s + (t.exitTs.getTime() - t.entryTs.getTime()) / 3600000;
-      }, 0) / familyTrades.length;
-
-      const curTpAtr = parseFloat(stateMap[`${mode}_${family}_tp_atr_multiplier`] || "8");
-      const curSlAtr = parseFloat(stateMap[`${mode}_${family}_sl_atr_multiplier`] || "3");
-      const curInitExit = parseFloat(stateMap[`${mode}_${family}_initial_exit_hours`] || "168");
-      const curHarvSens = parseFloat(stateMap[`${mode}_${family}_harvest_sensitivity`] || "1.0");
-
-      if (famWinRate > 0.55) {
-        suggestions[`${mode}_${family}_tp_atr_multiplier`] = String(Math.min(curTpAtr * 1.1, 15).toFixed(1));
-      } else if (famWinRate < 0.35) {
-        suggestions[`${mode}_${family}_tp_atr_multiplier`] = String(Math.max(curTpAtr * 0.9, 3).toFixed(1));
-        suggestions[`${mode}_${family}_sl_atr_multiplier`] = String(Math.min(curSlAtr * 1.15, 6).toFixed(1));
-      }
-
-      if (famAvgDuration > curInitExit * 0.85) {
-        suggestions[`${mode}_${family}_initial_exit_hours`] = String(Math.min(curInitExit * 1.2, 480).toFixed(0));
-      }
-
-      const curExtHours = parseFloat(stateMap[`${mode}_${family}_extension_hours`] || "48");
-      const curMaxExitHours = parseFloat(stateMap[`${mode}_${family}_max_exit_hours`] || "336");
-      if (famAvgDuration > curMaxExitHours * 0.8) {
-        suggestions[`${mode}_${family}_max_exit_hours`] = String(Math.min(curMaxExitHours * 1.15, 720).toFixed(0));
-        suggestions[`${mode}_${family}_extension_hours`] = String(Math.min(curExtHours * 1.1, 96).toFixed(0));
-      } else if (famAvgDuration < curMaxExitHours * 0.3 && timeExits > 1) {
-        suggestions[`${mode}_${family}_max_exit_hours`] = String(Math.max(curMaxExitHours * 0.85, 72).toFixed(0));
-      }
-
-      if (famWinRate < 0.4) {
-        suggestions[`${mode}_${family}_harvest_sensitivity`] = String(Math.min(curHarvSens * 1.1, 2.0).toFixed(2));
-      } else if (famWinRate > 0.6) {
-        suggestions[`${mode}_${family}_harvest_sensitivity`] = String(Math.max(curHarvSens * 0.9, 0.5).toFixed(2));
-      }
     }
 
     const disableFamilies: string[] = [];
@@ -616,7 +484,6 @@ async function runWeeklyAnalysis(stateMap: Record<string, string>): Promise<void
     suggestions["min_composite_score"] = String(Math.max(currentMinScore - 1, 80).toFixed(0));
   }
 
-  const weightKeys = ["regime_fit", "setup_quality", "trend_alignment", "volatility_condition", "reward_risk", "probability_of_success"];
   const exitReasons = closedTrades.map(t => t.exitReason || "");
   const tpCount = exitReasons.filter(r => r.includes("tp")).length;
   const totalExits = closedTrades.length;
@@ -701,9 +568,6 @@ async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise
     }
   }
 
-  const agg: Record<string, { tpSum: number; slSum: number; holdSum: number; equitySum: number; count: number }> = {};
-  for (const s of STRATEGIES_LIST) agg[s] = { tpSum: 0, slSum: 0, holdSum: 0, equitySum: 0, count: 0 };
-
   let ran = 0;
   for (const { strategy, symbol } of combinations) {
     try {
@@ -736,15 +600,6 @@ async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise
         },
         status: "completed",
       });
-
-      const r = agg[strategy];
-      r.count++;
-      r.holdSum += result.avgHoldingHours;
-      const optTp = result.profitFactor > 0 ? Math.min(Math.max(1.5 + result.profitFactor * 0.4, 1.2), 4.0) : 2.0;
-      const optSl = result.profitFactor > 0 ? Math.min(Math.max(1.0 / result.profitFactor, 0.5), 2.0) : 1.0;
-      r.tpSum += optTp;
-      r.slSum += optSl;
-      r.equitySum += Math.min(Math.max(result.winRate * 20, 8), 15);
       ran++;
     } catch { /* skip failed */ }
   }
@@ -767,33 +622,23 @@ async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise
   const sortedCombos = [...comboResults].sort((a, b) => b.score - a.score);
   const topCombos = sortedCombos.slice(0, Math.min(6, sortedCombos.length));
   const bestPf = topCombos.length > 0 ? topCombos.reduce((s, c) => s + c.pf, 0) / topCombos.length : 1.5;
-  const bestHold = topCombos.length > 0 ? topCombos.reduce((s, c) => s + c.hold, 0) / topCombos.length : 72;
 
-  const optTpStrong = parseFloat(Math.min(Math.max(1.8 + bestPf * 0.5, 2.5), 4.0).toFixed(2));
-  const optTpMed = parseFloat(Math.min(Math.max(1.5 + bestPf * 0.35, 2.0), 3.5).toFixed(2));
-  const optTpWeak = parseFloat(Math.min(Math.max(1.2 + bestPf * 0.25, 1.5), 2.5).toFixed(2));
-  const optSl = parseFloat(Math.min(Math.max(0.8, 1.0 / bestPf), 1.5).toFixed(2));
-  const optHold = parseFloat(Math.max(48, Math.min(bestHold * 1.3, 168)).toFixed(1));
+  const conservatism = (m: string) => m === "real" ? 0.85 : m === "demo" ? 0.95 : 1.05;
+  const optEquityPct = (pf: number, m: string) => {
+    const base = Math.min(Math.max(pf * 8, 10), 30);
+    return (base * conservatism(m)).toFixed(1);
+  };
 
   const nowIso = new Date().toISOString();
   const currentMonthKey = `${new Date().getFullYear()}-${new Date().getMonth() + 1}`;
 
   const aiSuggestions: Record<string, string> = {
-    ai_suggest_paper_tp_multiplier_strong: String(optTpStrong),
-    ai_suggest_paper_tp_multiplier_medium: String(optTpMed),
-    ai_suggest_paper_tp_multiplier_weak: String(optTpWeak),
-    ai_suggest_paper_sl_ratio: String(optSl),
-    ai_suggest_paper_time_exit_window_hours: String(optHold),
-    ai_suggest_demo_tp_multiplier_strong: String(optTpStrong),
-    ai_suggest_demo_tp_multiplier_medium: String(optTpMed),
-    ai_suggest_demo_tp_multiplier_weak: String(optTpWeak),
-    ai_suggest_demo_sl_ratio: String(optSl),
-    ai_suggest_demo_time_exit_window_hours: String(optHold),
-    ai_suggest_real_tp_multiplier_strong: String(Math.max(optTpStrong * 0.8, 2.0).toFixed(2)),
-    ai_suggest_real_tp_multiplier_medium: String(Math.max(optTpMed * 0.8, 1.5).toFixed(2)),
-    ai_suggest_real_tp_multiplier_weak: String(Math.max(optTpWeak * 0.8, 1.2).toFixed(2)),
-    ai_suggest_real_sl_ratio: String(Math.min(optSl * 1.2, 2.0).toFixed(2)),
-    ai_suggest_real_time_exit_window_hours: String(optHold),
+    ai_suggest_paper_equity_pct_per_trade: optEquityPct(bestPf, "paper"),
+    ai_suggest_demo_equity_pct_per_trade: optEquityPct(bestPf, "demo"),
+    ai_suggest_real_equity_pct_per_trade: optEquityPct(bestPf, "real"),
+    ai_suggest_paper_min_composite_score: String(Math.max(75, Math.round(85 - bestPf * 2))),
+    ai_suggest_demo_min_composite_score: String(Math.max(80, Math.round(88 - bestPf * 2))),
+    ai_suggest_real_min_composite_score: String(Math.max(85, Math.round(92 - bestPf * 2))),
     ai_optimised_at: nowIso,
     last_monthly_optimise_month: currentMonthKey,
     last_monthly_optimise_at: nowIso,

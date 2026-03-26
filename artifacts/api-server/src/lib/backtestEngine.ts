@@ -1,13 +1,12 @@
 import { db, candlesTable, platformStateTable } from "@workspace/db";
 import { eq, and, asc, gte, lte } from "drizzle-orm";
 import { runAllStrategies, type SignalCandidate } from "./strategies.js";
-import { calculateTrailingStop } from "./tradeEngine.js";
+import { calculateProfitTrailingStop, calculateSRFibTP, calculateSRFibSL } from "./tradeEngine.js";
 import type { FeatureVector } from "./features.js";
 import type { ScoringWeights } from "./scoring.js";
 
-const DEFAULT_TRAILING_STOP_PCT = 0.25;
-const INITIAL_EXIT_HOURS = 72;
-const EXTENSION_HOURS = 24;
+const PROFIT_TRAILING_DRAWDOWN_PCT = 0.30;
+const TIME_EXIT_PROFIT_HOURS = 72;
 const MAX_EXIT_HOURS = 168;
 const MAX_EQUITY_DEPLOYED_PCT = 0.80;
 
@@ -307,6 +306,14 @@ export function computeFeaturesFromCandles(
 
   const crossCorrelation = 0;
 
+  const fibRange = swingHigh - swingLow;
+  const fibRetraceLevels = fibRange > 0
+    ? [0.236, 0.382, 0.5, 0.618, 0.786].map(r => swingHigh - fibRange * r)
+    : [];
+  const fibExtensionLevels = fibRange > 0
+    ? [1.272, 1.618, 2.0].map(r => swingHigh + fibRange * (r - 1))
+    : [];
+
   const largeMoves = closes.slice(-50).filter((c, i, arr) => {
     if (i === 0) return false;
     return Math.abs(c - arr[i - 1]) / arr[i - 1] > atr14 * 3;
@@ -353,6 +360,12 @@ export function computeFeaturesFromCandles(
     dayOfWeek,
     crossCorrelation,
     regimeLabel,
+    swingHigh,
+    swingLow,
+    fibRetraceLevels,
+    fibExtensionLevels,
+    bbUpper,
+    bbLower,
   };
 }
 
@@ -563,13 +576,12 @@ function simulateOnCandles(
         } else {
           pos.peakPrice = Math.min(pos.peakPrice, candle.low);
         }
-        const trailResult = calculateTrailingStop({
+        const trailResult = calculateProfitTrailingStop({
           entryPrice: pos.entryPrice,
           currentPrice: candle.close,
           peakPrice: pos.peakPrice,
           direction: pos.direction,
           currentSl: pos.currentSl,
-          trailPct: DEFAULT_TRAILING_STOP_PCT,
         });
         if (trailResult.updated) {
           pos.currentSl = trailResult.newSl;
@@ -580,23 +592,15 @@ function simulateOnCandles(
         const hardMaxTs = pos.entryTs + MAX_EXIT_HOURS * 3600;
         if (ts >= hardMaxTs) {
           exitPrice = candle.close;
-          exitReason = "TIME_HARD_CAP";
-        } else if (hoursOpen >= INITIAL_EXIT_HOURS && ts >= pos.maxExitTs / 1000) {
+          exitReason = "TIME_HARD_CAP_168H";
+        } else if (hoursOpen >= TIME_EXIT_PROFIT_HOURS) {
           const unrealizedPnl = pos.direction === "buy"
             ? (candle.close - pos.entryPrice) / pos.entryPrice
             : (pos.entryPrice - candle.close) / pos.entryPrice;
 
           if (unrealizedPnl > 0) {
             exitPrice = candle.close;
-            exitReason = "TIME_PROFITABLE";
-          } else if (unrealizedPnl > -0.02 && !pos.extended) {
-            const extensionEnd = pos.maxExitTs + EXTENSION_HOURS * 3600 * 1000;
-            const hardMax = pos.entryTs * 1000 + MAX_EXIT_HOURS * 3600 * 1000;
-            pos.maxExitTs = Math.min(extensionEnd, hardMax);
-            pos.extended = true;
-          } else {
-            exitPrice = candle.close;
-            exitReason = "TIME_EXIT";
+            exitReason = "PROFITABLE_AT_72H";
           }
         }
       }
@@ -675,33 +679,33 @@ function simulateOnCandles(
 
         const price = candles[idx].close;
         const atrPct = Math.max(features.atr14, 0.001);
-        const slPct = atrPct * 1.5;
-        const tpPct = atrPct * 3.0;
 
-        let sl: number, tp: number;
-        if (signal.direction === "buy") {
-          sl = price * (1 - slPct);
-          tp = price * (1 + tpPct);
-        } else {
-          sl = price * (1 + slPct);
-          tp = price * (1 - tpPct);
-        }
+        const tp = calculateSRFibTP({
+          entryPrice: price,
+          direction: signal.direction,
+          swingHigh: features.swingHigh,
+          swingLow: features.swingLow,
+          fibExtensionLevels: features.fibExtensionLevels,
+          bbUpper: features.bbUpper,
+          bbLower: features.bbLower,
+          atrPct,
+        });
 
-        if (signal.suggestedSl !== null) {
-          const absSl = Math.abs(signal.suggestedSl);
-          if (absSl > 0) {
-            sl = signal.direction === "buy" ? price * (1 - absSl) : price * (1 + absSl);
-          }
-        }
-        if (signal.suggestedTp !== null) {
-          const absTp = Math.abs(signal.suggestedTp);
-          if (absTp > 0) {
-            tp = signal.direction === "buy" ? price * (1 + absTp) : price * (1 - absTp);
-          }
-        }
+        const sl = calculateSRFibSL({
+          entryPrice: price,
+          direction: signal.direction,
+          swingHigh: features.swingHigh,
+          swingLow: features.swingLow,
+          fibRetraceLevels: features.fibRetraceLevels,
+          bbUpper: features.bbUpper,
+          bbLower: features.bbLower,
+          atrPct,
+          positionSize: positionSize,
+          equity,
+        });
 
         const entryTs = candles[idx].openTs;
-        const maxExitTs = entryTs * 1000 + INITIAL_EXIT_HOURS * 3600 * 1000;
+        const maxExitTs = entryTs * 1000 + TIME_EXIT_PROFIT_HOURS * 3600 * 1000;
 
         openPositions.push({
           symbol: sym,

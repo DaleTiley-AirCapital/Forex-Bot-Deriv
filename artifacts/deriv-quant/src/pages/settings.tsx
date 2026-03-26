@@ -17,75 +17,24 @@ import { useToast } from "@/hooks/use-toast";
 const V1_DEFAULTS: Record<string, Record<string, string>> = {
   paper: {
     capital: "10000", equity_pct_per_trade: "30", max_open_trades: "4", allocation_mode: "aggressive",
-    probe_threshold: "75", confirmation_threshold: "80", momentum_threshold: "85",
-    stage_multiplier_probe: "1.0", stage_multiplier_confirmation: "0.90", stage_multiplier_momentum: "0.80",
-    tp_multiplier_strong: "3.5", tp_multiplier_medium: "2.8", tp_multiplier_weak: "2.0",
-    sl_ratio: "1.0", trailing_stop_pct: "20", time_exit_window_hours: "336",
-    tp_capture_ratio: "0.80", min_sl_atr_multiplier: "3.0",
+    min_composite_score: "80", min_ev_threshold: "0.003", min_rr_ratio: "3.0",
     max_daily_loss_pct: "8", max_weekly_loss_pct: "15", max_drawdown_pct: "25",
     extraction_target_pct: "50", auto_extraction: "false",
-    peak_drawdown_exit_pct: "25", min_peak_profit_pct: "3", large_peak_threshold_pct: "8",
     correlated_family_cap: "4",
-    trend_continuation_tp_atr_multiplier: "10.0", trend_continuation_sl_atr_multiplier: "4.0",
-    trend_continuation_initial_exit_hours: "168", trend_continuation_extension_hours: "48",
-    trend_continuation_max_exit_hours: "336", trend_continuation_harvest_sensitivity: "0.7",
-    mean_reversion_tp_atr_multiplier: "8.0", mean_reversion_sl_atr_multiplier: "4.0",
-    mean_reversion_initial_exit_hours: "120", mean_reversion_extension_hours: "36",
-    mean_reversion_max_exit_hours: "240", mean_reversion_harvest_sensitivity: "0.9",
-    breakout_expansion_tp_atr_multiplier: "12.0", breakout_expansion_sl_atr_multiplier: "3.0",
-    breakout_expansion_initial_exit_hours: "168", breakout_expansion_extension_hours: "48",
-    breakout_expansion_max_exit_hours: "336", breakout_expansion_harvest_sensitivity: "0.6",
-    spike_event_tp_atr_multiplier: "6.0", spike_event_sl_atr_multiplier: "3.0",
-    spike_event_initial_exit_hours: "72", spike_event_extension_hours: "24",
-    spike_event_max_exit_hours: "168", spike_event_harvest_sensitivity: "1.0",
   },
   demo: {
     capital: "600", equity_pct_per_trade: "20", max_open_trades: "3", allocation_mode: "balanced",
-    probe_threshold: "82", confirmation_threshold: "86", momentum_threshold: "90",
-    stage_multiplier_probe: "0.85", stage_multiplier_confirmation: "0.75", stage_multiplier_momentum: "0.65",
-    tp_multiplier_strong: "3.0", tp_multiplier_medium: "2.5", tp_multiplier_weak: "1.8",
-    sl_ratio: "1.0", trailing_stop_pct: "22", time_exit_window_hours: "168",
-    tp_capture_ratio: "0.70", min_sl_atr_multiplier: "3.5",
+    min_composite_score: "85", min_ev_threshold: "0.003", min_rr_ratio: "3.0",
     max_daily_loss_pct: "5", max_weekly_loss_pct: "10", max_drawdown_pct: "18",
     extraction_target_pct: "50", auto_extraction: "false",
-    peak_drawdown_exit_pct: "30", min_peak_profit_pct: "3", large_peak_threshold_pct: "8",
     correlated_family_cap: "3",
-    trend_continuation_tp_atr_multiplier: "8.0", trend_continuation_sl_atr_multiplier: "3.0",
-    trend_continuation_initial_exit_hours: "168", trend_continuation_extension_hours: "48",
-    trend_continuation_max_exit_hours: "336", trend_continuation_harvest_sensitivity: "0.8",
-    mean_reversion_tp_atr_multiplier: "6.0", mean_reversion_sl_atr_multiplier: "3.5",
-    mean_reversion_initial_exit_hours: "120", mean_reversion_extension_hours: "36",
-    mean_reversion_max_exit_hours: "240", mean_reversion_harvest_sensitivity: "1.0",
-    breakout_expansion_tp_atr_multiplier: "10.0", breakout_expansion_sl_atr_multiplier: "2.5",
-    breakout_expansion_initial_exit_hours: "168", breakout_expansion_extension_hours: "48",
-    breakout_expansion_max_exit_hours: "336", breakout_expansion_harvest_sensitivity: "0.7",
-    spike_event_tp_atr_multiplier: "5.0", spike_event_sl_atr_multiplier: "2.0",
-    spike_event_initial_exit_hours: "72", spike_event_extension_hours: "24",
-    spike_event_max_exit_hours: "168", spike_event_harvest_sensitivity: "1.1",
   },
   real: {
     capital: "600", equity_pct_per_trade: "15", max_open_trades: "3", allocation_mode: "balanced",
-    probe_threshold: "88", confirmation_threshold: "91", momentum_threshold: "94",
-    stage_multiplier_probe: "0.70", stage_multiplier_confirmation: "0.60", stage_multiplier_momentum: "0.50",
-    tp_multiplier_strong: "2.5", tp_multiplier_medium: "2.0", tp_multiplier_weak: "1.5",
-    sl_ratio: "1.0", trailing_stop_pct: "25", time_exit_window_hours: "168",
-    tp_capture_ratio: "0.60", min_sl_atr_multiplier: "4.0",
+    min_composite_score: "90", min_ev_threshold: "0.003", min_rr_ratio: "3.0",
     max_daily_loss_pct: "3", max_weekly_loss_pct: "6", max_drawdown_pct: "12",
     extraction_target_pct: "50", auto_extraction: "false",
-    peak_drawdown_exit_pct: "30", min_peak_profit_pct: "3", large_peak_threshold_pct: "8",
     correlated_family_cap: "3",
-    trend_continuation_tp_atr_multiplier: "6.0", trend_continuation_sl_atr_multiplier: "3.5",
-    trend_continuation_initial_exit_hours: "168", trend_continuation_extension_hours: "48",
-    trend_continuation_max_exit_hours: "336", trend_continuation_harvest_sensitivity: "0.8",
-    mean_reversion_tp_atr_multiplier: "4.0", mean_reversion_sl_atr_multiplier: "4.0",
-    mean_reversion_initial_exit_hours: "120", mean_reversion_extension_hours: "36",
-    mean_reversion_max_exit_hours: "240", mean_reversion_harvest_sensitivity: "1.0",
-    breakout_expansion_tp_atr_multiplier: "8.0", breakout_expansion_sl_atr_multiplier: "3.0",
-    breakout_expansion_initial_exit_hours: "168", breakout_expansion_extension_hours: "48",
-    breakout_expansion_max_exit_hours: "336", breakout_expansion_harvest_sensitivity: "0.7",
-    spike_event_tp_atr_multiplier: "4.0", spike_event_sl_atr_multiplier: "2.5",
-    spike_event_initial_exit_hours: "72", spike_event_extension_hours: "24",
-    spike_event_max_exit_hours: "168", spike_event_harvest_sensitivity: "1.2",
   },
 };
 
@@ -497,36 +446,6 @@ function SectionSaveButton({ sectionKeys, form, saving, onSave }: { sectionKeys:
   );
 }
 
-function FamilyProfileSection({ mode, familyKey, familyLabel, form, update, locked, onUnlock, suggestions, onApplySuggestion }: {
-  mode: string; familyKey: string; familyLabel: string; form: Record<string, string>;
-  update: (k: string, v: string) => void; locked: boolean; onUnlock: () => void;
-  suggestions: AiSuggestions; onApplySuggestion: (key: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const p = (key: string) => `${mode}_${familyKey}_${key}`;
-  const defaults = V1_DEFAULTS[mode] || V1_DEFAULTS.real;
-  const d = (key: string) => defaults[`${familyKey}_${key}`] || "0";
-
-  return (
-    <div className="border border-border/30 rounded-lg overflow-hidden">
-      <button onClick={() => setExpanded(!expanded)} className="w-full flex items-center justify-between p-3 hover:bg-muted/20 transition-colors text-left">
-        <span className="text-sm font-medium text-foreground">{familyLabel}</span>
-        {expanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
-      </button>
-      {expanded && (
-        <div className="px-3 pb-3 space-y-0">
-          <SettingField label="TP ATR Multiplier" description="Take profit distance as multiple of ATR" value={form[p("tp_atr_multiplier")] || d("tp_atr_multiplier")} onChange={(v) => update(p("tp_atr_multiplier"), v)} suffix="x" min={1} max={20} step={0.5} locked={locked} onUnlock={onUnlock} aiSuggestion={suggestions[p("tp_atr_multiplier")]} onApplySuggestion={() => onApplySuggestion(p("tp_atr_multiplier"))} />
-          <SettingField label="SL ATR Multiplier" description="Stop loss distance as multiple of ATR" value={form[p("sl_atr_multiplier")] || d("sl_atr_multiplier")} onChange={(v) => update(p("sl_atr_multiplier"), v)} suffix="x" min={0.5} max={10} step={0.5} locked={locked} onUnlock={onUnlock} aiSuggestion={suggestions[p("sl_atr_multiplier")]} onApplySuggestion={() => onApplySuggestion(p("sl_atr_multiplier"))} />
-          <SettingField label="Initial Exit Hours" description="First time-based exit check after this many hours" value={form[p("initial_exit_hours")] || d("initial_exit_hours")} onChange={(v) => update(p("initial_exit_hours"), v)} suffix="hrs" min={1} max={720} step={1} locked={locked} onUnlock={onUnlock} aiSuggestion={suggestions[p("initial_exit_hours")]} onApplySuggestion={() => onApplySuggestion(p("initial_exit_hours"))} />
-          <SettingField label="Extension Hours" description="If near breakeven at time exit, extend by this many hours" value={form[p("extension_hours")] || d("extension_hours")} onChange={(v) => update(p("extension_hours"), v)} suffix="hrs" min={1} max={168} step={1} locked={locked} onUnlock={onUnlock} aiSuggestion={suggestions[p("extension_hours")]} onApplySuggestion={() => onApplySuggestion(p("extension_hours"))} />
-          <SettingField label="Max Exit Hours" description="Hard maximum hold time" value={form[p("max_exit_hours")] || d("max_exit_hours")} onChange={(v) => update(p("max_exit_hours"), v)} suffix="hrs" min={1} max={720} step={1} locked={locked} onUnlock={onUnlock} aiSuggestion={suggestions[p("max_exit_hours")]} onApplySuggestion={() => onApplySuggestion(p("max_exit_hours"))} />
-          <SettingField label="Harvest Sensitivity" description="Lower = more patient harvesting (0.5-1.5)" value={form[p("harvest_sensitivity")] || d("harvest_sensitivity")} onChange={(v) => update(p("harvest_sensitivity"), v)} suffix="x" min={0.3} max={2} step={0.1} locked={locked} onUnlock={onUnlock} aiSuggestion={suggestions[p("harvest_sensitivity")]} onApplySuggestion={() => onApplySuggestion(p("harvest_sensitivity"))} />
-        </div>
-      )}
-    </div>
-  );
-}
-
 interface SetupStatus { hasToken: boolean; totalCandles: number; hasEnoughData: boolean; hasInitialBacktests: boolean; backtestCount: number; expectedBacktests: number; setupComplete: boolean; }
 interface SetupProgress { phase: string; message?: string; overallPct?: number; candleTotal?: number; estRemainingSec?: number; btCompleted?: number; btTotal?: number; symbol?: string; symbolIndex?: number; totalSymbols?: number; candlesForSymbol?: number; grandTotal?: number; completed?: number; total?: number; estimatedSecondsRemaining?: number; settings?: Record<string, number>; backtestsCreated?: number; }
 interface PreflightResult { derivDemo: { ok: boolean; error?: string }; derivReal: { ok: boolean; error?: string }; openai: { ok: boolean; error?: string }; }
@@ -900,38 +819,25 @@ function ModeSettingsTab({ mode, form, update, suggestions, onApplySuggestion, u
         </Card>
 
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="w-4 h-4" />Take Profit & Stop Loss</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="flex items-center gap-2"><Target className="w-4 h-4" />Signal Quality Thresholds</CardTitle></CardHeader>
           <CardContent>
-            <SettingField label="TP Multiplier — Strong" description="For high confidence signals (>= 75%)" value={form[p("tp_multiplier_strong")] || d("tp_multiplier_strong")} onChange={(v) => update(p("tp_multiplier_strong"), v)} suffix="x" min={0.5} max={10} step={0.1} locked={isLocked("tpsl")} onUnlock={() => handleUnlock("tpsl")} aiSuggestion={suggestions[p("tp_multiplier_strong")]} onApplySuggestion={() => onApplySuggestion(p("tp_multiplier_strong"))} />
-            <SettingField label="TP Multiplier — Medium" description="For moderate confidence signals (65-75%)" value={form[p("tp_multiplier_medium")] || d("tp_multiplier_medium")} onChange={(v) => update(p("tp_multiplier_medium"), v)} suffix="x" min={0.5} max={10} step={0.1} locked={isLocked("tpsl")} onUnlock={() => handleUnlock("tpsl")} aiSuggestion={suggestions[p("tp_multiplier_medium")]} onApplySuggestion={() => onApplySuggestion(p("tp_multiplier_medium"))} />
-            <SettingField label="TP Multiplier — Weak" description="For lower confidence signals (< 65%)" value={form[p("tp_multiplier_weak")] || d("tp_multiplier_weak")} onChange={(v) => update(p("tp_multiplier_weak"), v)} suffix="x" min={0.5} max={10} step={0.1} locked={isLocked("tpsl")} onUnlock={() => handleUnlock("tpsl")} aiSuggestion={suggestions[p("tp_multiplier_weak")]} onApplySuggestion={() => onApplySuggestion(p("tp_multiplier_weak"))} />
-            <SettingField label="SL Ratio" description="Stop loss distance as ratio of TP distance" value={form[p("sl_ratio")] || d("sl_ratio")} onChange={(v) => update(p("sl_ratio"), v)} suffix="x" min={0.1} max={5} step={0.1} locked={isLocked("tpsl")} onUnlock={() => handleUnlock("tpsl")} aiSuggestion={suggestions[p("sl_ratio")]} onApplySuggestion={() => onApplySuggestion(p("sl_ratio"))} />
-            <SettingField label="TP Capture Ratio" description="TP set at this % of predicted move distance" value={form[p("tp_capture_ratio")] || d("tp_capture_ratio")} onChange={(v) => update(p("tp_capture_ratio"), v)} suffix="x" min={0.3} max={1.0} step={0.05} locked={isLocked("tpsl")} onUnlock={() => handleUnlock("tpsl")} aiSuggestion={suggestions[p("tp_capture_ratio")]} onApplySuggestion={() => onApplySuggestion(p("tp_capture_ratio"))} />
-            <SettingField label="Min SL ATR Multiplier" description="Minimum SL distance to survive market noise" value={form[p("min_sl_atr_multiplier")] || d("min_sl_atr_multiplier")} onChange={(v) => update(p("min_sl_atr_multiplier"), v)} suffix="x" min={1} max={10} step={0.5} locked={isLocked("tpsl")} onUnlock={() => handleUnlock("tpsl")} aiSuggestion={suggestions[p("min_sl_atr_multiplier")]} onApplySuggestion={() => onApplySuggestion(p("min_sl_atr_multiplier"))} />
-            <SettingField label="Trailing Stop %" description="SL trails this % behind the highest point reached" value={form[p("trailing_stop_pct")] || d("trailing_stop_pct")} onChange={(v) => update(p("trailing_stop_pct"), v)} suffix="%" min={1} max={50} step={1} locked={isLocked("tpsl")} onUnlock={() => handleUnlock("tpsl")} aiSuggestion={suggestions[p("trailing_stop_pct")]} onApplySuggestion={() => onApplySuggestion(p("trailing_stop_pct"))} />
-            {!isLocked("tpsl") && <SectionSaveButton sectionKeys={[p("tp_multiplier_strong"), p("tp_multiplier_medium"), p("tp_multiplier_weak"), p("sl_ratio"), p("tp_capture_ratio"), p("min_sl_atr_multiplier"), p("trailing_stop_pct")]} form={form} saving={saving} onSave={onSaveSection} />}
+            <p className="text-xs text-muted-foreground mb-3">Minimum quality thresholds for trade entry. Higher = fewer but better trades.</p>
+            <SettingField label="Min Composite Score" description="Minimum composite score to allow a trade" value={form[p("min_composite_score")] || d("min_composite_score")} onChange={(v) => update(p("min_composite_score"), v)} min={50} max={100} step={1} locked={isLocked("quality")} onUnlock={() => handleUnlock("quality")} aiSuggestion={suggestions[p("min_composite_score")]} onApplySuggestion={() => onApplySuggestion(p("min_composite_score"))} />
+            <SettingField label="Min Expected Value" description="Minimum EV threshold for signal acceptance" value={form[p("min_ev_threshold")] || d("min_ev_threshold")} onChange={(v) => update(p("min_ev_threshold"), v)} min={0.001} max={0.05} step={0.001} locked={isLocked("quality")} onUnlock={() => handleUnlock("quality")} aiSuggestion={suggestions[p("min_ev_threshold")]} onApplySuggestion={() => onApplySuggestion(p("min_ev_threshold"))} />
+            <SettingField label="Min R:R Ratio" description="Minimum reward-to-risk ratio" value={form[p("min_rr_ratio")] || d("min_rr_ratio")} onChange={(v) => update(p("min_rr_ratio"), v)} suffix="x" min={1} max={10} step={0.5} locked={isLocked("quality")} onUnlock={() => handleUnlock("quality")} aiSuggestion={suggestions[p("min_rr_ratio")]} onApplySuggestion={() => onApplySuggestion(p("min_rr_ratio"))} />
+            {!isLocked("quality") && <SectionSaveButton sectionKeys={[p("min_composite_score"), p("min_ev_threshold"), p("min_rr_ratio")]} form={form} saving={saving} onSave={onSaveSection} />}
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><Target className="w-4 h-4" />Entry Thresholds</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="w-4 h-4" />Trade Management (V2)</CardTitle></CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground mb-3">Minimum composite scores required to enter each position building stage.</p>
-            <SettingField label="Probe Threshold" description="Score needed to open first trade on a symbol" value={form[p("probe_threshold")] || d("probe_threshold")} onChange={(v) => update(p("probe_threshold"), v)} min={50} max={100} step={1} locked={isLocked("entry")} onUnlock={() => handleUnlock("entry")} aiSuggestion={suggestions[p("probe_threshold")]} onApplySuggestion={() => onApplySuggestion(p("probe_threshold"))} />
-            <SettingField label="Confirmation Threshold" description="Score needed to add 2nd position on same symbol" value={form[p("confirmation_threshold")] || d("confirmation_threshold")} onChange={(v) => update(p("confirmation_threshold"), v)} min={50} max={100} step={1} locked={isLocked("entry")} onUnlock={() => handleUnlock("entry")} aiSuggestion={suggestions[p("confirmation_threshold")]} onApplySuggestion={() => onApplySuggestion(p("confirmation_threshold"))} />
-            <SettingField label="Momentum Threshold" description="Score needed to add 3rd position on same symbol" value={form[p("momentum_threshold")] || d("momentum_threshold")} onChange={(v) => update(p("momentum_threshold"), v)} min={50} max={100} step={1} locked={isLocked("entry")} onUnlock={() => handleUnlock("entry")} aiSuggestion={suggestions[p("momentum_threshold")]} onApplySuggestion={() => onApplySuggestion(p("momentum_threshold"))} />
-            {!isLocked("entry") && <SectionSaveButton sectionKeys={[p("probe_threshold"), p("confirmation_threshold"), p("momentum_threshold")]} form={form} saving={saving} onSave={onSaveSection} />}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><Layers className="w-4 h-4" />Stage Multipliers</CardTitle></CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted-foreground mb-3">Position size multiplier for each entry stage. Higher = bigger position.</p>
-            <SettingField label="Probe Multiplier" description="Size factor for 1st position" value={form[p("stage_multiplier_probe")] || d("stage_multiplier_probe")} onChange={(v) => update(p("stage_multiplier_probe"), v)} suffix="x" min={0.1} max={2} step={0.05} locked={isLocked("stage")} onUnlock={() => handleUnlock("stage")} aiSuggestion={suggestions[p("stage_multiplier_probe")]} onApplySuggestion={() => onApplySuggestion(p("stage_multiplier_probe"))} />
-            <SettingField label="Confirmation Multiplier" description="Size factor for 2nd position" value={form[p("stage_multiplier_confirmation")] || d("stage_multiplier_confirmation")} onChange={(v) => update(p("stage_multiplier_confirmation"), v)} suffix="x" min={0.1} max={2} step={0.05} locked={isLocked("stage")} onUnlock={() => handleUnlock("stage")} aiSuggestion={suggestions[p("stage_multiplier_confirmation")]} onApplySuggestion={() => onApplySuggestion(p("stage_multiplier_confirmation"))} />
-            <SettingField label="Momentum Multiplier" description="Size factor for 3rd position" value={form[p("stage_multiplier_momentum")] || d("stage_multiplier_momentum")} onChange={(v) => update(p("stage_multiplier_momentum"), v)} suffix="x" min={0.1} max={2} step={0.05} locked={isLocked("stage")} onUnlock={() => handleUnlock("stage")} aiSuggestion={suggestions[p("stage_multiplier_momentum")]} onApplySuggestion={() => onApplySuggestion(p("stage_multiplier_momentum"))} />
-            {!isLocked("stage") && <SectionSaveButton sectionKeys={[p("stage_multiplier_probe"), p("stage_multiplier_confirmation"), p("stage_multiplier_momentum")]} form={form} saving={saving} onSave={onSaveSection} />}
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <p><strong>TP/SL:</strong> Dynamically calculated using S/R levels + Fibonacci confluence (not configurable — adapts to market structure).</p>
+              <p><strong>Trailing Stop:</strong> 30% drawdown from peak unrealized profit. Activates only when trade is in profit.</p>
+              <p><strong>Time Exits:</strong> 72h profitable = close. 168h hard cap. Negative trades wait for first profit after 72h.</p>
+              <p><strong>Entry:</strong> One position per symbol. No multi-stage building.</p>
+            </div>
           </CardContent>
         </Card>
 
@@ -946,31 +852,12 @@ function ModeSettingsTab({ mode, form, update, suggestions, onApplySuggestion, u
         </Card>
 
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="w-4 h-4" />Timing & Execution</CardTitle></CardHeader>
-          <CardContent>
-            <SettingField label="Time Exit Window" description="Fallback auto-close window" value={form[p("time_exit_window_hours")] || d("time_exit_window_hours")} onChange={(v) => update(p("time_exit_window_hours"), v)} suffix="hrs" min={1} max={720} step={1} locked={isLocked("timing")} onUnlock={() => handleUnlock("timing")} aiSuggestion={suggestions[p("time_exit_window_hours")]} onApplySuggestion={() => onApplySuggestion(p("time_exit_window_hours"))} />
-            {!isLocked("timing") && <SectionSaveButton sectionKeys={[p("time_exit_window_hours")]} form={form} saving={saving} onSave={onSaveSection} />}
-          </CardContent>
-        </Card>
-
-        <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><Download className="w-4 h-4" />Capital Extraction</CardTitle></CardHeader>
           <CardContent>
             <p className="text-xs text-muted-foreground mb-3">When capital grows by the target %, extract profits and reset to starting capital.</p>
             <SettingField label="Extraction Target" description="Extract profits when capital grows by this %" value={form[p("extraction_target_pct")] || d("extraction_target_pct")} onChange={(v) => update(p("extraction_target_pct"), v)} suffix="%" min={10} max={200} step={5} locked={isLocked("extraction")} onUnlock={() => handleUnlock("extraction")} aiSuggestion={suggestions[p("extraction_target_pct")]} onApplySuggestion={() => onApplySuggestion(p("extraction_target_pct"))} />
             <SettingField label="Auto-Extract" description="Automatically extract when target is reached" value={form[p("auto_extraction")] || d("auto_extraction")} onChange={(v) => update(p("auto_extraction"), v)} type="toggle" locked={isLocked("extraction")} onUnlock={() => handleUnlock("extraction")} aiSuggestion={suggestions[p("auto_extraction")]} onApplySuggestion={() => onApplySuggestion(p("auto_extraction"))} />
             {!isLocked("extraction") && <SectionSaveButton sectionKeys={[p("extraction_target_pct"), p("auto_extraction")]} form={form} saving={saving} onSave={onSaveSection} />}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="w-4 h-4" />Profit Harvesting</CardTitle></CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted-foreground mb-3">Close winning trades when they pull back too far from their peak profit.</p>
-            <SettingField label="Peak Drawdown Exit" description="Close trade if profit drops this % from its peak" value={form[p("peak_drawdown_exit_pct")] || d("peak_drawdown_exit_pct")} onChange={(v) => update(p("peak_drawdown_exit_pct"), v)} suffix="%" min={5} max={80} step={5} locked={isLocked("harvest")} onUnlock={() => handleUnlock("harvest")} aiSuggestion={suggestions[p("peak_drawdown_exit_pct")]} onApplySuggestion={() => onApplySuggestion(p("peak_drawdown_exit_pct"))} />
-            <SettingField label="Min Peak Profit" description="Harvesting only activates after this % profit" value={form[p("min_peak_profit_pct")] || d("min_peak_profit_pct")} onChange={(v) => update(p("min_peak_profit_pct"), v)} suffix="%" min={0.5} max={20} step={0.5} locked={isLocked("harvest")} onUnlock={() => handleUnlock("harvest")} aiSuggestion={suggestions[p("min_peak_profit_pct")]} onApplySuggestion={() => onApplySuggestion(p("min_peak_profit_pct"))} />
-            <SettingField label="Large Peak Threshold" description="At this profit level, use a tighter drawdown exit (60% of normal)" value={form[p("large_peak_threshold_pct")] || d("large_peak_threshold_pct")} onChange={(v) => update(p("large_peak_threshold_pct"), v)} suffix="%" min={2} max={30} step={1} locked={isLocked("harvest")} onUnlock={() => handleUnlock("harvest")} aiSuggestion={suggestions[p("large_peak_threshold_pct")]} onApplySuggestion={() => onApplySuggestion(p("large_peak_threshold_pct"))} />
-            {!isLocked("harvest") && <SectionSaveButton sectionKeys={[p("peak_drawdown_exit_pct"), p("min_peak_profit_pct"), p("large_peak_threshold_pct")]} form={form} saving={saving} onSave={onSaveSection} />}
           </CardContent>
         </Card>
 
@@ -983,23 +870,6 @@ function ModeSettingsTab({ mode, form, update, suggestions, onApplySuggestion, u
         </Card>
       </div>
 
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><BarChart3 className="w-4 h-4" />Strategy Family Profiles</CardTitle></CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground mb-3">Per-family execution parameters: TP/SL distances, hold times, and harvest sensitivity.</p>
-          <div className="space-y-2">
-            {STRATEGY_FAMILIES.map(fam => (
-              <FamilyProfileSection key={fam.key} mode={mode} familyKey={fam.key} familyLabel={fam.label} form={form} update={update} locked={isLocked("family")} onUnlock={() => handleUnlock("family")} suggestions={suggestions} onApplySuggestion={onApplySuggestion} />
-            ))}
-          </div>
-          {!isLocked("family") && (
-            <SectionSaveButton
-              sectionKeys={STRATEGY_FAMILIES.flatMap(fam => ["tp_atr_multiplier", "sl_atr_multiplier", "initial_exit_hours", "extension_hours", "max_exit_hours", "harvest_sensitivity"].map(k => `${mode}_${fam.key}_${k}`))}
-              form={form} saving={saving} onSave={onSaveSection}
-            />
-          )}
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Crosshair className="w-4 h-4" />Instruments</CardTitle></CardHeader>

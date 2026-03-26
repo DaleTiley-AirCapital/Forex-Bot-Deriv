@@ -8,47 +8,42 @@ import { desc, eq, and, gte } from "drizzle-orm";
 export interface FeatureVector {
   symbol: string;
   ts: number;
-  // Trend
-  emaSlope: number;          // EMA slope (positive = uptrend)
-  emaDist: number;           // Price distance from EMA as % 
-  priceVsEma20: number;      // price / ema20 - 1
-  // Momentum
-  rsi14: number;             // RSI 0-100
-  rsiZone: number;           // -1 oversold, 0 neutral, 1 overbought
-  // Volatility
-  atr14: number;             // ATR normalised as % of price
-  bbWidth: number;           // Bollinger band width / mid
-  bbPctB: number;            // %B position within bands
-  atrRank: number;           // ATR vs rolling 50-period ATR (0-1)
-  // Price structure
-  candleBody: number;        // |close-open| / (high-low)
-  upperWickRatio: number;    // upper wick / body
-  lowerWickRatio: number;    // lower wick / body
-  consecutive: number;       // consecutive up(+) or down(-) candles
-  // Statistical
-  zScore: number;            // (close - mean20) / std20
-  rollingSkew: number;       // skew of last 20 closes
-  // Spike / regime
-  ticksSinceSpike: number;   // ticks since last spike (normalised)
-  runLengthSinceSpike: number; // number of candles since last spike
-  spikeHazardScore: number;  // probability of spike based on run length
-  // Swing structure (5-bar pivot detection)
-  swingHighDist: number;     // (price - recent swing high) / price, negative = below
-  swingLowDist: number;      // (price - recent swing low) / price, positive = above
-  swingBreached: boolean;    // price breached a swing level within last 1-3 candles
-  swingReclaimed: boolean;   // price reclaimed (closed back inside) the swing level on latest candle
-  swingBreachCandles: number; // how many candles ago the breach started (0 = no breach)
-  swingBreachDirection: "above" | "below" | null; // which swing level was breached
-  // Volatility dynamics
-  bbWidthRoc: number;        // BB width rate-of-change vs 5 candles ago
-  atrAccel: number;          // ATR acceleration (current ATR / ATR 5 candles ago - 1)
-  // Time features
-  hourOfDay: number;         // UTC hour 0-23 of latest candle
-  dayOfWeek: number;         // UTC day 0=Sun..6=Sat
-  // Cross-index correlation
-  crossCorrelation: number;  // rolling Pearson correlation with paired symbol (-1 to 1)
-  // Regime
-  regimeLabel: string;       // trending_up | trending_down | ranging | volatile
+  emaSlope: number;
+  emaDist: number;
+  priceVsEma20: number;
+  rsi14: number;
+  rsiZone: number;
+  atr14: number;
+  bbWidth: number;
+  bbPctB: number;
+  atrRank: number;
+  candleBody: number;
+  upperWickRatio: number;
+  lowerWickRatio: number;
+  consecutive: number;
+  zScore: number;
+  rollingSkew: number;
+  ticksSinceSpike: number;
+  runLengthSinceSpike: number;
+  spikeHazardScore: number;
+  swingHighDist: number;
+  swingLowDist: number;
+  swingBreached: boolean;
+  swingReclaimed: boolean;
+  swingBreachCandles: number;
+  swingBreachDirection: "above" | "below" | null;
+  bbWidthRoc: number;
+  atrAccel: number;
+  hourOfDay: number;
+  dayOfWeek: number;
+  crossCorrelation: number;
+  regimeLabel: string;
+  swingHigh: number;
+  swingLow: number;
+  fibRetraceLevels: number[];
+  fibExtensionLevels: number[];
+  bbUpper: number;
+  bbLower: number;
 }
 
 function ema(values: number[], period: number): number[] {
@@ -211,6 +206,16 @@ function detectSwingBreachAndReclaim(
   return { breached: false, reclaimed: false, breachCandles: 0, breachDirection: null };
 }
 
+function computeFibonacciLevels(swingLow: number, swingHigh: number): { retracements: number[]; extensions: number[] } {
+  const range = swingHigh - swingLow;
+  if (range <= 0) return { retracements: [], extensions: [] };
+  const retracementRatios = [0.236, 0.382, 0.5, 0.618, 0.786];
+  const extensionRatios = [1.272, 1.618, 2.0];
+  const retracements = retracementRatios.map(r => swingHigh - range * r);
+  const extensions = extensionRatios.map(r => swingLow + range * r);
+  return { retracements, extensions };
+}
+
 function detectRegime(closes: number[], atrVal: number, ema20: number[]): string {
   if (closes.length < 20) return "ranging";
   const recentEma = ema20.slice(-20);
@@ -333,14 +338,13 @@ export async function computeFeatures(symbol: string, lookback = 100): Promise<F
     }
   }
 
-  // Regime
   const regimeLabel = detectRegime(closes, atr14, ema20Arr);
 
-  // Swing structure (5-bar pivots) with multi-candle breach/reclaim detection
   const { swingHigh, swingLow } = findSwingLevels(highs, lows, 5);
   const swingHighDist = (price - swingHigh) / price;
   const swingLowDist = (price - swingLow) / price;
   const swingResult = detectSwingBreachAndReclaim(candles, swingHigh, swingLow);
+  const fibLevels = computeFibonacciLevels(swingLow, swingHigh);
 
   // BB width rate-of-change
   const bbWidthPrev = closes.length > 25 ? computeBbWidthAtIndex(closes, closes.length - 6) : bbWidth;
@@ -404,6 +408,12 @@ export async function computeFeatures(symbol: string, lookback = 100): Promise<F
     dayOfWeek,
     crossCorrelation,
     regimeLabel,
+    swingHigh,
+    swingLow,
+    fibRetraceLevels: fibLevels.retracements,
+    fibExtensionLevels: fibLevels.extensions,
+    bbUpper,
+    bbLower,
   };
 }
 

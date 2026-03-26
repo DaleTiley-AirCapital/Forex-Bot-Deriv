@@ -1,7 +1,7 @@
 import type { FeatureVector } from "./features.js";
 import { scoreFeaturesForFamily } from "./model.js";
 import { computeScoringDimensions, computeCompositeScore, type ScoringWeights } from "./scoring.js";
-import { classifyRegime, type StrategyFamily, type RegimeClassification } from "./regimeEngine.js";
+import { classifyRegime, getCachedRegime, cacheRegime, type StrategyFamily, type RegimeClassification } from "./regimeEngine.js";
 
 export interface SignalCandidate {
   symbol: string;
@@ -21,65 +21,79 @@ export interface SignalCandidate {
   dimensions: import("./scoring.js").ScoringDimensions | null;
   regimeState: string;
   regimeConfidence: number;
-  entryStage: "probe" | "confirmation" | "momentum";
+  swingHigh: number;
+  swingLow: number;
+  fibRetraceLevels: number[];
+  fibExtensionLevels: number[];
+  bbUpper: number;
+  bbLower: number;
+  currentPrice: number;
 }
 
 const FAMILY_CONFIG: Record<StrategyFamily, {
   minModelScore: number;
   minEV: number;
   minRR: number;
-  slMultiple: number;
-  tpMultiple: number;
 }> = {
   trend_continuation: {
     minModelScore: 0.58,
     minEV: 0.005,
     minRR: 1.5,
-    slMultiple: 2.5,
-    tpMultiple: 6.0,
   },
   mean_reversion: {
     minModelScore: 0.60,
     minEV: 0.006,
     minRR: 1.8,
-    slMultiple: 3.0,
-    tpMultiple: 4.0,
   },
   breakout_expansion: {
     minModelScore: 0.55,
     minEV: 0.005,
     minRR: 1.5,
-    slMultiple: 2.0,
-    tpMultiple: 8.0,
   },
   spike_event: {
     minModelScore: 0.62,
     minEV: 0.008,
     minRR: 2.0,
-    slMultiple: 1.5,
-    tpMultiple: 4.0,
   },
 };
 
-function sltp(
-  price: number,
+function buildCandidate(
+  features: FeatureVector,
+  regime: RegimeClassification,
+  family: StrategyFamily,
   direction: "buy" | "sell",
-  atr: number,
-  slMultiple: number,
-  tpMultiple: number,
-): { sl: number; tp: number } {
-  const atrPct = Math.max(atr, 0.001);
-  if (direction === "buy") {
-    return {
-      sl: price * (1 - slMultiple * atrPct),
-      tp: price * (1 + tpMultiple * atrPct),
-    };
-  } else {
-    return {
-      sl: price * (1 + slMultiple * atrPct),
-      tp: price * (1 - tpMultiple * atrPct),
-    };
-  }
+  score: number,
+  confidence: number,
+  expectedValue: number,
+  reason: string,
+  signalType: string,
+): SignalCandidate {
+  return {
+    symbol: features.symbol,
+    strategyName: family,
+    strategyFamily: family,
+    direction,
+    score,
+    confidence,
+    expectedValue,
+    regimeCompatible: true,
+    signalType,
+    suggestedSl: null,
+    suggestedTp: null,
+    reason,
+    timestamp: Date.now(),
+    compositeScore: 0,
+    dimensions: null,
+    regimeState: regime.regime,
+    regimeConfidence: regime.confidence,
+    swingHigh: features.swingHigh,
+    swingLow: features.swingLow,
+    fibRetraceLevels: features.fibRetraceLevels,
+    fibExtensionLevels: features.fibExtensionLevels,
+    bbUpper: features.bbUpper,
+    bbLower: features.bbLower,
+    currentPrice: features.ts > 0 ? 0 : 0,
+  };
 }
 
 function trendContinuation(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
@@ -107,28 +121,7 @@ function trendContinuation(features: FeatureVector, regime: RegimeClassification
   const { score, confidence, expectedValue } = scoreFeaturesForFamily(features, "trend_continuation");
   if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
-  const { sl, tp } = sltp(1, direction, features.atr14, cfg.slMultiple, cfg.tpMultiple);
-
-  return {
-    symbol: features.symbol,
-    strategyName: "trend_continuation",
-    strategyFamily: "trend_continuation",
-    direction,
-    score,
-    confidence,
-    expectedValue,
-    regimeCompatible: true,
-    signalType: "trend_continuation",
-    suggestedSl: -Math.abs(sl - 1),
-    suggestedTp: Math.abs(tp - 1),
-    reason,
-    timestamp: Date.now(),
-    compositeScore: 0,
-    dimensions: null,
-    regimeState: regime.regime,
-    regimeConfidence: regime.confidence,
-    entryStage: "probe",
-  };
+  return buildCandidate(features, regime, "trend_continuation", direction, score, confidence, expectedValue, reason, "trend_continuation");
 }
 
 function meanReversion(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
@@ -144,24 +137,19 @@ function meanReversion(features: FeatureVector, regime: RegimeClassification): S
 
   let direction: "buy" | "sell" | null = null;
   let reason = "";
-  let subStrategy = "";
 
   if (oversold && multipleAdverse) {
     direction = "buy";
-    subStrategy = "exhaustion-rebound";
     reason = `Exhaustion rebound: RSI=${features.rsi14.toFixed(1)}, z=${features.zScore.toFixed(2)}, ${Math.abs(features.consecutive)} consecutive down`;
   } else if (overbought && multipleAdverse) {
     direction = "sell";
-    subStrategy = "exhaustion-rebound";
     reason = `Exhaustion rebound: RSI=${features.rsi14.toFixed(1)}, z=${features.zScore.toFixed(2)}, ${Math.abs(features.consecutive)} consecutive up`;
   } else if (sweepSetup) {
     if (features.swingBreachDirection === "above") {
       direction = "sell";
-      subStrategy = "liquidity-sweep";
       reason = `Liquidity sweep above swing high: breach ${features.swingBreachCandles} candles ago, body=${features.candleBody.toFixed(2)}`;
     } else if (features.swingBreachDirection === "below") {
       direction = "buy";
-      subStrategy = "liquidity-sweep";
       reason = `Liquidity sweep below swing low: breach ${features.swingBreachCandles} candles ago, body=${features.candleBody.toFixed(2)}`;
     }
   }
@@ -171,28 +159,7 @@ function meanReversion(features: FeatureVector, regime: RegimeClassification): S
   const { score, confidence, expectedValue } = scoreFeaturesForFamily(features, "mean_reversion");
   if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
-  const { sl, tp } = sltp(1, direction, features.atr14, cfg.slMultiple, cfg.tpMultiple);
-
-  return {
-    symbol: features.symbol,
-    strategyName: "mean_reversion",
-    strategyFamily: "mean_reversion",
-    direction,
-    score,
-    confidence,
-    expectedValue,
-    regimeCompatible: true,
-    signalType: "mean_reversion",
-    suggestedSl: -Math.abs(sl - 1),
-    suggestedTp: Math.abs(tp - 1),
-    reason: `[${regime.regime}] ${reason}`,
-    timestamp: Date.now(),
-    compositeScore: 0,
-    dimensions: null,
-    regimeState: regime.regime,
-    regimeConfidence: regime.confidence,
-    entryStage: "probe",
-  };
+  return buildCandidate(features, regime, "mean_reversion", direction, score, confidence, expectedValue, `[${regime.regime}] ${reason}`, "mean_reversion");
 }
 
 function breakoutExpansion(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
@@ -210,19 +177,15 @@ function breakoutExpansion(features: FeatureVector, regime: RegimeClassification
 
   let direction: "buy" | "sell" | null = null;
   let reason = "";
-  let subStrategy = "";
 
   if (squeeze && atrExpanding && atUpperBand) {
     direction = "buy";
-    subStrategy = "volatility-breakout";
     reason = `BB squeeze breakout up: width=${features.bbWidth.toFixed(4)}, %B=${features.bbPctB.toFixed(2)}, ATR rank=${features.atrRank.toFixed(2)}`;
   } else if (squeeze && atrExpanding && atLowerBand) {
     direction = "sell";
-    subStrategy = "volatility-breakout";
     reason = `BB squeeze breakout down: width=${features.bbWidth.toFixed(4)}, %B=${features.bbPctB.toFixed(2)}, ATR rank=${features.atrRank.toFixed(2)}`;
   } else if (wasCompressed && bbExpanding && atrAccelerating && bodyExpanding) {
     direction = features.bbPctB > 0.5 ? "buy" : "sell";
-    subStrategy = "volatility-expansion";
     reason = `Volatility expansion: bbWidthRoC=${features.bbWidthRoc.toFixed(3)}, atrAccel=${features.atrAccel.toFixed(3)}, body=${features.candleBody.toFixed(2)}`;
   }
 
@@ -231,28 +194,7 @@ function breakoutExpansion(features: FeatureVector, regime: RegimeClassification
   const { score, confidence, expectedValue } = scoreFeaturesForFamily(features, "breakout_expansion");
   if (score < cfg.minModelScore || expectedValue < cfg.minEV) return null;
 
-  const { sl, tp } = sltp(1, direction, features.atr14, cfg.slMultiple, cfg.tpMultiple);
-
-  return {
-    symbol: features.symbol,
-    strategyName: "breakout_expansion",
-    strategyFamily: "breakout_expansion",
-    direction,
-    score,
-    confidence,
-    expectedValue,
-    regimeCompatible: true,
-    signalType: "breakout_expansion",
-    suggestedSl: -Math.abs(sl - 1),
-    suggestedTp: Math.abs(tp - 1),
-    reason: `[${regime.regime}] ${reason}`,
-    timestamp: Date.now(),
-    compositeScore: 0,
-    dimensions: null,
-    regimeState: regime.regime,
-    regimeConfidence: regime.confidence,
-    entryStage: "probe",
-  };
+  return buildCandidate(features, regime, "breakout_expansion", direction, score, confidence, expectedValue, `[${regime.regime}] ${reason}`, "breakout_expansion");
 }
 
 function spikeEvent(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
@@ -271,28 +213,7 @@ function spikeEvent(features: FeatureVector, regime: RegimeClassification): Sign
   const boostedScore = Math.min(0.99, score * 0.4 + features.spikeHazardScore * 0.5);
   if (boostedScore < cfg.minModelScore) return null;
 
-  const { sl, tp } = sltp(1, direction, features.atr14, cfg.slMultiple, cfg.tpMultiple);
-
-  return {
-    symbol: features.symbol,
-    strategyName: "spike_event",
-    strategyFamily: "spike_event",
-    direction,
-    score: boostedScore,
-    confidence: features.spikeHazardScore,
-    expectedValue: Math.max(expectedValue, 0.008),
-    regimeCompatible: true,
-    signalType: "spike_capture",
-    suggestedSl: -Math.abs(sl - 1),
-    suggestedTp: Math.abs(tp - 1),
-    reason: `[${regime.regime}] ${reason}`,
-    timestamp: Date.now(),
-    compositeScore: 0,
-    dimensions: null,
-    regimeState: regime.regime,
-    regimeConfidence: regime.confidence,
-    entryStage: "probe",
-  };
+  return buildCandidate(features, regime, "spike_event", direction, boostedScore, features.spikeHazardScore, Math.max(expectedValue, 0.008), `[${regime.regime}] ${reason}`, "spike_capture");
 }
 
 const FAMILY_RUNNERS: Record<StrategyFamily, (f: FeatureVector, r: RegimeClassification) => SignalCandidate | null> = {

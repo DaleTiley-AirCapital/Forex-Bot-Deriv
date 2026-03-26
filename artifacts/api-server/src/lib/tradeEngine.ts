@@ -3,69 +3,15 @@ import { eq, and, desc } from "drizzle-orm";
 import { getDerivClientForMode, getDerivClientWithDbToken, getModeCapitalKey, getModeCapitalDefault } from "./deriv.js";
 import type { TradingMode } from "./deriv.js";
 import type { AllocationDecision } from "./signalRouter.js";
-import { evaluateProfitHarvest, determineEntryStage, getEntrySizeMultiplier, checkAndAutoExtract, getHarvestSettings } from "./extractionEngine.js";
+import { checkAndAutoExtract } from "./extractionEngine.js";
 
 const MAX_OPEN_TRADES = 3;
 const MAX_EQUITY_DEPLOYED_PCT = 0.80;
-const POSITION_SIZE_MIN_PCT = 0.05;
-const POSITION_SIZE_MAX_PCT = 0.25;
-const DEFAULT_TRAILING_STOP_PCT = 0.25;
-const INITIAL_EXIT_HOURS = 168;
-const EXTENSION_HOURS = 48;
-const MAX_EXIT_HOURS = 336;
+const PROFIT_TRAILING_DRAWDOWN_PCT = 0.30;
+const TIME_EXIT_PROFIT_HOURS = 72;
+const TIME_EXIT_HARD_CAP_HOURS = 168;
 
 export type StrategyFamily = "trend_continuation" | "mean_reversion" | "breakout_expansion" | "spike_event";
-
-export const FAMILY_HOLD_PROFILE: Record<StrategyFamily, {
-  tpAtrMultiplier: number;
-  slAtrMultiplier: number;
-  initialExitHours: number;
-  extensionHours: number;
-  maxExitHours: number;
-  harvestSensitivity: number;
-}> = {
-  trend_continuation: {
-    tpAtrMultiplier: 6.0,
-    slAtrMultiplier: 2.5,
-    initialExitHours: 168,
-    extensionHours: 48,
-    maxExitHours: 336,
-    harvestSensitivity: 0.8,
-  },
-  mean_reversion: {
-    tpAtrMultiplier: 4.0,
-    slAtrMultiplier: 3.0,
-    initialExitHours: 120,
-    extensionHours: 36,
-    maxExitHours: 240,
-    harvestSensitivity: 1.0,
-  },
-  breakout_expansion: {
-    tpAtrMultiplier: 8.0,
-    slAtrMultiplier: 2.0,
-    initialExitHours: 168,
-    extensionHours: 48,
-    maxExitHours: 336,
-    harvestSensitivity: 0.7,
-  },
-  spike_event: {
-    tpAtrMultiplier: 4.0,
-    slAtrMultiplier: 1.5,
-    initialExitHours: 72,
-    extensionHours: 24,
-    maxExitHours: 168,
-    harvestSensitivity: 1.2,
-  },
-};
-
-function resolveFamilyFromStrategy(strategyName: string): StrategyFamily {
-  if (strategyName in FAMILY_HOLD_PROFILE) return strategyName as StrategyFamily;
-  if (strategyName.includes("trend")) return "trend_continuation";
-  if (strategyName.includes("mean") || strategyName.includes("reversion")) return "mean_reversion";
-  if (strategyName.includes("breakout")) return "breakout_expansion";
-  if (strategyName.includes("spike")) return "spike_event";
-  return "trend_continuation";
-}
 
 interface PositionSizing {
   size: number;
@@ -79,7 +25,7 @@ export function calculatePositionSize(
   totalDeployedCapital: number,
   confidence: number,
   maxOpenTrades: number = MAX_OPEN_TRADES,
-  equityPctPerTrade: number = (POSITION_SIZE_MIN_PCT + POSITION_SIZE_MAX_PCT) / 2 * 100,
+  equityPctPerTrade: number = 22,
 ): PositionSizing {
   if (openTradesCount >= maxOpenTrades) {
     return { size: 0, allowed: false, reason: `Max ${maxOpenTrades} simultaneous trades reached` };
@@ -106,88 +52,175 @@ export function calculatePositionSize(
   return { size, allowed: true, reason: "ok" };
 }
 
-export function calculateDynamicTP(params: {
+export function calculateSRFibTP(params: {
   entryPrice: number;
   direction: "buy" | "sell";
-  confidence: number;
+  swingHigh: number;
+  swingLow: number;
+  fibExtensionLevels: number[];
+  bbUpper: number;
+  bbLower: number;
   atrPct: number;
-  historicalAvgMovePct?: number;
-  tpMultiplier?: number;
-  family?: StrategyFamily;
-  tpCaptureRatio?: number;
-  familyProfileOverride?: { tpAtrMultiplier: number };
 }): number {
-  const { entryPrice, direction, confidence, atrPct, historicalAvgMovePct = 0, tpMultiplier = 2.0, family, tpCaptureRatio = 0.70, familyProfileOverride } = params;
-
-  const familyProfile = familyProfileOverride || (family ? FAMILY_HOLD_PROFILE[family] : null);
-  const effectiveMultiplier = familyProfile ? familyProfile.tpAtrMultiplier : tpMultiplier;
-
-  let predictedMovePct = atrPct * effectiveMultiplier * confidence;
-
-  if (historicalAvgMovePct > 0) {
-    const historicalEstimate = historicalAvgMovePct * confidence;
-    predictedMovePct = Math.max(predictedMovePct, historicalEstimate);
-  }
-
-  const tpPct = predictedMovePct * tpCaptureRatio;
-  const minTPPct = atrPct * 2.5;
-  const maxTPPct = atrPct * 15.0;
-  const clampedPct = Math.max(minTPPct, Math.min(maxTPPct, tpPct));
+  const { entryPrice, direction, swingHigh, swingLow, fibExtensionLevels, bbUpper, bbLower, atrPct } = params;
 
   if (direction === "buy") {
-    return entryPrice * (1 + clampedPct);
+    const resistanceLevels = [
+      swingHigh,
+      ...fibExtensionLevels.filter(l => l > entryPrice),
+      bbUpper,
+    ].filter(l => l > entryPrice).sort((a, b) => a - b);
+
+    if (resistanceLevels.length === 0) {
+      return entryPrice * (1 + atrPct * 6);
+    }
+
+    let bestTp = resistanceLevels[0];
+    for (const level of resistanceLevels) {
+      const nearby = resistanceLevels.filter(l => Math.abs(l - level) / level < 0.005);
+      if (nearby.length >= 2) {
+        bestTp = Math.min(...nearby);
+        break;
+      }
+    }
+
+    const minTp = entryPrice * (1 + atrPct * 3);
+    bestTp = Math.max(bestTp, minTp);
+
+    return bestTp * 0.998;
   } else {
-    return entryPrice * (1 - clampedPct);
+    const supportLevels = [
+      swingLow,
+      ...fibExtensionLevels.map(l => entryPrice - (l - entryPrice)).filter(l => l < entryPrice && l > 0),
+      bbLower,
+    ].filter(l => l < entryPrice && l > 0).sort((a, b) => b - a);
+
+    if (supportLevels.length === 0) {
+      return entryPrice * (1 - atrPct * 6);
+    }
+
+    let bestTp = supportLevels[0];
+    for (const level of supportLevels) {
+      const nearby = supportLevels.filter(l => Math.abs(l - level) / level < 0.005);
+      if (nearby.length >= 2) {
+        bestTp = Math.max(...nearby);
+        break;
+      }
+    }
+
+    const minTp = entryPrice * (1 - atrPct * 3);
+    bestTp = Math.min(bestTp, minTp);
+
+    return bestTp * 1.002;
   }
 }
 
-export function calculateInitialSL(params: {
+export function calculateSRFibSL(params: {
   entryPrice: number;
   direction: "buy" | "sell";
+  swingHigh: number;
+  swingLow: number;
+  fibRetraceLevels: number[];
+  bbUpper: number;
+  bbLower: number;
   atrPct: number;
-  slRatio?: number;
-  family?: StrategyFamily;
-  minSlAtrMultiplier?: number;
-  familyProfileOverride?: { slAtrMultiplier: number };
+  positionSize: number;
+  equity: number;
 }): number {
-  const { entryPrice, direction, atrPct, slRatio = 1.0, family, minSlAtrMultiplier = 3.0, familyProfileOverride } = params;
-  const familyProfile = familyProfileOverride || (family ? FAMILY_HOLD_PROFILE[family] : null);
-  const baseMultiplier = familyProfile ? familyProfile.slAtrMultiplier : 2.5;
-  const effectiveMultiplier = Math.max(baseMultiplier, minSlAtrMultiplier);
-  const slPct = atrPct * effectiveMultiplier * slRatio;
+  const { entryPrice, direction, swingHigh, swingLow, fibRetraceLevels, bbUpper, bbLower, atrPct, positionSize, equity } = params;
+
   if (direction === "buy") {
-    return entryPrice * (1 - slPct);
+    const supportLevels = [
+      swingLow,
+      ...fibRetraceLevels.filter(l => l < entryPrice && l > 0),
+      bbLower,
+    ].filter(l => l < entryPrice && l > 0).sort((a, b) => b - a);
+
+    let sl: number;
+    if (supportLevels.length === 0) {
+      sl = entryPrice * (1 - atrPct * 2.5);
+    } else {
+      let bestSl = supportLevels[0];
+      for (const level of supportLevels) {
+        const nearby = supportLevels.filter(l => Math.abs(l - level) / level < 0.005);
+        if (nearby.length >= 2) {
+          bestSl = Math.max(...nearby);
+          break;
+        }
+      }
+      sl = bestSl * 1.002;
+    }
+
+    const maxSlDistance = (equity * 0.10) / positionSize;
+    const safetyFloor = entryPrice * (1 - maxSlDistance);
+    sl = Math.max(sl, safetyFloor);
+
+    return sl;
   } else {
-    return entryPrice * (1 + slPct);
+    const resistanceLevels = [
+      swingHigh,
+      ...fibRetraceLevels.filter(l => l > entryPrice),
+      bbUpper,
+    ].filter(l => l > entryPrice).sort((a, b) => a - b);
+
+    let sl: number;
+    if (resistanceLevels.length === 0) {
+      sl = entryPrice * (1 + atrPct * 2.5);
+    } else {
+      let bestSl = resistanceLevels[0];
+      for (const level of resistanceLevels) {
+        const nearby = resistanceLevels.filter(l => Math.abs(l - level) / level < 0.005);
+        if (nearby.length >= 2) {
+          bestSl = Math.min(...nearby);
+          break;
+        }
+      }
+      sl = bestSl * 0.998;
+    }
+
+    const maxSlDistance = (equity * 0.10) / positionSize;
+    const safetyCeiling = entryPrice * (1 + maxSlDistance);
+    sl = Math.min(sl, safetyCeiling);
+
+    return sl;
   }
 }
 
-export function calculateTrailingStop(params: {
+export function calculateProfitTrailingStop(params: {
   entryPrice: number;
   currentPrice: number;
   peakPrice: number;
   direction: "buy" | "sell";
   currentSl: number;
-  trailPct?: number;
 }): { newSl: number; updated: boolean } {
-  const { currentPrice, peakPrice, direction, currentSl, trailPct = DEFAULT_TRAILING_STOP_PCT } = params;
+  const { entryPrice, currentPrice, peakPrice, direction, currentSl } = params;
 
-  let newPeak = peakPrice;
-  if (direction === "buy") {
-    newPeak = Math.max(peakPrice, currentPrice);
-  } else {
-    newPeak = Math.min(peakPrice, currentPrice);
+  const currentPnlPct = direction === "buy"
+    ? (currentPrice - entryPrice) / entryPrice
+    : (entryPrice - currentPrice) / entryPrice;
+
+  if (currentPnlPct <= 0) {
+    return { newSl: currentSl, updated: false };
   }
 
+  const peakPnlPct = direction === "buy"
+    ? (peakPrice - entryPrice) / entryPrice
+    : (entryPrice - peakPrice) / entryPrice;
+
+  if (peakPnlPct <= 0) {
+    return { newSl: currentSl, updated: false };
+  }
+
+  const trailPnlPct = peakPnlPct * (1 - PROFIT_TRAILING_DRAWDOWN_PCT);
+
+  let trailingSl: number;
   if (direction === "buy") {
-    if (newPeak <= 0) return { newSl: currentSl, updated: false };
-    const trailingSl = newPeak * (1 - trailPct);
+    trailingSl = entryPrice * (1 + trailPnlPct);
     if (trailingSl > currentSl) {
       return { newSl: trailingSl, updated: true };
     }
   } else {
-    if (newPeak <= 0) return { newSl: currentSl, updated: false };
-    const trailingSl = newPeak * (1 + trailPct);
+    trailingSl = entryPrice * (1 - trailPnlPct);
     if (trailingSl < currentSl) {
       return { newSl: trailingSl, updated: true };
     }
@@ -198,65 +231,23 @@ export function calculateTrailingStop(params: {
 
 export function checkTimeExit(params: {
   entryTs: Date;
-  maxExitTs: Date;
   currentPnl: number;
-  initialExitHours?: number;
-  extensionHours?: number;
-  maxExitHours?: number;
-}): { shouldExit: boolean; shouldExtend: boolean; newMaxExitTs: Date | null; exitReason: string | null } {
-  const {
-    entryTs, maxExitTs, currentPnl,
-    initialExitHours = INITIAL_EXIT_HOURS,
-    extensionHours = EXTENSION_HOURS,
-    maxExitHours = MAX_EXIT_HOURS,
-  } = params;
+}): { shouldExit: boolean; exitReason: string | null } {
+  const { entryTs, currentPnl } = params;
   const now = new Date();
   const hoursOpen = (now.getTime() - entryTs.getTime()) / (1000 * 60 * 60);
-  const hardMax = new Date(entryTs.getTime() + maxExitHours * 60 * 60 * 1000);
 
-  if (now >= hardMax) {
-    return { shouldExit: true, shouldExtend: false, newMaxExitTs: null, exitReason: "hard_time_limit" };
+  if (hoursOpen >= TIME_EXIT_HARD_CAP_HOURS) {
+    return { shouldExit: true, exitReason: "hard_time_limit_168h" };
   }
 
-  if (hoursOpen >= initialExitHours && now >= maxExitTs) {
+  if (hoursOpen >= TIME_EXIT_PROFIT_HOURS) {
     if (currentPnl > 0) {
-      return { shouldExit: true, shouldExtend: false, newMaxExitTs: null, exitReason: "profitable_at_time_exit" };
+      return { shouldExit: true, exitReason: "profitable_at_72h" };
     }
-
-    const smallLossThreshold = -0.02;
-    if (currentPnl < 0 && currentPnl > smallLossThreshold) {
-      const extensionEnd = new Date(maxExitTs.getTime() + extensionHours * 60 * 60 * 1000);
-      const cappedEnd = extensionEnd > hardMax ? hardMax : extensionEnd;
-      if (cappedEnd > maxExitTs) {
-        return { shouldExit: false, shouldExtend: true, newMaxExitTs: cappedEnd, exitReason: null };
-      }
-      return { shouldExit: true, shouldExtend: false, newMaxExitTs: null, exitReason: "max_extensions_reached" };
-    }
-
-    return { shouldExit: true, shouldExtend: false, newMaxExitTs: null, exitReason: "loss_at_time_exit" };
   }
 
-  return { shouldExit: false, shouldExtend: false, newMaxExitTs: null, exitReason: null };
-}
-
-export async function getHistoricalAvgMove(symbol: string, strategyName: string): Promise<number> {
-  const closedTrades = await db.select().from(tradesTable)
-    .where(and(
-      eq(tradesTable.symbol, symbol),
-      eq(tradesTable.strategyName, strategyName),
-      eq(tradesTable.status, "closed"),
-    ))
-    .orderBy(desc(tradesTable.exitTs))
-    .limit(50);
-
-  if (closedTrades.length < 5) return 0;
-
-  const moves = closedTrades
-    .filter(t => t.entryPrice > 0 && t.exitPrice !== null)
-    .map(t => Math.abs((t.exitPrice! - t.entryPrice) / t.entryPrice));
-
-  if (moves.length === 0) return 0;
-  return moves.reduce((a, b) => a + b, 0) / moves.length;
+  return { shouldExit: false, exitReason: null };
 }
 
 export async function openPosition(decision: AllocationDecision, atrPct: number, mode: TradingMode): Promise<number | null> {
@@ -303,43 +294,15 @@ export async function openPosition(decision: AllocationDecision, atrPct: number,
   );
   const totalDeployed = openTrades.reduce((sum, t) => sum + t.size, 0);
 
-  const probeThreshold = parseFloat(stateMap[`${prefix}_probe_threshold`] || (mode === "paper" ? "75" : mode === "demo" ? "82" : "88"));
-  const confirmationThreshold = parseFloat(stateMap[`${prefix}_confirmation_threshold`] || (mode === "paper" ? "80" : mode === "demo" ? "86" : "91"));
-  const momentumThreshold = parseFloat(stateMap[`${prefix}_momentum_threshold`] || (mode === "paper" ? "85" : mode === "demo" ? "90" : "94"));
-
-  const tradesOnSymbol = openTrades.filter(t => t.symbol === signal.symbol).length;
-  const entryStage = determineEntryStage(tradesOnSymbol, signal.compositeScore ?? 85, {
-    probe: probeThreshold, confirmation: confirmationThreshold, momentum: momentumThreshold,
-  });
-  if (!entryStage) {
-    console.log(`[TradeEngine] [${mode.toUpperCase()}] Position building rejected: ${tradesOnSymbol} existing on ${signal.symbol}, score=${signal.compositeScore}`);
-    return null;
-  }
-
   const sizing = calculatePositionSize(equity, openTrades.length, totalDeployed, signal.confidence, modeMaxTrades, modeEquityPct);
   if (!sizing.allowed) {
     console.log(`[TradeEngine] [${mode.toUpperCase()}] Position sizing rejected: ${sizing.reason}`);
     return null;
   }
 
-  const stageMultProbe = parseFloat(stateMap[`${prefix}_stage_multiplier_probe`] || (mode === "paper" ? "1.0" : mode === "demo" ? "0.85" : "0.70"));
-  const stageMultConfirmation = parseFloat(stateMap[`${prefix}_stage_multiplier_confirmation`] || (mode === "paper" ? "0.90" : mode === "demo" ? "0.75" : "0.60"));
-  const stageMultMomentum = parseFloat(stateMap[`${prefix}_stage_multiplier_momentum`] || (mode === "paper" ? "0.80" : mode === "demo" ? "0.65" : "0.50"));
-
-  const stageMultiplier = getEntrySizeMultiplier(entryStage, {
-    probe: stageMultProbe, confirmation: stageMultConfirmation, momentum: stageMultMomentum,
-  });
-  sizing.size = sizing.size * stageMultiplier;
-  sizing.size = Math.max(sizing.size, equity * 0.05);
-
   if (decision.capitalAmount > 0 && decision.capitalAmount < sizing.size) {
-    console.log(`[TradeEngine] [${mode.toUpperCase()}] AI-adjusted size cap: ${sizing.size.toFixed(2)} → ${decision.capitalAmount.toFixed(2)}`);
     sizing.size = decision.capitalAmount;
   }
-
-  console.log(`[TradeEngine] [${mode.toUpperCase()}] Entry stage: ${entryStage} (${tradesOnSymbol} existing) | Size multiplier: ${stageMultiplier}`);
-
-  const historicalAvgMovePct = await getHistoricalAvgMove(signal.symbol, signal.strategyName);
 
   let spotPrice = 0;
   if (client) {
@@ -370,57 +333,40 @@ export async function openPosition(decision: AllocationDecision, atrPct: number,
     return null;
   }
 
-  const tpMultiplierStrong = parseFloat(stateMap[`${prefix}_tp_multiplier_strong`] || stateMap["tp_multiplier_strong"] || "2.5");
-  const tpMultiplierMedium = parseFloat(stateMap[`${prefix}_tp_multiplier_medium`] || stateMap["tp_multiplier_medium"] || "2.0");
-  const tpMultiplierWeak = parseFloat(stateMap[`${prefix}_tp_multiplier_weak`] || stateMap["tp_multiplier_weak"] || "1.5");
-  const slRatio = parseFloat(stateMap[`${prefix}_sl_ratio`] || stateMap["sl_ratio"] || "1.0");
-  const trailingStopPct = parseFloat(stateMap[`${prefix}_trailing_stop_pct`] || stateMap["trailing_stop_pct"] || "25") / 100;
-  const timeExitHours = parseFloat(stateMap[`${prefix}_time_exit_window_hours`] || stateMap["time_exit_window_hours"] || String(INITIAL_EXIT_HOURS));
+  const sigAny = signal as any;
+  const swingHigh = sigAny.swingHigh ?? spotPrice * 1.01;
+  const swingLow = sigAny.swingLow ?? spotPrice * 0.99;
+  const fibRetraceLevels = sigAny.fibRetraceLevels ?? [];
+  const fibExtensionLevels = sigAny.fibExtensionLevels ?? [];
+  const bbUpper = sigAny.bbUpper ?? spotPrice * 1.01;
+  const bbLower = sigAny.bbLower ?? spotPrice * 0.99;
 
-  const family: StrategyFamily = signal.strategyFamily || resolveFamilyFromStrategy(signal.strategyName);
-  const familyDefaults = FAMILY_HOLD_PROFILE[family];
-
-  const modeFamilyProfile = {
-    tpAtrMultiplier: parseFloat(stateMap[`${prefix}_${family}_tp_atr_multiplier`] || String(familyDefaults.tpAtrMultiplier)),
-    slAtrMultiplier: parseFloat(stateMap[`${prefix}_${family}_sl_atr_multiplier`] || String(familyDefaults.slAtrMultiplier)),
-    initialExitHours: parseFloat(stateMap[`${prefix}_${family}_initial_exit_hours`] || String(familyDefaults.initialExitHours)),
-    extensionHours: parseFloat(stateMap[`${prefix}_${family}_extension_hours`] || String(familyDefaults.extensionHours)),
-    maxExitHours: parseFloat(stateMap[`${prefix}_${family}_max_exit_hours`] || String(familyDefaults.maxExitHours)),
-    harvestSensitivity: parseFloat(stateMap[`${prefix}_${family}_harvest_sensitivity`] || String(familyDefaults.harvestSensitivity)),
-  };
-
-  const tpCaptureRatio = parseFloat(stateMap[`${prefix}_tp_capture_ratio`] || (mode === "paper" ? "0.80" : mode === "demo" ? "0.70" : "0.60"));
-  const minSlAtrMultiplier = parseFloat(stateMap[`${prefix}_min_sl_atr_multiplier`] || (mode === "paper" ? "3.0" : mode === "demo" ? "3.5" : "4.0"));
-
-  const tpMultiplier = signal.confidence >= 0.75 ? tpMultiplierStrong
-    : signal.confidence >= 0.65 ? tpMultiplierMedium
-    : tpMultiplierWeak;
-
-  const tp = calculateDynamicTP({
+  const tp = calculateSRFibTP({
     entryPrice: spotPrice,
     direction: signal.direction,
-    confidence: signal.confidence,
+    swingHigh,
+    swingLow,
+    fibExtensionLevels,
+    bbUpper,
+    bbLower,
     atrPct,
-    historicalAvgMovePct,
-    tpMultiplier,
-    family,
-    tpCaptureRatio,
-    familyProfileOverride: { tpAtrMultiplier: modeFamilyProfile.tpAtrMultiplier },
   });
 
-  const sl = calculateInitialSL({
+  const sl = calculateSRFibSL({
     entryPrice: spotPrice,
     direction: signal.direction,
+    swingHigh,
+    swingLow,
+    fibRetraceLevels,
+    bbUpper,
+    bbLower,
     atrPct,
-    slRatio,
-    family,
-    minSlAtrMultiplier,
-    familyProfileOverride: { slAtrMultiplier: modeFamilyProfile.slAtrMultiplier },
+    positionSize: sizing.size,
+    equity,
   });
 
   const entryTs = new Date();
-  const effectiveTimeExit = Math.max(modeFamilyProfile.initialExitHours, timeExitHours);
-  const maxExitTs = new Date(entryTs.getTime() + effectiveTimeExit * 60 * 60 * 1000);
+  const maxExitTs = new Date(entryTs.getTime() + TIME_EXIT_HARD_CAP_HOURS * 60 * 60 * 1000);
 
   if ((mode === "demo" || mode === "real") && client) {
     try {
@@ -462,11 +408,11 @@ export async function openPosition(decision: AllocationDecision, atrPct: number,
       status: "open",
       mode,
       confidence: signal.confidence,
-      trailingStopPct: trailingStopPct,
+      trailingStopPct: PROFIT_TRAILING_DRAWDOWN_PCT,
       peakPrice: result.entrySpot,
       maxExitTs,
       currentPrice: result.entrySpot,
-      notes: `Strategy: ${signal.strategyName}, Reason: ${signal.reason}`,
+      notes: `V2 S/R+Fib | Strategy: ${signal.strategyName} | Reason: ${signal.reason}`,
     }).returning();
 
     console.log(`[TradeEngine] Opened ${mode.toUpperCase()} ${signal.direction} on ${signal.symbol} @ ${result.entrySpot} | Size: $${sizing.size.toFixed(2)} | TP: ${tp.toFixed(4)} | SL: ${sl.toFixed(4)}`);
@@ -483,11 +429,11 @@ export async function openPosition(decision: AllocationDecision, atrPct: number,
       status: "open",
       mode: "paper",
       confidence: signal.confidence,
-      trailingStopPct: trailingStopPct,
+      trailingStopPct: PROFIT_TRAILING_DRAWDOWN_PCT,
       peakPrice: spotPrice,
       maxExitTs,
       currentPrice: spotPrice,
-      notes: `Strategy: ${signal.strategyName}, Reason: ${signal.reason}`,
+      notes: `V2 S/R+Fib | Strategy: ${signal.strategyName} | Reason: ${signal.reason}`,
     }).returning();
 
     console.log(`[TradeEngine] Opened PAPER ${signal.direction} on ${signal.symbol} @ ${spotPrice} | Size: $${sizing.size.toFixed(2)} | TP: ${tp.toFixed(4)} | SL: ${sl.toFixed(4)}`);
@@ -503,12 +449,7 @@ export async function manageOpenPositions(): Promise<void> {
   try {
     fallbackClient = await getDerivClientWithDbToken();
   } catch {
-    // no fallback client available
   }
-
-  const cachedStates = await db.select().from(platformStateTable);
-  const cachedStateMap: Record<string, string> = {};
-  for (const s of cachedStates) cachedStateMap[s.key] = s.value;
 
   for (const trade of openTrades) {
     try {
@@ -530,18 +471,17 @@ export async function manageOpenPositions(): Promise<void> {
         ? ((currentPrice - trade.entryPrice) / trade.entryPrice)
         : ((trade.entryPrice - currentPrice) / trade.entryPrice);
 
-      const trailingResult = calculateTrailingStop({
-        entryPrice: trade.entryPrice,
-        currentPrice,
-        peakPrice: trade.peakPrice ?? trade.entryPrice,
-        direction,
-        currentSl: trade.sl,
-        trailPct: trade.trailingStopPct ?? DEFAULT_TRAILING_STOP_PCT,
-      });
-
       const newPeak = direction === "buy"
         ? Math.max(trade.peakPrice ?? trade.entryPrice, currentPrice)
         : Math.min(trade.peakPrice ?? trade.entryPrice, currentPrice);
+
+      const trailingResult = calculateProfitTrailingStop({
+        entryPrice: trade.entryPrice,
+        currentPrice,
+        peakPrice: newPeak,
+        direction,
+        currentSl: trade.sl,
+      });
 
       let activeSl = trade.sl;
 
@@ -554,31 +494,11 @@ export async function manageOpenPositions(): Promise<void> {
         if ((tradeMode === "demo" || tradeMode === "real") && trade.brokerTradeId && modeClient) {
           await modeClient.updateStopLoss(parseInt(trade.brokerTradeId), Math.abs(trailingResult.newSl - trade.entryPrice));
         }
-        console.log(`[TradeEngine] Updated trailing SL for trade #${trade.id}: ${trailingResult.newSl.toFixed(4)}`);
+        console.log(`[TradeEngine] Updated profit-trailing SL for trade #${trade.id}: ${trailingResult.newSl.toFixed(4)} (peak profit trail)`);
       } else {
         await db.update(tradesTable)
           .set({ peakPrice: newPeak })
           .where(eq(tradesTable.id, trade.id));
-      }
-
-      const harvestSettings = await getHarvestSettings(tradeMode);
-      const harvestFamily = resolveFamilyFromStrategy(trade.strategyName);
-      const harvestPrefix = tradeMode === "paper" ? "paper" : tradeMode === "demo" ? "demo" : "real";
-      const harvestSensitivity = parseFloat(cachedStateMap[`${harvestPrefix}_${harvestFamily}_harvest_sensitivity`] || String(FAMILY_HOLD_PROFILE[harvestFamily].harvestSensitivity));
-      const harvestCheck = evaluateProfitHarvest({
-        entryPrice: trade.entryPrice,
-        currentPrice,
-        peakPrice: newPeak,
-        direction,
-        tradeId: trade.id,
-        peakDrawdownExitPct: harvestSettings.peakDrawdownExitPct / harvestSensitivity,
-        minPeakProfitPct: harvestSettings.minPeakProfitPct / harvestSensitivity,
-        largePeakThresholdPct: harvestSettings.largePeakThresholdPct / harvestSensitivity,
-      });
-
-      if (harvestCheck.shouldHarvest) {
-        await closePosition(trade.id, currentPrice, `profit_harvest: ${harvestCheck.harvestReason}`);
-        continue;
       }
 
       const slHit = direction === "buy"
@@ -586,7 +506,7 @@ export async function manageOpenPositions(): Promise<void> {
         : currentPrice >= activeSl;
 
       if (slHit) {
-        await closePosition(trade.id, currentPrice, "trailing_stop_hit");
+        await closePosition(trade.id, currentPrice, "stop_loss_hit");
         continue;
       }
 
@@ -599,32 +519,21 @@ export async function manageOpenPositions(): Promise<void> {
         continue;
       }
 
-      if (trade.maxExitTs) {
-        const tradeFamily = resolveFamilyFromStrategy(trade.strategyName);
-        const tradeFamilyDefaults = FAMILY_HOLD_PROFILE[tradeFamily];
-        const tfInitialExitHours = parseFloat(cachedStateMap[`${harvestPrefix}_${tradeFamily}_initial_exit_hours`] || String(tradeFamilyDefaults.initialExitHours));
-        const tfExtensionHours = parseFloat(cachedStateMap[`${harvestPrefix}_${tradeFamily}_extension_hours`] || String(tradeFamilyDefaults.extensionHours));
-        const tfMaxExitHours = parseFloat(cachedStateMap[`${harvestPrefix}_${tradeFamily}_max_exit_hours`] || String(tradeFamilyDefaults.maxExitHours));
+      const timeCheck = checkTimeExit({
+        entryTs: trade.entryTs,
+        currentPnl: floatingPnl,
+      });
 
-        const timeCheck = checkTimeExit({
-          entryTs: trade.entryTs,
-          maxExitTs: trade.maxExitTs,
-          currentPnl: floatingPnl,
-          initialExitHours: tfInitialExitHours,
-          extensionHours: tfExtensionHours,
-          maxExitHours: tfMaxExitHours,
-        });
+      if (timeCheck.shouldExit) {
+        await closePosition(trade.id, currentPrice, timeCheck.exitReason ?? "time_exit");
+        continue;
+      }
 
-        if (timeCheck.shouldExit) {
-          await closePosition(trade.id, currentPrice, timeCheck.exitReason ?? "time_exit");
+      if (floatingPnl < 0 && trade.entryTs) {
+        const hoursOpen = (Date.now() - trade.entryTs.getTime()) / (1000 * 60 * 60);
+        if (hoursOpen >= TIME_EXIT_PROFIT_HOURS && floatingPnl > 0) {
+          await closePosition(trade.id, currentPrice, "first_profit_after_72h");
           continue;
-        }
-
-        if (timeCheck.shouldExtend && timeCheck.newMaxExitTs) {
-          await db.update(tradesTable)
-            .set({ maxExitTs: timeCheck.newMaxExitTs })
-            .where(eq(tradesTable.id, trade.id));
-          console.log(`[TradeEngine] Extended trade #${trade.id} exit to ${timeCheck.newMaxExitTs.toISOString()}`);
         }
       }
     } catch (err) {

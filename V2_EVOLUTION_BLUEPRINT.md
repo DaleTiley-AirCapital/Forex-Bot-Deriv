@@ -3,6 +3,9 @@
 > Planning document for all features to be built **after V1 is stable**.
 > This document covers UI enrichment features AND system evolution features.
 > **No code changes are included — this is a specification and design document only.**
+>
+> **V2 Dynamic Trade Management is now IMPLEMENTED.** See `V2_SPECIFICATION.md` for full details.
+> Section 9 of this document (S/R-Based TP Placement) has been superseded by the V2 implementation.
 
 ---
 
@@ -398,7 +401,9 @@ A complete catalog of every hardcoded threshold ("magic number") across all 4 st
 | breakout_expansion | 0.003 | 0.010 |
 | spike_event | 0.001 | 0.010 |
 
-### 3.7 Trade Engine Thresholds (`tradeEngine.ts`)
+### 3.7 Trade Engine Thresholds (`tradeEngine.ts`) — UPDATED IN V2
+
+> **V2 changes:** ATR-based TP/SL replaced with S/R + Fibonacci. Price trailing replaced with 30% profit trailing. Time exits simplified to 72h/168h. See `V2_SPECIFICATION.md`.
 
 | Threshold | Current Value | Purpose |
 |---|---|---|
@@ -406,37 +411,28 @@ A complete catalog of every hardcoded threshold ("magic number") across all 4 st
 | MAX_EQUITY_DEPLOYED_PCT | 0.80 | Max 80% of equity deployed at once |
 | POSITION_SIZE_MIN_PCT | 0.05 | Minimum 5% of equity per position |
 | POSITION_SIZE_MAX_PCT | 0.25 | Maximum 25% of equity per position |
-| DEFAULT_TRAILING_STOP_PCT | 0.25 | 25% trailing stop from peak price |
-| INITIAL_EXIT_HOURS | 168 | 7 days initial time limit |
-| EXTENSION_HOURS | 48 | 2 days extension for near-break-even trades |
-| MAX_EXIT_HOURS | 336 | 14 days absolute hard limit |
-| Min TP (dynamic) | 2.5 × ATR | Minimum take-profit distance |
-| Max TP (dynamic) | 15.0 × ATR | Maximum take-profit distance |
-| TP capture ratio (paper) | 0.80 | Predicted move captured as TP |
-| TP capture ratio (demo) | 0.70 | More conservative for demo |
-| TP capture ratio (real) | 0.60 | Most conservative for real |
-| Min SL ATR multiplier (paper) | 3.0 | Minimum SL distance |
-| Min SL ATR multiplier (demo) | 3.5 | Wider for demo |
-| Min SL ATR multiplier (real) | 4.0 | Widest for real |
-| Small loss threshold (time exit) | −0.02 | Losses above −2% can get extensions |
+| PROFIT_TRAIL_DRAWDOWN_PCT | 0.30 | 30% drawdown from peak profit (V2) |
+| TIME_EXIT_PROFIT_HOURS | 72 | Close if profitable after 72h (V2) |
+| TIME_EXIT_HARD_CAP_HOURS | 168 | Hard cap at 168h (V2) |
+| S/R buffer | 0.2% | Buffer inside S/R levels for TP/SL (V2) |
+| Min TP distance | 3 × ATR | Floor for TP distance (V2) |
+| Fallback TP distance | 6 × ATR | When no S/R candidates found (V2) |
+| Fallback SL distance | 2.5 × ATR | When no S/R candidates found (V2) |
+| Safety floor SL | 10% equity | Max loss per position (V2) |
 
-### 3.8 Family Hold Profiles (`tradeEngine.ts` → `FAMILY_HOLD_PROFILE`)
+### 3.8 Family Hold Profiles — REMOVED IN V2
 
-| Family | tpAtrMultiplier | slAtrMultiplier | initialExitHours | extensionHours | maxExitHours | harvestSensitivity |
-|---|---|---|---|---|---|---|
-| trend_continuation | 6.0 | 2.5 | 168 | 48 | 336 | 0.8 |
-| mean_reversion | 4.0 | 3.0 | 120 | 36 | 240 | 1.0 |
-| breakout_expansion | 8.0 | 2.0 | 168 | 48 | 336 | 0.7 |
-| spike_event | 4.0 | 1.5 | 72 | 24 | 168 | 1.2 |
+> **V2:** `FAMILY_HOLD_PROFILE` removed. All families use the same time exit logic (72h profit / 168h hard cap) and S/R-based TP/SL.
 
-### 3.9 Backtest Engine Defaults (`backtestEngine.ts`)
+### 3.9 Backtest Engine Defaults (`backtestEngine.ts`) — UPDATED IN V2
+
+> **V2 changes:** Backtest mirrors live engine exactly — S/R+Fib TP/SL, profit trailing, 72h/168h time exits.
 
 | Threshold | Current Value | Purpose |
 |---|---|---|
-| DEFAULT_TRAILING_STOP_PCT | 0.25 | Trailing stop in backtest |
-| INITIAL_EXIT_HOURS | 72 | Shorter than live (backtest is 1h candles) |
-| EXTENSION_HOURS | 24 | Extension period in backtest |
-| MAX_EXIT_HOURS | 168 | Hard max in backtest |
+| PROFIT_TRAIL_DRAWDOWN_PCT | 0.30 | 30% profit trailing (V2) |
+| TIME_EXIT_PROFIT_HOURS | 72 | Profit close at 72h (V2) |
+| TIME_EXIT_HARD_CAP_HOURS | 168 | Hard cap at 168h (V2) |
 | MAX_EQUITY_DEPLOYED_PCT | 0.80 | Same as live |
 | DEFAULT_MAX_CONCURRENT_LIVE | 3 | Max positions in live backtest |
 | DEFAULT_MAX_CONCURRENT_PAPER | 3 | Max positions in paper backtest |
@@ -446,8 +442,6 @@ A complete catalog of every hardcoded threshold ("magic number") across all 4 st
 | Default minCompositeScore | 85 | Backtest entry filter |
 | Default minEvThreshold | 0.003 | Backtest EV filter |
 | Default minRrRatio | 1.5 | Backtest RR filter |
-| Backtest SL multiplier | 1.5 × ATR | Fixed SL in backtest simulation |
-| Backtest TP multiplier | 3.0 × ATR | Fixed TP in backtest simulation |
 
 ### 3.10 Signal Router Thresholds (`signalRouter.ts`)
 
@@ -826,7 +820,13 @@ Dashboard display:
 
 ---
 
-## Section 9: Support/Resistance-Based TP Placement
+## Section 9: Support/Resistance-Based TP Placement — IMPLEMENTED IN V2
+
+> **Status: IMPLEMENTED.** This section's core concept (S/R-based TP/SL) has been implemented in V2 using
+> Fibonacci confluence + swing highs/lows + Bollinger Bands. See `V2_SPECIFICATION.md` Section 2 for the
+> actual implementation. The detailed design below was the original planning spec; the V2 implementation
+> simplified several aspects (no blend option, no partial TP, no separate sr_levels table — levels are
+> computed in real-time from the feature vector).
 
 ### Current State
 

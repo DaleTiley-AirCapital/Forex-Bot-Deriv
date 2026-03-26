@@ -30,10 +30,10 @@ export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
 };
 
 const FAMILY_IDEAL_REGIMES: Record<string, string[]> = {
-  "trend_continuation": ["trend_up", "trend_down"],
-  "mean_reversion": ["mean_reversion"],
-  "breakout_expansion": ["compression", "breakout_expansion"],
-  "spike_event": ["spike_zone"],
+  "trend_continuation": ["trend_up", "trend_down", "breakout_expansion"],
+  "mean_reversion": ["mean_reversion", "ranging"],
+  "breakout_expansion": ["compression", "breakout_expansion", "trend_up", "trend_down"],
+  "spike_event": ["spike_zone", "ranging"],
 };
 
 const FAMILY_IDEAL_VOLATILITY: Record<string, { min: number; max: number }> = {

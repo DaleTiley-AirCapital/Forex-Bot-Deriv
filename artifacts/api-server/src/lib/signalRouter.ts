@@ -34,12 +34,6 @@ interface PortfolioContext {
   enabledStrategies: string[] | null;
   totalDeployedCapital: number;
   equityPctPerTrade: number;
-  tpMultiplierStrong: number;
-  tpMultiplierMedium: number;
-  tpMultiplierWeak: number;
-  slRatio: number;
-  trailingStopPct: number;
-  timeExitWindowHours: number;
   minCompositeScore: number;
   minEvThreshold: number;
   minRrRatio: number;
@@ -91,26 +85,22 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
 
   const modeEquityPct = parseFloat(
     stateMap[`${prefix}_equity_pct_per_trade`] ||
-    (mode === "paper" ? stateMap["paper_equity_pct_per_trade"] : stateMap["live_equity_pct_per_trade"]) ||
     stateMap["equity_pct_per_trade"] ||
     (mode === "paper" ? "13" : "22")
   );
   const modeMaxTrades = parseInt(
     stateMap[`${prefix}_max_open_trades`] ||
-    (mode === "paper" ? stateMap["paper_max_open_trades"] : stateMap["live_max_open_trades"]) ||
     stateMap["max_open_trades"] ||
     (mode === "paper" ? "4" : "3")
   );
 
   const modeMaxDailyLoss = parseFloat(
     stateMap[`${prefix}_max_daily_loss_pct`] ||
-    (mode === "paper" ? stateMap["paper_max_daily_loss_pct"] : stateMap["live_max_daily_loss_pct"]) ||
     stateMap["max_daily_loss_pct"] ||
     (mode === "paper" ? "5" : "3")
   );
   const modeMaxWeeklyLoss = parseFloat(
     stateMap[`${prefix}_max_weekly_loss_pct`] ||
-    (mode === "paper" ? stateMap["paper_max_weekly_loss_pct"] : stateMap["live_max_weekly_loss_pct"]) ||
     stateMap["max_weekly_loss_pct"] ||
     (mode === "paper" ? "12" : "8")
   );
@@ -151,12 +141,6 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
     enabledStrategies: modeEnabledStrategies,
     totalDeployedCapital,
     equityPctPerTrade: modeEquityPct,
-    tpMultiplierStrong: parseFloat(stateMap[`${prefix}_tp_multiplier_strong`] || stateMap["tp_multiplier_strong"] || "2.5"),
-    tpMultiplierMedium: parseFloat(stateMap[`${prefix}_tp_multiplier_medium`] || stateMap["tp_multiplier_medium"] || "2.0"),
-    tpMultiplierWeak: parseFloat(stateMap[`${prefix}_tp_multiplier_weak`] || stateMap["tp_multiplier_weak"] || "1.5"),
-    slRatio: parseFloat(stateMap[`${prefix}_sl_ratio`] || stateMap["sl_ratio"] || "1.0"),
-    trailingStopPct: parseFloat(stateMap[`${prefix}_trailing_stop_pct`] || stateMap["trailing_stop_pct"] || "25"),
-    timeExitWindowHours: parseFloat(stateMap[`${prefix}_time_exit_window_hours`] || stateMap["time_exit_window_hours"] || "72"),
     minCompositeScore: parseFloat(
       stateMap[`${prefix}_min_composite_score`] ||
       stateMap["min_composite_score"] ||
@@ -191,18 +175,8 @@ function checkConflicts(
   const pendingOnSymbol = alreadyAllowed.filter(s => s.symbol === signal.symbol);
   const allOnSymbol = [...existingOnSymbol, ...pendingOnSymbol.map(s => ({ symbol: s.symbol, side: s.direction, strategyName: s.strategyName }))];
 
-  for (const existing of allOnSymbol) {
-    if (existing.side !== signal.direction) {
-      return { blocked: true, reason: `Opposing direction on ${signal.symbol}: existing ${existing.side} vs new ${signal.direction}` };
-    }
-  }
-
-  const sameFamily = allOnSymbol.filter(t => {
-    const family = (signal as any).strategyFamily;
-    return family && (t.strategyName.includes(family) || t.strategyName.includes(family.replace("_", "-")));
-  });
-  if (sameFamily.length >= 2) {
-    return { blocked: true, reason: `Too many entries from same family on ${signal.symbol}` };
+  if (allOnSymbol.length > 0) {
+    return { blocked: true, reason: `Already has position on ${signal.symbol}` };
   }
 
   return { blocked: false, reason: null };
@@ -270,10 +244,6 @@ export async function routeSignals(candidates: SignalCandidate[], tradingMode: T
     let capitalAllocationPct = 0;
     let capitalAmount = 0;
 
-    const tp = Math.abs(signal.suggestedTp ?? 0);
-    const sl = Math.abs(signal.suggestedSl ?? 0);
-    const rrRatio = sl > 0 ? tp / sl : 0;
-
     if (ctx.killSwitchActive) {
       allowed = false;
       rejectionReason = "Kill switch is active — all trading halted";
@@ -307,12 +277,6 @@ export async function routeSignals(candidates: SignalCandidate[], tradingMode: T
     } else if (signal.expectedValue < ctx.minEvThreshold) {
       allowed = false;
       rejectionReason = `Expected value too low (${signal.expectedValue.toFixed(4)} < ${ctx.minEvThreshold})`;
-    } else if (sl <= 0 || tp <= 0) {
-      allowed = false;
-      rejectionReason = `Invalid SL/TP values`;
-    } else if (rrRatio < ctx.minRrRatio) {
-      allowed = false;
-      rejectionReason = `Reward/risk too low (${rrRatio.toFixed(2)} < ${ctx.minRrRatio})`;
     } else if (remainingCapital < ctx.totalCapital * 0.05) {
       allowed = false;
       rejectionReason = "Insufficient available capital";
@@ -352,20 +316,6 @@ export async function routeSignals(candidates: SignalCandidate[], tradingMode: T
         remainingCapital -= capitalAmount;
         currentOpenCount++;
         allowedSignals.push(signal);
-
-        const tpMultiplier = signal.compositeScore >= 92
-          ? ctx.tpMultiplierStrong
-          : signal.compositeScore >= 85
-            ? ctx.tpMultiplierMedium
-            : ctx.tpMultiplierWeak;
-        const baseTp = signal.suggestedTp ?? 0;
-        const baseSl = signal.suggestedSl ?? 0;
-        if (baseTp !== 0) {
-          signal.suggestedTp = baseTp * (tpMultiplier / 2.0);
-        }
-        if (baseSl !== 0) {
-          signal.suggestedSl = baseSl * ctx.slRatio;
-        }
       }
     }
 

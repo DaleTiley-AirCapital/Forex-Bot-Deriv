@@ -15,18 +15,7 @@ export interface ExtractionCycle {
   profitPct: number;
 }
 
-export interface PeakTracker {
-  tradeId: number;
-  peakPnlPct: number;
-  currentPnlPct: number;
-  drawdownFromPeak: number;
-  shouldHarvest: boolean;
-  harvestReason: string | null;
-}
-
 const DEFAULT_EXTRACTION_TARGET_PCT = 50;
-const DEFAULT_PEAK_DRAWDOWN_EXIT_PCT = 40;
-const DEFAULT_PARTIAL_CLOSE_PCT = 50;
 
 export async function getExtractionCycle(mode: TradingMode): Promise<ExtractionCycle> {
   const states = await db.select().from(platformStateTable);
@@ -97,118 +86,19 @@ export async function executeExtraction(mode: TradingMode): Promise<{
   return { extracted: extractAmount, newCapital, cycleNumber: newCycle };
 }
 
-export function evaluateProfitHarvest(params: {
-  entryPrice: number;
-  currentPrice: number;
-  peakPrice: number;
-  direction: "buy" | "sell";
-  tradeId: number;
-  peakDrawdownExitPct?: number;
-  minPeakProfitPct?: number;
-  largePeakThresholdPct?: number;
-}): PeakTracker {
-  const {
-    entryPrice, currentPrice, peakPrice, direction, tradeId,
-    peakDrawdownExitPct = DEFAULT_PEAK_DRAWDOWN_EXIT_PCT,
-    minPeakProfitPct = 8.0,
-    largePeakThresholdPct = 15.0,
-  } = params;
-
-  const currentPnlPct = direction === "buy"
-    ? ((currentPrice - entryPrice) / entryPrice) * 100
-    : ((entryPrice - currentPrice) / entryPrice) * 100;
-
-  const peakPnlPct = direction === "buy"
-    ? ((peakPrice - entryPrice) / entryPrice) * 100
-    : ((entryPrice - peakPrice) / entryPrice) * 100;
-
-  const drawdownFromPeak = peakPnlPct > 0
-    ? ((peakPnlPct - currentPnlPct) / peakPnlPct) * 100
-    : 0;
-
-  let shouldHarvest = false;
-  let harvestReason: string | null = null;
-
-  if (peakPnlPct >= minPeakProfitPct && drawdownFromPeak >= peakDrawdownExitPct) {
-    shouldHarvest = true;
-    harvestReason = `Peak profit ${peakPnlPct.toFixed(1)}% → drawdown ${drawdownFromPeak.toFixed(1)}% exceeds ${peakDrawdownExitPct}% threshold`;
-  }
-
-  if (peakPnlPct >= largePeakThresholdPct && drawdownFromPeak >= peakDrawdownExitPct * 0.6) {
-    shouldHarvest = true;
-    harvestReason = `Large peak ${peakPnlPct.toFixed(1)}% with ${drawdownFromPeak.toFixed(1)}% drawdown — harvesting`;
-  }
-
-  return {
-    tradeId,
-    peakPnlPct,
-    currentPnlPct,
-    drawdownFromPeak,
-    shouldHarvest,
-    harvestReason,
-  };
-}
-
-export async function getHarvestSettings(mode: TradingMode): Promise<{
-  peakDrawdownExitPct: number;
-  minPeakProfitPct: number;
-  largePeakThresholdPct: number;
-}> {
-  const prefix = mode === "paper" ? "paper" : mode === "demo" ? "demo" : "real";
-  const states = await db.select().from(platformStateTable);
-  const stateMap: Record<string, string> = {};
-  for (const s of states) stateMap[s.key] = s.value;
-
-  return {
-    peakDrawdownExitPct: parseFloat(stateMap[`${prefix}_peak_drawdown_exit_pct`] || stateMap["peak_drawdown_exit_pct"] || String(DEFAULT_PEAK_DRAWDOWN_EXIT_PCT)),
-    minPeakProfitPct: parseFloat(stateMap[`${prefix}_min_peak_profit_pct`] || stateMap["min_peak_profit_pct"] || "8"),
-    largePeakThresholdPct: parseFloat(stateMap[`${prefix}_large_peak_threshold_pct`] || stateMap["large_peak_threshold_pct"] || "15"),
-  };
-}
-
-export function determineEntryStage(
-  openTradesOnSymbol: number,
-  compositeScore: number,
-  thresholds?: { probe: number; confirmation: number; momentum: number },
-): "probe" | "confirmation" | "momentum" | null {
-  const t = thresholds || { probe: 88, confirmation: 91, momentum: 94 };
-  if (openTradesOnSymbol === 0) {
-    return compositeScore >= t.probe ? "probe" : null;
-  }
-  if (openTradesOnSymbol === 1) {
-    return compositeScore >= t.confirmation ? "confirmation" : null;
-  }
-  if (openTradesOnSymbol === 2) {
-    return compositeScore >= t.momentum ? "momentum" : null;
-  }
-  return null;
-}
-
-export function getEntrySizeMultiplier(
-  stage: "probe" | "confirmation" | "momentum",
-  multipliers?: { probe: number; confirmation: number; momentum: number },
-): number {
-  const m = multipliers || { probe: 0.70, confirmation: 0.60, momentum: 0.50 };
-  return m[stage];
-}
-
 async function getStateValue(key: string): Promise<string | null> {
   const rows = await db.select().from(platformStateTable).where(eq(platformStateTable.key, key));
   return rows[0]?.value ?? null;
 }
 
 export async function checkAndAutoExtract(mode: TradingMode): Promise<void> {
-  const states = await db.select().from(platformStateTable);
-  const stateMap: Record<string, string> = {};
-  for (const s of states) stateMap[s.key] = s.value;
-
   const prefix = mode === "paper" ? "paper" : mode === "demo" ? "demo" : "real";
-  const autoExtract = stateMap[`${prefix}_auto_extraction`] || stateMap["auto_extraction"];
+  const autoExtract = (await getStateValue(`${prefix}_auto_extraction`)) || "false";
   if (autoExtract !== "true") return;
 
   const cycle = await getExtractionCycle(mode);
   if (cycle.extractionReady) {
-    console.log(`[ExtractionEngine] Auto-extraction triggered for ${mode.toUpperCase()}`);
+    console.log(`[ExtractionEngine] Auto-extraction triggered for ${mode.toUpperCase()} — profit ${cycle.profitPct.toFixed(1)}% reached target`);
     await executeExtraction(mode);
   }
 }

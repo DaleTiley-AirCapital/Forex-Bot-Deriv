@@ -75,7 +75,6 @@ export interface SignalContext {
   instrumentFamily: string;
   macroBiasModifier?: number;
   compositeScore: number;
-  entryStage: string;
   expectedValue: number;
   suggestedTp?: number;
   suggestedSl?: number;
@@ -100,7 +99,6 @@ CONTEXT:
 - Sub-strategy: ${ctx.strategyName}
 - Instrument: ${ctx.symbol} (${ctx.instrumentFamily} family)
 - Direction: ${ctx.direction}
-- Entry Stage: ${ctx.entryStage}
 
 REGIME:
 - Current Regime: ${ctx.regimeState} (confidence: ${(ctx.regimeConfidence * 100).toFixed(0)}%)

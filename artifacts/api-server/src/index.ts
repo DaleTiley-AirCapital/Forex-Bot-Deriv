@@ -50,6 +50,14 @@ async function initDb(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_candles_symbol_tf_ts ON candles (symbol, timeframe, open_ts DESC);
 
+    DELETE FROM candles a USING candles b
+      WHERE a.id > b.id
+        AND a.symbol    = b.symbol
+        AND a.timeframe = b.timeframe
+        AND a.open_ts   = b.open_ts;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_candles_symbol_tf_ts_unique ON candles (symbol, timeframe, open_ts);
+
     CREATE TABLE IF NOT EXISTS spike_events (
       id                         SERIAL PRIMARY KEY,
       symbol                     TEXT NOT NULL,

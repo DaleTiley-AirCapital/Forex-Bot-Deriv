@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useGetLatestSignals } from "@workspace/api-client-react";
-import type { ScoringDimensions, GetLatestSignalsParams } from "@workspace/api-client-react";
+import type { ScoringDimensions, GetLatestSignalsParams, SignalLog } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, Badge } from "@/components/ui-elements";
 import { formatNumber, cn } from "@/lib/utils";
 import { ClipboardList, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, ChevronUp, Filter, X, ChevronLeft, ChevronRight, Download, ShieldAlert, Target, TrendingUp, BarChart3 } from "lucide-react";
@@ -26,8 +26,9 @@ const FAMILY_COLORS: Record<string, string> = {
   spike_event: "bg-pink-500/12 text-pink-400 border-pink-500/25",
 };
 
-function AIVerdictBadge({ verdict, reasoning }: { verdict: string | null | undefined; reasoning: string | null | undefined }) {
-  if (!verdict) return <span className="text-xs text-muted-foreground/50">—</span>;
+function AIVerdictBadge({ verdict, reasoning, blocked }: { verdict: string | null | undefined; reasoning: string | null | undefined; blocked?: boolean }) {
+  const effectiveVerdict = verdict || (blocked ? "skipped" : null);
+  if (!effectiveVerdict) return <span className="text-xs text-muted-foreground/50">—</span>;
 
   const styles: Record<string, string> = {
     agree: "bg-emerald-500/12 text-emerald-400 border-emerald-500/25",
@@ -50,14 +51,14 @@ function AIVerdictBadge({ verdict, reasoning }: { verdict: string | null | undef
       <span
         className={cn(
           "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold border tracking-wide",
-          styles[verdict] || "bg-gray-500/12 text-gray-400 border-gray-500/25"
+          styles[effectiveVerdict] || "bg-gray-500/12 text-gray-400 border-gray-500/25"
         )}
       >
         <Brain className="w-3 h-3" />
-        {labels[verdict] || verdict}
+        {labels[effectiveVerdict] || effectiveVerdict}
       </span>
-      {reasoning && verdict !== "skipped" && (
-        <span className="text-[10px] text-muted-foreground leading-snug line-clamp-2">
+      {reasoning && effectiveVerdict !== "skipped" && (
+        <span className="text-[10px] text-muted-foreground leading-snug">
           {reasoning}
         </span>
       )}
@@ -114,7 +115,7 @@ function DimensionBar({ label, value }: { label: string; value: number }) {
   );
 }
 
-function SignalDetailPanel({ sig }: { sig: any }) {
+function SignalDetailPanel({ sig }: { sig: SignalLog }) {
   const tp = sig.suggestedTp != null ? Math.abs(sig.suggestedTp) : null;
   const sl = sig.suggestedSl != null ? Math.abs(sig.suggestedSl) : null;
   const rr = sl && sl > 0 && tp ? (tp / sl) : null;
@@ -183,8 +184,8 @@ function SignalDetailPanel({ sig }: { sig: any }) {
         </div>
 
         <div className="pt-2 border-t border-border/20">
-          <DetailRow label="AI Verdict" value={sig.aiVerdict ?? "—"} />
-          {sig.aiVerdict === "skipped" && (
+          <DetailRow label="AI Verdict" value={sig.aiVerdict || (!sig.allowedFlag ? "Skipped" : "—")} />
+          {(sig.aiVerdict === "skipped" || (!sig.aiVerdict && !sig.allowedFlag)) && (
             <div className="mt-1 p-2 rounded-md bg-slate-500/8 border border-slate-500/20">
               <p className="text-[11px] text-slate-400 leading-relaxed">
                 Signal was blocked by a system gate before reaching AI verification.
@@ -500,7 +501,7 @@ export default function Signals() {
                             <div className="flex flex-col gap-0.5">
                               <Badge variant="destructive">Blocked</Badge>
                               {sig.rejectionReason && (
-                                <span className="text-[10px] text-muted-foreground leading-snug line-clamp-2 max-w-[180px]">
+                                <span className="text-[10px] text-muted-foreground leading-snug">
                                   {sig.rejectionReason}
                                 </span>
                               )}
@@ -508,7 +509,7 @@ export default function Signals() {
                           )}
                         </td>
                         <td>
-                          <AIVerdictBadge verdict={sig.aiVerdict} reasoning={sig.aiReasoning} />
+                          <AIVerdictBadge verdict={sig.aiVerdict} reasoning={sig.aiReasoning} blocked={!sig.allowedFlag} />
                         </td>
                       </tr>
                       <AnimatePresence>

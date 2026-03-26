@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 const FAMILIES = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event"] as const;
 
 const STATUSES = ["approved", "blocked"] as const;
-const AI_VERDICTS = ["agree", "disagree", "uncertain", "skipped"] as const;
+const AI_VERDICTS = ["agree", "disagree", "uncertain"] as const;
 
 const FAMILY_LABELS: Record<string, string> = {
   trend_continuation: "Trend",
@@ -115,6 +115,45 @@ function DimensionBar({ label, value }: { label: string; value: number }) {
   );
 }
 
+function BlockingCondition({ reason }: { reason: string }) {
+  const patterns: { test: RegExp; gate: string; extract: (m: RegExpMatchArray) => string }[] = [
+    { test: /composite.*?(\d+).*?below.*?(\d+)/i, gate: "Composite Score", extract: m => `Score ${m[1]} < threshold ${m[2]}` },
+    { test: /composite.*?(\d+).*?<.*?(\d+)/i, gate: "Composite Score", extract: m => `Score ${m[1]} < threshold ${m[2]}` },
+    { test: /RR.*?(\d+\.?\d*).*?below.*?(\d+\.?\d*)/i, gate: "Reward/Risk Ratio", extract: m => `RR ${m[1]} < minimum ${m[2]}` },
+    { test: /RR.*?(\d+\.?\d*).*?<.*?(\d+\.?\d*)/i, gate: "Reward/Risk Ratio", extract: m => `RR ${m[1]} < minimum ${m[2]}` },
+    { test: /EV.*?(-?\d+\.?\d*).*?below.*?(-?\d+\.?\d*)/i, gate: "Expected Value", extract: m => `EV ${m[1]} < minimum ${m[2]}` },
+    { test: /kill.?switch/i, gate: "Kill Switch", extract: () => "Trading halted by kill switch" },
+    { test: /daily.*loss/i, gate: "Daily Loss Limit", extract: () => "Daily loss limit reached" },
+    { test: /weekly.*loss/i, gate: "Weekly Loss Limit", extract: () => "Weekly loss limit reached" },
+    { test: /max.*drawdown/i, gate: "Max Drawdown", extract: () => "Maximum drawdown exceeded" },
+    { test: /open.*risk/i, gate: "Open Risk Limit", extract: () => "Too much open risk" },
+    { test: /max.*open.*trades/i, gate: "Max Open Trades", extract: () => "Maximum open trades reached" },
+    { test: /AI disagree/i, gate: "AI Verification", extract: () => "AI disagreed with signal" },
+    { test: /intelligence only/i, gate: "Mode", extract: () => "No execution mode active" },
+  ];
+
+  for (const p of patterns) {
+    const match = reason.match(p.test);
+    if (match) {
+      return (
+        <div className="p-2 rounded-md bg-red-500/8 border border-red-500/20 space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-red-400/80">Blocking Gate</span>
+            <span className="text-[11px] font-semibold text-red-400">{p.gate}</span>
+          </div>
+          <p className="text-[10px] text-red-400/70">{p.extract(match)}</p>
+        </div>
+      );
+    }
+  }
+
+  return (
+    <div className="p-2 rounded-md bg-red-500/8 border border-red-500/20">
+      <p className="text-[11px] text-red-400 leading-relaxed">{reason}</p>
+    </div>
+  );
+}
+
 function SignalDetailPanel({ sig }: { sig: SignalLog }) {
   const tp = sig.suggestedTp != null ? Math.abs(sig.suggestedTp) : null;
   const sl = sig.suggestedSl != null ? Math.abs(sig.suggestedSl) : null;
@@ -152,9 +191,10 @@ function SignalDetailPanel({ sig }: { sig: SignalLog }) {
         <div className="space-y-1">
           <DetailRow label="Direction" value={sig.direction?.toUpperCase() ?? "—"} />
           <DetailRow label="Strategy" value={sig.strategyName ?? "—"} />
-          <DetailRow label="Family" value={FAMILY_LABELS[sig.strategyFamily] ?? sig.strategyFamily ?? "—"} />
-          <DetailRow label="Take Profit" value={tp != null ? formatNumber(tp, 4) : "—"} highlight="green" />
-          <DetailRow label="Stop Loss" value={sl != null ? formatNumber(sl, 4) : "—"} highlight="red" />
+          <DetailRow label="Family" value={FAMILY_LABELS[sig.strategyFamily ?? ""] ?? sig.strategyFamily ?? "—"} />
+          <DetailRow label="Entry Price" value={sig.allowedFlag ? "Set at execution" : "N/A (blocked)"} />
+          <DetailRow label="Take Profit (offset)" value={tp != null ? formatNumber(tp, 4) : "—"} highlight="green" />
+          <DetailRow label="Stop Loss (offset)" value={sl != null ? formatNumber(sl, 4) : "—"} highlight="red" />
           <DetailRow label="R:R Ratio" value={rr != null ? `${rr.toFixed(2)}:1` : "—"} />
           <DetailRow label="Allocation" value={sig.allocationPct != null ? `${sig.allocationPct.toFixed(1)}%` : "—"} />
           <DetailRow label="Mode" value={sig.mode ?? "—"} />
@@ -177,8 +217,8 @@ function SignalDetailPanel({ sig }: { sig: SignalLog }) {
         <div className="space-y-1">
           <DetailRow label="Status" value={sig.allowedFlag ? "Approved" : "Blocked"} highlight={sig.allowedFlag ? "green" : "red"} />
           {!sig.allowedFlag && sig.rejectionReason && (
-            <div className="mt-1 p-2 rounded-md bg-red-500/8 border border-red-500/20">
-              <p className="text-[11px] text-red-400 leading-relaxed">{sig.rejectionReason}</p>
+            <div className="mt-1 space-y-1.5">
+              <BlockingCondition reason={sig.rejectionReason} />
             </div>
           )}
         </div>

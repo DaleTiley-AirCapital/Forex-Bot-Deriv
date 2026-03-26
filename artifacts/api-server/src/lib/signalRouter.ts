@@ -157,9 +157,13 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
     slRatio: parseFloat(stateMap[`${prefix}_sl_ratio`] || stateMap["sl_ratio"] || "1.0"),
     trailingStopPct: parseFloat(stateMap[`${prefix}_trailing_stop_pct`] || stateMap["trailing_stop_pct"] || "25"),
     timeExitWindowHours: parseFloat(stateMap[`${prefix}_time_exit_window_hours`] || stateMap["time_exit_window_hours"] || "72"),
-    minCompositeScore: parseFloat(stateMap["min_composite_score"] || "80"),
-    minEvThreshold: parseFloat(stateMap["min_ev_threshold"] || "0.003"),
-    minRrRatio: parseFloat(stateMap["min_rr_ratio"] || "3.0"),
+    minCompositeScore: parseFloat(
+      stateMap[`${prefix}_min_composite_score`] ||
+      stateMap["min_composite_score"] ||
+      (mode === "paper" ? "80" : mode === "demo" ? "85" : "90")
+    ),
+    minEvThreshold: parseFloat(stateMap[`${prefix}_min_ev_threshold`] || stateMap["min_ev_threshold"] || "0.003"),
+    minRrRatio: parseFloat(stateMap[`${prefix}_min_rr_ratio`] || stateMap["min_rr_ratio"] || "3.0"),
     correlatedFamilyCap,
     openTrades: openTrades.map(t => ({
       symbol: t.symbol,
@@ -170,11 +174,11 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
   };
 }
 
-function getAllocationPctByScore(compositeScore: number, baseEquityPct: number): { pct: number; tier: string } {
+function getAllocationPctByScore(compositeScore: number, baseEquityPct: number, modeMinScore: number): { pct: number; tier: string } {
   const basePct = baseEquityPct / 100;
-  if (compositeScore >= 90) return { pct: basePct + 0.06, tier: "large" };
-  if (compositeScore >= 85) return { pct: basePct + 0.03, tier: "medium" };
-  if (compositeScore >= 80) return { pct: basePct, tier: "base" };
+  if (compositeScore >= modeMinScore + 10) return { pct: basePct + 0.06, tier: "large" };
+  if (compositeScore >= modeMinScore + 5) return { pct: basePct + 0.03, tier: "medium" };
+  if (compositeScore >= modeMinScore) return { pct: basePct, tier: "base" };
   return { pct: 0, tier: "reject" };
 }
 
@@ -335,10 +339,10 @@ export async function routeSignals(candidates: SignalCandidate[], tradingMode: T
         : ctx.allocationMode === "aggressive" ? 1.3
         : 1.0;
       const adjustedEquityPct = ctx.equityPctPerTrade * allocationMultiplier;
-      const { pct, tier } = getAllocationPctByScore(signal.compositeScore, adjustedEquityPct);
+      const { pct, tier } = getAllocationPctByScore(signal.compositeScore, adjustedEquityPct, ctx.minCompositeScore);
       if (tier === "reject") {
         allowed = false;
-        rejectionReason = `Score ${signal.compositeScore} below 80 allocation threshold`;
+        rejectionReason = `Score ${signal.compositeScore} below ${ctx.minCompositeScore} allocation threshold`;
       } else {
         capitalAllocationPct = pct;
         capitalAmount = Math.min(

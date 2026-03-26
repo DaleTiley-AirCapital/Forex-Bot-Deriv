@@ -77,6 +77,9 @@ export interface SignalContext {
   compositeScore: number;
   entryStage: string;
   expectedValue: number;
+  suggestedTp?: number;
+  suggestedSl?: number;
+  rrRatio?: number;
 }
 
 export interface AIVerdict {
@@ -108,6 +111,11 @@ SCORES:
 - Model Score: ${(ctx.score * 100).toFixed(1)}%
 - Confidence: ${(ctx.confidence * 100).toFixed(1)}%
 - Expected Value: ${(ctx.expectedValue * 100).toFixed(3)}%
+
+RISK/REWARD:
+- Suggested TP: ${ctx.suggestedTp?.toFixed(4) ?? "N/A"}
+- Suggested SL: ${ctx.suggestedSl?.toFixed(4) ?? "N/A"}
+- Reward/Risk Ratio: ${ctx.rrRatio?.toFixed(2) ?? "N/A"}
 
 TECHNICAL INDICATORS:
 - RSI(14): ${ctx.rsi14.toFixed(2)}

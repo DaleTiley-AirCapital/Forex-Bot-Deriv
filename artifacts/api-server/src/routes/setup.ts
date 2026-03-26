@@ -142,7 +142,7 @@ router.get("/setup/status", async (_req, res): Promise<void> => {
 
     const totalCandles = symbolCounts.reduce((s, r) => s + r.count, 0);
     const hasEnoughData = symbolCounts.filter(r => r.count >= 100).length >= Math.ceil(V1_DEFAULT_SYMBOLS.length * 0.5);
-    const hasInitialBacktests = backtestCount >= expectedBacktests;
+    const hasInitialBacktests = backtestCount >= Math.ceil(V1_DEFAULT_SYMBOLS.length * 0.5);
 
     const setupRow = await db.select().from(platformStateTable)
       .where(eq(platformStateTable.key, "initial_setup_complete")).limit(1);
@@ -237,8 +237,9 @@ async function runSetupInBackground(send: (data: Record<string, unknown>) => voi
   try {
     const nowEpoch = Math.floor(Date.now() / 1000);
     const oneYearAgoEpoch = nowEpoch - TWELVE_MONTHS_SECONDS;
-    const expected1m = Math.ceil(TWELVE_MONTHS_SECONDS / 60);
-    const expected5m = Math.ceil(TWELVE_MONTHS_SECONDS / 300);
+    const SIX_MONTHS_SECONDS = 182 * 24 * 3600;
+    const expected1m = Math.ceil(SIX_MONTHS_SECONDS / 60);
+    const expected5m = Math.ceil(SIX_MONTHS_SECONDS / 300);
     const perSymbolExpected = expected1m + expected5m;
     const grandTotalExpected = perSymbolExpected * V1_DEFAULT_SYMBOLS.length;
 
@@ -452,7 +453,7 @@ async function runSetupInBackground(send: (data: Record<string, unknown>) => voi
           }));
           if (newRows.length > 0) {
             for (let chunk = 0; chunk < newRows.length; chunk += 1000) {
-              await db.insert(candlesTable).values(newRows.slice(chunk, chunk + 1000)).onConflictDoNothing();
+              await db.insert(candlesTable).values(newRows.slice(chunk, chunk + 1000)).onConflictDoNothing({ target: [candlesTable.symbol, candlesTable.timeframe, candlesTable.openTs] });
             }
             tfInserted += newRows.length;
             symbolTotalInserted += newRows.length;

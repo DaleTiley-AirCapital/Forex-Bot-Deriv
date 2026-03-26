@@ -451,7 +451,7 @@ export async function loadCandles(
 ): Promise<CandleData[]> {
   const conditions = [
     eq(candlesTable.symbol, symbol),
-    eq(candlesTable.timeframe, "1h"),
+    eq(candlesTable.timeframe, "1m"),
   ];
   if (startDate) {
     conditions.push(gte(candlesTable.openTs, Math.floor(startDate.getTime() / 1000)));

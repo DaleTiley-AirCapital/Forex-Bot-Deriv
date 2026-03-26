@@ -127,7 +127,10 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
     for (const decision of decisions) {
       const compositeScore = decision.signal.compositeScore ?? 0;
 
-      if (aiEnabled && compositeScore >= 75) {
+      if (!decision.allowed) {
+        decision.aiVerdict = "skipped";
+        decision.aiReasoning = `AI check skipped — signal blocked by system: ${decision.rejectionReason || "unknown"}`;
+      } else if (aiEnabled && compositeScore >= 75) {
         try {
           const feats = await computeFeatures(decision.signal.symbol);
 
@@ -151,6 +154,10 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
           const currentPrice = last5Candles.length > 0 ? last5Candles[0].close : 0;
           const estimatedEma20 = currentPrice > 0 ? currentPrice / (1 + ema20Value) : 0;
 
+          const tp = Math.abs(decision.signal.suggestedTp ?? 0);
+          const sl = Math.abs(decision.signal.suggestedSl ?? 0);
+          const rrRatio = sl > 0 ? tp / sl : 0;
+
           const verdict = await verifySignal({
             symbol: decision.signal.symbol,
             direction: decision.signal.direction,
@@ -173,6 +180,9 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
             compositeScore: decision.signal.compositeScore,
             entryStage: (decision.signal as any).entryStage || "probe",
             expectedValue: decision.signal.expectedValue,
+            suggestedTp: decision.signal.suggestedTp ?? undefined,
+            suggestedSl: decision.signal.suggestedSl ?? undefined,
+            rrRatio,
           });
 
           if (verdict) {

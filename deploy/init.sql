@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS candles (
   tick_count INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_candles_symbol_tf_ts_unique ON candles (symbol, timeframe, open_ts);
 CREATE INDEX IF NOT EXISTS idx_candles_symbol_tf_ts ON candles (symbol, timeframe, open_ts DESC);
 
 CREATE TABLE IF NOT EXISTS spike_events (

@@ -186,7 +186,7 @@ router.post("/research/download-simulate", async (req, res): Promise<void> => {
             }));
             for (let chunk = 0; chunk < newRows.length; chunk += 1000) {
               await db.insert(candlesTable).values(newRows.slice(chunk, chunk + 1000))
-                .onConflictDoNothing();
+                .onConflictDoNothing({ target: [candlesTable.symbol, candlesTable.timeframe, candlesTable.openTs] });
             }
             totalInserted += newRows.length;
           }
@@ -199,7 +199,7 @@ router.post("/research/download-simulate", async (req, res): Promise<void> => {
         }));
         for (let chunk = 0; chunk < newRows.length; chunk += 1000) {
           await db.insert(candlesTable).values(newRows.slice(chunk, chunk + 1000))
-            .onConflictDoNothing();
+            .onConflictDoNothing({ target: [candlesTable.symbol, candlesTable.timeframe, candlesTable.openTs] });
         }
         totalInserted += newRows.length;
 

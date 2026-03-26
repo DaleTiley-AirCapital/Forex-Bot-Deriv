@@ -240,6 +240,9 @@ async function initDb(): Promise<void> {
       ('streaming',           'false'),
       ('disabled_strategies', ''),
       ('min_composite_score', '80'),
+      ('paper_min_composite_score', '80'),
+      ('demo_min_composite_score',  '85'),
+      ('real_min_composite_score',  '90'),
       ('min_ev_threshold',    '0.003'),
       ('min_rr_ratio',        '3.0'),
 

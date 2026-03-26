@@ -138,9 +138,9 @@ The setup wizard is a multi-step guided process that runs on first launch (befor
 
 **Architecture**: The initialise endpoint uses a **background job + polling** pattern instead of SSE. POST `/api/setup/initialise` starts the process in the background and returns immediately. The frontend polls GET `/api/setup/progress?since=N` every 1.5 seconds to receive new events incrementally. This avoids proxy timeout issues on Railway/Replit hosting.
 
-1. **Probing Phase**: Instant — no API calls. All 12 probe_result events are emitted FIRST (before any database operations or Deriv WS connections) using a fixed 1-year expected record count (525,600 per symbol × 1m + 105,120 × 5m = 630,720 total). After probe results are sent, the endpoint DELETEs all data tables and connects to Deriv WS. This ensures the UI shows immediate progress regardless of backend connection speed.
+1. **Probing Phase**: Instant — no API calls. All 12 probe_result events are emitted FIRST (before any database operations or Deriv WS connections) using a 6-month expected record count (~262K per symbol × 1m + ~52K × 5m ≈ 314K total per symbol). After probe results are sent, the endpoint DELETEs all data tables and connects to Deriv WS. This ensures the UI shows immediate progress regardless of backend connection speed.
 
-2. **Backfill Phase**: Downloads 1-minute and 5-minute candle history for all 12 V1 symbols. Uses paginated API calls (5,000 candles per page) working backwards from the current time. Uses INSERT ... ON CONFLICT DO NOTHING for deduplication (no pre-query needed). Features per-symbol progress tracking with:
+2. **Backfill Phase**: Downloads 1-minute and 5-minute candle history for all 12 V1 symbols. Uses paginated API calls (5,000 candles per page) working backwards from the current time. The candles table has a UNIQUE INDEX on (symbol, timeframe, open_ts) — INSERT ... ON CONFLICT DO NOTHING targets this index to prevent duplicate records. Expected data is ~6 months (not theoretical 12 months), as Deriv synthetic indices typically only provide ~6 months of 1-minute history. Features per-symbol progress tracking with:
    - Individual progress percentages based on expected vs fetched records
    - Real-time status updates on every page (waiting, downloading, retrying, done, error)
    - Automatic WebSocket reconnection on connection loss (up to 5 consecutive retries per symbol)
@@ -324,13 +324,20 @@ A 6-dimension weighted score (0-100) is computed for each candidate signal:
 | Probability of Success | 15% | Win probability estimate |
 
 ### Step 7: Filtering
-Signals must pass three minimum thresholds:
-- Composite score >= min_composite_score (default: 80)
+Signals must pass three minimum thresholds (mode-specific, read from platform_state):
+- Composite score >= min_composite_score (Paper: 80, Demo: 85, Real: 90)
 - Expected value >= min_ev_threshold (default: 0.003)
-- Reward/risk ratio >= min_rr_ratio (default: 1.5)
+- Reward/risk ratio >= min_rr_ratio (default: 3.0)
+
+Allocation tiers are relative to each mode's minimum score threshold:
+- Base tier: score >= mode minimum
+- Medium tier: score >= mode minimum + 5
+- Large tier: score >= mode minimum + 10
 
 ### Step 8: AI Verification (Optional)
-When enabled, OpenAI GPT-4o reviews each signal that scores 75+ and provides a verdict:
+When enabled, OpenAI GPT-4o reviews signals that (a) passed ALL system gates AND (b) scored 75+.
+Signals blocked by system gates (RR too low, score below threshold, risk limits) SKIP AI verification entirely — their AI column shows "Skipped" instead of a misleading agree/disagree.
+The AI receives the full signal context including RR ratio, TP, and SL values.
 - **Agree**: Signal proceeds with possible confidence boost
 - **Uncertain**: Signal proceeds but capital allocation halved
 - **Disagree**: Signal blocked

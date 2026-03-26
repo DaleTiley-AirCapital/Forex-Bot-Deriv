@@ -378,7 +378,7 @@ function FactoryResetConfirmDialog({ onConfirm, onCancel, resetting }: { onConfi
         <div className="space-y-3 mb-6 text-sm text-muted-foreground">
           <p>This will permanently delete:</p>
           <ul className="list-disc list-inside space-y-1 ml-2">
-            <li>All candle data (24 months of history)</li>
+            <li>All candle data (full available history)</li>
             <li>All backtest results and AI optimisations</li>
             <li>All trades (paper, demo, and real)</li>
             <li>All settings (reset to defaults)</li>
@@ -607,7 +607,7 @@ function InitialSetupWizard({ onComplete, openAiKeySet }: { onComplete: () => vo
   if (!status) return null;
   const bothKeysConfigured = status.hasToken && openAiKeySet;
   const STEP_LABELS = [
-    { key: "backfill", icon: Download, label: "Download 24 months of trading history" },
+    { key: "backfill", icon: Download, label: "Download all available trading history" },
     { key: "analyse", icon: FlaskConical, label: "Run all strategies as backtests" },
     { key: "done", icon: Sparkles, label: "AI generates suggestions (never changes settings)" },
   ] as const;
@@ -633,7 +633,7 @@ function InitialSetupWizard({ onComplete, openAiKeySet }: { onComplete: () => vo
                 <p className="text-sm text-muted-foreground">Enter your <span className="text-primary font-medium">OpenAI API key</span> in the API Keys section below. Both keys are required before running initial setup.</p>
               ) : (
                 <>
-                  <p className="text-sm text-muted-foreground">Before trading, the system needs to download 24 months of price history and run all strategies as backtests. The AI will then generate <span className="font-medium text-foreground">suggestions</span> (it will never change your settings automatically).</p>
+                  <p className="text-sm text-muted-foreground">Before trading, the system needs to download all available price history and run all strategies as backtests. The AI will then generate <span className="font-medium text-foreground">suggestions</span> (it will never change your settings automatically).</p>
                   <div className="flex flex-col gap-2 pl-1">
                     {STEP_LABELS.map(({ key, icon: Icon, label }) => <div key={key} className="flex items-center gap-2 text-sm text-muted-foreground"><Icon className="w-3.5 h-3.5 text-primary/70 shrink-0" />{label}</div>)}
                   </div>

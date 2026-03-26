@@ -1046,7 +1046,7 @@ export default function SetupWizard({ onComplete }: { onComplete: () => void }) 
                     <Database className="w-10 h-10 text-blue-400 mx-auto" />
                     <h2 className="text-lg font-semibold">System Initialisation</h2>
                     <p className="text-muted-foreground text-sm max-w-md mx-auto">
-                      Download 12 months of 1m & 5m price history, run all 4 strategies per symbol
+                      Download all available 1m & 5m price history, run all 4 strategies per symbol
                       as backtests, and AI-optimise your settings. This may take a while.
                     </p>
                     <div className="flex justify-center gap-3">

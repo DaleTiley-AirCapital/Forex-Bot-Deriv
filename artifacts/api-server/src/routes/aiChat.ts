@@ -715,6 +715,7 @@ router.post("/ai/chat", async (req, res): Promise<void> => {
       for (const tc of toolCalls) {
         let result: string;
         try {
+          if (!("function" in tc)) { continue; }
           const fn = tc as { type: "function"; function: { name: string; arguments: string }; id: string };
           if (fn.function.name === "get_current_settings") {
             const settings = await getCurrentSettings();

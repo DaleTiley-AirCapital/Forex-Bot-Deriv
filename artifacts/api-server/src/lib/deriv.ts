@@ -203,7 +203,8 @@ async function updateOpenCandles(symbol: string, quote: number, epochTs: number)
 class DerivClient {
   private ws: WebSocket | null = null;
   private apiToken: string;
-  authorized = false;
+  private _authorized = false;
+  get isAuthorized(): boolean { return this._authorized; }
   private streaming = false;
   private subscribedSymbols: Set<string> = new Set();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -255,7 +256,7 @@ class DerivClient {
 
       this.ws.on("close", (code, reason) => {
         console.log(`[Deriv] Connection closed (${code}: ${reason}). Reconnecting in 5s...`);
-        this.authorized = false;
+        this._authorized = false;
         this.ws = null;
         if (this.streaming) {
           this.reconnectTimer = setTimeout(() => this.reconnect(), 5000);
@@ -353,19 +354,19 @@ class DerivClient {
       const err = response.error as Record<string, unknown>;
       throw new Error(`Deriv auth failed: ${err.message}`);
     }
-    this.authorized = true;
+    this._authorized = true;
     this.authData = (response.authorize || null) as Record<string, unknown> | null;
     console.log("[Deriv] Authorized successfully.");
   }
 
   async subscribeToTicks(symbol: string): Promise<void> {
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     console.log(`[Deriv] Subscribing to ticks for ${symbol}...`);
     await this.send({ ticks: symbol, subscribe: 1 });
   }
 
   async getTickHistory(symbol: string, count = 5000): Promise<DerivTickHistory | null> {
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     console.log(`[Deriv] Fetching ${count} historical ticks for ${symbol}...`);
     const response = await this.send({
       ticks_history: symbol,
@@ -384,7 +385,7 @@ class DerivClient {
   }
 
   async getCandleHistoryWithEnd(symbol: string, granularity: number, count = 5000, endEpoch?: number, silent = false): Promise<DerivCandle[] | null> {
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     const tf = Object.entries(TIMEFRAMES).find(([, s]) => s === granularity)?.[0] || `${granularity}s`;
     if (!silent) {
       const endLabel = endEpoch ? new Date(endEpoch * 1000).toISOString().slice(0, 10) : "latest";
@@ -408,7 +409,7 @@ class DerivClient {
   }
 
   async getCandleHistory(symbol: string, granularity: number, count = 1000): Promise<DerivCandle[] | null> {
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     const tf = Object.entries(TIMEFRAMES).find(([, s]) => s === granularity)?.[0] || `${granularity}s`;
     console.log(`[Deriv] Fetching ${count} candles (${tf}) for ${symbol}...`);
     const response = await this.send({
@@ -429,7 +430,7 @@ class DerivClient {
   }
 
   async getAccountBalance(): Promise<{ balance: number; currency: string } | null> {
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     const response = await this.send({ balance: 1 }) as AccountBalanceResponse;
     if (response.error) {
       console.error("[Deriv] Balance error:", response.error.message);
@@ -439,7 +440,7 @@ class DerivClient {
   }
 
   async getPortfolio(): Promise<{ contracts: Array<{ contract_id: number; buy_price: number; payout: number; symbol: string; contract_type: string; currency: string }> } | null> {
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     const response = await this.send({ portfolio: 1 }) as Record<string, unknown>;
     if ((response as Record<string, unknown>).error) {
       console.error("[Deriv] Portfolio error:", ((response as Record<string, unknown>).error as Record<string, string>).message);
@@ -467,7 +468,7 @@ class DerivClient {
   async getSpotPrice(symbol: string): Promise<number | null> {
     const cached = this.latestQuotes.get(symbol);
     if (cached) return cached;
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     const response = await this.send({
       proposal: 1,
       amount: 1,
@@ -495,7 +496,7 @@ class DerivClient {
     durationUnit: string;
     limitOrder?: { stopLoss?: number; takeProfit?: number };
   }): Promise<{ contractId: number; buyPrice: number; entrySpot: number } | null> {
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     console.log(`[Deriv] Opening ${params.contractType} on ${params.symbol} for $${params.amount}`);
 
     const proposal: Record<string, unknown> = {
@@ -545,7 +546,7 @@ class DerivClient {
   }
 
   async sellContract(contractId: number, price?: number): Promise<{ soldFor: number; balanceAfter: number } | null> {
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     console.log(`[Deriv] Closing contract ${contractId}`);
 
     const response = await this.send({
@@ -565,7 +566,7 @@ class DerivClient {
   }
 
   async updateStopLoss(contractId: number, stopLoss: number): Promise<boolean> {
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     const response = await this.send({
       contract_update: 1,
       contract_id: contractId,
@@ -581,7 +582,7 @@ class DerivClient {
   }
 
   async updateTakeProfit(contractId: number, takeProfit: number): Promise<boolean> {
-    if (!this.authorized) throw new Error("Not authorized");
+    if (!this._authorized) throw new Error("Not authorized");
     const response = await this.send({
       contract_update: 1,
       contract_id: contractId,
@@ -787,7 +788,7 @@ class DerivClient {
 
     const self = this;
     startWatchdog(async (symbol: string) => {
-      if (self.authorized && self.ws && self.ws.readyState === WebSocket.OPEN) {
+      if (self._authorized && self.ws && self.ws.readyState === WebSocket.OPEN) {
         const apiSymbol = self.configuredToApiSymbol(symbol);
         await self.subscribeToTicks(apiSymbol);
         self.subscribedSymbols.add(symbol);
@@ -816,7 +817,7 @@ class DerivClient {
       this.ws = null;
     }
     this.subscribedSymbols.clear();
-    this.authorized = false;
+    this._authorized = false;
     await db.insert(platformStateTable).values({ key: "streaming", value: "false" })
       .onConflictDoUpdate({ target: platformStateTable.key, set: { value: "false", updatedAt: new Date() } });
   }
@@ -905,7 +906,7 @@ export async function getDerivClientWithDbToken(): Promise<DerivClient> {
     derivClient = new DerivClient(token);
     lastToken = token;
   }
-  if (!derivClient.authorized) {
+  if (!derivClient.isAuthorized) {
     await derivClient.connect();
   }
   return derivClient;
@@ -925,7 +926,7 @@ export async function getDerivClientForMode(mode: TradingMode): Promise<DerivCli
       derivClientDemo = new DerivClient(token);
       lastTokenDemo = token;
     }
-    if (!derivClientDemo.authorized) {
+    if (!derivClientDemo.isAuthorized) {
       await derivClientDemo.connect();
     }
     return derivClientDemo;
@@ -937,7 +938,7 @@ export async function getDerivClientForMode(mode: TradingMode): Promise<DerivCli
       derivClientReal = new DerivClient(token);
       lastTokenReal = token;
     }
-    if (!derivClientReal.authorized) {
+    if (!derivClientReal.isAuthorized) {
       await derivClientReal.connect();
     }
     return derivClientReal;

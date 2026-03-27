@@ -198,7 +198,14 @@ export interface BacktestAnalysis {
 export async function analyseBacktest(metrics: BacktestMetrics): Promise<BacktestAnalysis> {
   const client = await getOpenAIClient();
 
-  const prompt = `You are a quantitative finance analyst reviewing a backtest for a LOW-FREQUENCY capital extraction system on Deriv synthetic indices.
+  const prompt = `You are a quantitative finance analyst reviewing a backtest for a LOW-FREQUENCY capital extraction system (V2) on Deriv synthetic indices.
+
+V2 TRADE MANAGEMENT CONTEXT:
+- TP/SL are computed dynamically from S/R + Fibonacci confluence zones (not fixed ATR multipliers)
+- Trailing stop: 30% drawdown from peak unrealized profit (activates only in-profit)
+- Time exits: after 72h, close on first profitable tick; 168h hard cap on all trades
+- Position sizing: equity_pct_per_trade * confidence (single entry, no probe/confirmation stages)
+- Min TP distance: 3x ATR; fallback TP: 6x ATR; fallback SL: 2.5x ATR
 
 Backtest Results:
 - Strategy: ${metrics.strategyName}
@@ -213,6 +220,8 @@ Backtest Results:
 - Avg Holding Time: ${metrics.avgHoldingHours.toFixed(1)} hours
 - Expectancy per Trade: $${metrics.expectancy.toFixed(2)}
 - Sharpe Ratio: ${metrics.sharpeRatio.toFixed(2)}
+
+Evaluate against the V2 framework above. Consider whether S/R confluence TP placement, trailing stop behavior, and time-exit handling are producing expected results.
 
 Respond with ONLY valid JSON:
 {

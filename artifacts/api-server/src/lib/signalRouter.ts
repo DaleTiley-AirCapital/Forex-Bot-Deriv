@@ -158,12 +158,10 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
   };
 }
 
-function getAllocationPctByScore(compositeScore: number, baseEquityPct: number, modeMinScore: number): { pct: number; tier: string } {
+function getAllocationPct(baseEquityPct: number, confidence: number): number {
   const basePct = baseEquityPct / 100;
-  if (compositeScore >= modeMinScore + 10) return { pct: basePct + 0.06, tier: "large" };
-  if (compositeScore >= modeMinScore + 5) return { pct: basePct + 0.03, tier: "medium" };
-  if (compositeScore >= modeMinScore) return { pct: basePct, tier: "base" };
-  return { pct: 0, tier: "reject" };
+  const confidenceScale = Math.max(0.5, Math.min(1.0, confidence));
+  return basePct * confidenceScale;
 }
 
 function checkConflicts(
@@ -320,20 +318,14 @@ export async function routeSignals(candidates: SignalCandidate[], tradingMode: T
         : ctx.allocationMode === "aggressive" ? 1.3
         : 1.0;
       const adjustedEquityPct = ctx.equityPctPerTrade * allocationMultiplier;
-      const { pct, tier } = getAllocationPctByScore(signal.compositeScore, adjustedEquityPct, ctx.minCompositeScore);
-      if (tier === "reject") {
-        allowed = false;
-        rejectionReason = `Score ${signal.compositeScore} below ${ctx.minCompositeScore} allocation threshold`;
-      } else {
-        capitalAllocationPct = pct;
-        capitalAmount = Math.min(
-          ctx.totalCapital * capitalAllocationPct,
-          remainingCapital
-        );
-        remainingCapital -= capitalAmount;
-        currentOpenCount++;
-        allowedSignals.push(signal);
-      }
+      capitalAllocationPct = getAllocationPct(adjustedEquityPct, signal.confidence);
+      capitalAmount = Math.min(
+        ctx.totalCapital * capitalAllocationPct,
+        remainingCapital
+      );
+      remainingCapital -= capitalAmount;
+      currentOpenCount++;
+      allowedSignals.push(signal);
     }
 
     decisions.push({ signal, allowed, rejectionReason, capitalAllocationPct, capitalAmount });

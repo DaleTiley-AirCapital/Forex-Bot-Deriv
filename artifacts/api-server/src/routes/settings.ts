@@ -339,6 +339,17 @@ async function runBacktestForOptimisation(
         signal = Math.random() < 0.15;
         direction = symbol.startsWith("BOOM") ? 1 : -1;
         break;
+      case "trendline_breakout": {
+        const highs20 = windowCandles.slice(-20).map(c => c.high);
+        const lows20 = windowCandles.slice(-20).map(c => c.low);
+        const recentHigh = Math.max(...highs20);
+        const recentLow = Math.min(...lows20);
+        const breakUp = price > recentHigh && distFromEma > 0.001;
+        const breakDown = price < recentLow && distFromEma < -0.001;
+        signal = breakUp || breakDown;
+        direction = breakUp ? 1 : -1;
+        break;
+      }
     }
     if (!signal) continue;
 

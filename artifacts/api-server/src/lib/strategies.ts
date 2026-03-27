@@ -236,8 +236,8 @@ function spikeEvent(features: FeatureVector, regime: RegimeClassification): Sign
 function trendlineBreakout(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
   const cfg = FAMILY_CONFIG.trendline_breakout;
   const price = features.latestClose;
-  const atr = features.atr14;
-  if (price <= 0 || atr <= 0) return null;
+  const atrNorm = features.atr14;
+  if (price <= 0 || atrNorm <= 0) return null;
 
   const resTouches = features.trendlineResistanceTouches ?? 0;
   const supTouches = features.trendlineSupportTouches ?? 0;
@@ -258,28 +258,28 @@ function trendlineBreakout(features: FeatureVector, regime: RegimeClassification
   let reason = "";
 
   if (hasResistanceTrendline) {
-    const breakDist = price - resLevel;
-    const breakAbove = breakDist > 0 && breakDist < atr * 2 && momentumConfirm && features.emaSlope > 0;
+    const breakDistPct = (price - resLevel) / price;
+    const breakAbove = breakDistPct > 0 && breakDistPct < atrNorm * 2 && momentumConfirm && features.emaSlope > 0;
     const nearBreakAbove = !breakAbove &&
-      Math.abs(breakDist) < atr * 0.5 && breakDist > -atr * 0.3 &&
+      Math.abs(breakDistPct) < atrNorm * 0.5 && breakDistPct > -atrNorm * 0.3 &&
       features.bbPctB > 0.85 && features.emaSlope > 0.0001 && bbExpanding;
 
     if (breakAbove || nearBreakAbove) {
       direction = "buy";
-      reason = `Trendline breakout up: price=${price.toFixed(2)}, trendlineRes=${resLevel.toFixed(2)}, slope=${resSlope.toFixed(6)}, touches=${resTouches}, atrAccel=${features.atrAccel.toFixed(3)}`;
+      reason = `Trendline breakout up: price=${price.toFixed(2)}, trendlineRes=${resLevel.toFixed(2)}, slope=${resSlope.toFixed(6)}, touches=${resTouches}, breakPct=${(breakDistPct*100).toFixed(3)}%`;
     }
   }
 
   if (!direction && hasSupportTrendline) {
-    const breakDist = supLevel - price;
-    const breakBelow = breakDist > 0 && breakDist < atr * 2 && momentumConfirm && features.emaSlope < 0;
+    const breakDistPct = (supLevel - price) / price;
+    const breakBelow = breakDistPct > 0 && breakDistPct < atrNorm * 2 && momentumConfirm && features.emaSlope < 0;
     const nearBreakBelow = !breakBelow &&
-      Math.abs(breakDist) < atr * 0.5 && breakDist > -atr * 0.3 &&
+      Math.abs(breakDistPct) < atrNorm * 0.5 && breakDistPct > -atrNorm * 0.3 &&
       features.bbPctB < 0.15 && features.emaSlope < -0.0001 && bbExpanding;
 
     if (breakBelow || nearBreakBelow) {
       direction = "sell";
-      reason = `Trendline breakout down: price=${price.toFixed(2)}, trendlineSup=${supLevel.toFixed(2)}, slope=${supSlope.toFixed(6)}, touches=${supTouches}, atrAccel=${features.atrAccel.toFixed(3)}`;
+      reason = `Trendline breakout down: price=${price.toFixed(2)}, trendlineSup=${supLevel.toFixed(2)}, slope=${supSlope.toFixed(6)}, touches=${supTouches}, breakPct=${(breakDistPct*100).toFixed(3)}%`;
     }
   }
 

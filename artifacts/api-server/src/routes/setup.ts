@@ -346,22 +346,32 @@ async function runSetupInBackground(send: (data: Record<string, unknown>) => voi
       for (const { tf, granularity } of timeframes) {
         const tfExpected = tf === "1m" ? expected1m : expected5m;
 
-        const existingCount = await db
-          .select({ cnt: count() })
+        const coverageResult = await db
+          .select({
+            cnt: count(),
+            minTs: sql<number>`MIN(${candlesTable.openTs})`,
+            maxTs: sql<number>`MAX(${candlesTable.openTs})`,
+          })
           .from(candlesTable)
           .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, tf)));
-        const existingCnt = existingCount[0]?.cnt ?? 0;
+        const existingCnt = coverageResult[0]?.cnt ?? 0;
+        const existingMinTs = coverageResult[0]?.minTs ?? 0;
+        const existingMaxTs = coverageResult[0]?.maxTs ?? 0;
+        const nowEpoch = Math.floor(Date.now() / 1000);
+        const targetRangeStart = nowEpoch - 365 * 24 * 3600;
+        const coversStart = existingMinTs > 0 && existingMinTs <= targetRangeStart + 86400;
+        const coversEnd = existingMaxTs > 0 && existingMaxTs >= nowEpoch - 3600;
         const coverageRatio = tfExpected > 0 ? existingCnt / tfExpected : 0;
 
-        if (coverageRatio >= 0.9) {
-          console.log(`[Setup] Skipping ${symbol} ${tf}: already has ${existingCnt}/${tfExpected} candles (${(coverageRatio * 100).toFixed(1)}% coverage)`);
+        if (coversStart && coversEnd && coverageRatio >= 0.85) {
+          console.log(`[Setup] Skipping ${symbol} ${tf}: ${existingCnt} candles covering ${new Date(existingMinTs * 1000).toISOString().slice(0, 10)} to ${new Date(existingMaxTs * 1000).toISOString().slice(0, 10)} (${(coverageRatio * 100).toFixed(1)}%)`);
           jobsDone++;
           symbolTotalInserted += existingCnt;
           candleTotal += existingCnt;
           send({
             phase: "backfill_tf_complete", stage: "backfill", symbol, timeframe: tf,
             inserted: existingCnt, skipped: true,
-            message: `${symbol} ${tf}: skipped (${existingCnt} candles already present)`,
+            message: `${symbol} ${tf}: skipped (${existingCnt} candles, range covered)`,
             overallPct: Math.round((jobsDone / totalJobs) * 100),
           });
           continue;

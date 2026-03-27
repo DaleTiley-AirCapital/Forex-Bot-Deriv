@@ -673,15 +673,23 @@ class DerivClient {
 
     for (const [tf, granularity] of [["1m", 60], ["5m", 300]] as [string, number][]) {
       const tfExpected = tf === "1m" ? totalExpected1m : totalExpected5m;
-      const existingCount = await db
-        .select({ cnt: count() })
+      const coverageResult = await db
+        .select({
+          cnt: count(),
+          minTs: sql<number>`MIN(${candlesTable.openTs})`,
+          maxTs: sql<number>`MAX(${candlesTable.openTs})`,
+        })
         .from(candlesTable)
         .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, tf)));
-      const existingCnt = existingCount[0]?.cnt ?? 0;
+      const existingCnt = coverageResult[0]?.cnt ?? 0;
+      const existingMinTs = coverageResult[0]?.minTs ?? 0;
+      const existingMaxTs = coverageResult[0]?.maxTs ?? 0;
+      const coversStart = existingMinTs > 0 && existingMinTs <= targetStart + 86400;
+      const coversEnd = existingMaxTs > 0 && existingMaxTs >= now - 3600;
       const coverageRatio = tfExpected > 0 ? existingCnt / tfExpected : 0;
 
-      if (coverageRatio >= 0.9) {
-        console.log(`[Deriv] Skipping ${symbol} ${tf} backfill: ${existingCnt}/${tfExpected} candles (${(coverageRatio * 100).toFixed(1)}% coverage)`);
+      if (coversStart && coversEnd && coverageRatio >= 0.85) {
+        console.log(`[Deriv] Skipping ${symbol} ${tf} backfill: ${existingCnt} candles covering ${new Date(existingMinTs * 1000).toISOString().slice(0, 10)} to ${new Date(existingMaxTs * 1000).toISOString().slice(0, 10)} (${(coverageRatio * 100).toFixed(1)}%)`);
         cumulativeCandles += existingCnt;
         storedCandles += existingCnt;
         emit(`candles_${tf}`, cumulativeCandles);

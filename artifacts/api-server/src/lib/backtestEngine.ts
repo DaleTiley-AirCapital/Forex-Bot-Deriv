@@ -402,10 +402,29 @@ export function computeFeaturesFromCandles(
     return cumV > 0 ? cumTPV / cumV : price;
   })();
 
-  const prevHalf = candles.slice(0, Math.floor(candles.length / 2));
-  const prevSessionHigh = prevHalf.length > 0 ? Math.max(...prevHalf.map(c => c.high)) : price;
-  const prevSessionLow = prevHalf.length > 0 ? Math.min(...prevHalf.map(c => c.low)) : price;
-  const prevSessionClose = prevHalf.length > 0 ? prevHalf[prevHalf.length - 1].close : price;
+  const prevSession = (() => {
+    if (candles.length < 2) return { high: price, low: price, close: price };
+    const lastTs = last.closeTs;
+    const oneDayAgo = lastTs - 86400;
+    const sessionCandles = candles.filter(c => c.openTs >= oneDayAgo && c.openTs < lastTs);
+    if (sessionCandles.length > 0) {
+      return {
+        high: Math.max(...sessionCandles.map(c => c.high)),
+        low: Math.min(...sessionCandles.map(c => c.low)),
+        close: sessionCandles[sessionCandles.length - 1].close,
+      };
+    }
+    const half = Math.floor(candles.length / 2);
+    const prevHalf = candles.slice(0, half);
+    return {
+      high: prevHalf.length > 0 ? Math.max(...prevHalf.map(c => c.high)) : price,
+      low: prevHalf.length > 0 ? Math.min(...prevHalf.map(c => c.low)) : price,
+      close: prevHalf.length > 0 ? prevHalf[prevHalf.length - 1].close : price,
+    };
+  })();
+  const prevSessionHigh = prevSession.high;
+  const prevSessionLow = prevSession.low;
+  const prevSessionClose = prevSession.close;
   const pp = (prevSessionHigh + prevSessionLow + prevSessionClose) / 3;
   const pivotR1 = 2 * pp - prevSessionLow;
   const pivotS1 = 2 * pp - prevSessionHigh;

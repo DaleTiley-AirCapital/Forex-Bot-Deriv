@@ -104,7 +104,7 @@ Each family is a distinct trading approach, activated only when its matching mar
 In V2, TP and SL are computed dynamically at trade execution using Support/Resistance levels and Fibonacci confluence — NOT fixed ATR multipliers.
 
 ### Take-Profit (TP) Computation
-1. Collect resistance levels (buy) or support levels (sell) from: swing high/low, Fibonacci extension levels (1.272, 1.618, 2.0, 2.618), BB upper/lower
+1. Collect resistance levels (buy) or support levels (sell) from: swing high/low, Fibonacci extension levels (1.272, 1.618, 2.0), BB upper/lower
 2. Cluster nearby levels (within 0.5% of each other) — 2+ confluent levels form a strong target
 3. Pick the strongest cluster as TP target, with 0.2% buffer inside
 4. Minimum TP = 3 × ATR from entry; fallback TP = 6 × ATR if no S/R levels found

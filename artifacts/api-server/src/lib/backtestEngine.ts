@@ -4,6 +4,7 @@ import { runAllStrategies, type SignalCandidate } from "./strategies.js";
 import { calculateProfitTrailingStop, calculateSRFibTP, calculateSRFibSL } from "./tradeEngine.js";
 import { classifyRegime, type RegimeClassification } from "./regimeEngine.js";
 import type { FeatureVector } from "./features.js";
+import { findSwingLevels } from "./features.js";
 import type { ScoringWeights } from "./scoring.js";
 
 const PROFIT_TRAILING_DRAWDOWN_PCT = 0.30;
@@ -312,15 +313,9 @@ export function computeFeaturesFromCandles(
 
   const regimeLabel = detectRegime(closes, atr14Raw, ema20Arr);
 
-  const swingLookback = Math.min(10, candles.length - 1);
-  let swingHigh = -Infinity;
-  let swingLow = Infinity;
-  for (let i = candles.length - 2; i >= Math.max(0, candles.length - 1 - swingLookback); i--) {
-    if (candles[i].high > swingHigh) swingHigh = candles[i].high;
-    if (candles[i].low < swingLow) swingLow = candles[i].low;
-  }
-  if (swingHigh === -Infinity) swingHigh = price;
-  if (swingLow === Infinity) swingLow = price;
+  const swingResult = findSwingLevels(highs, lows, 5);
+  let swingHigh = swingResult.swingHigh;
+  let swingLow = swingResult.swingLow;
   const swingHighDist = (price - swingHigh) / price;
   const swingLowDist = (price - swingLow) / price;
   const swingBreached = last.high > swingHigh || last.low < swingLow;

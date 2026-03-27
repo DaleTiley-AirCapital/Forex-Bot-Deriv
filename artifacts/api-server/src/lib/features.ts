@@ -104,7 +104,7 @@ function skewness(arr: number[]): number {
   return arr.reduce((a, b) => a + ((b - m) / s) ** 3, 0) / arr.length;
 }
 
-function findSwingLevels(highs: number[], lows: number[], pivotBars = 5): { swingHigh: number; swingLow: number; swingHighIdx: number; swingLowIdx: number } {
+export function findSwingLevels(highs: number[], lows: number[], pivotBars = 5): { swingHigh: number; swingLow: number; swingHighIdx: number; swingLowIdx: number } {
   let swingHigh = -Infinity;
   let swingLow = Infinity;
   let swingHighIdx = 0;

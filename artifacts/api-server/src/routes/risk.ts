@@ -30,19 +30,13 @@ function computeRiskForMode(
 
   const prefix = mode === "paper" ? "paper" : mode === "demo" ? "demo" : "real";
   const maxDailyLossPct = parseFloat(
-    stateMap[`${prefix}_max_daily_loss_pct`] ||
-    (mode === "paper" ? stateMap["paper_max_daily_loss_pct"] : stateMap["live_max_daily_loss_pct"]) ||
-    stateMap["max_daily_loss_pct"] || (mode === "paper" ? "5" : "3")
+    stateMap[`${prefix}_max_daily_loss_pct`] || (mode === "paper" ? "8" : mode === "demo" ? "5" : "3")
   );
   const maxWeeklyLossPct = parseFloat(
-    stateMap[`${prefix}_max_weekly_loss_pct`] ||
-    (mode === "paper" ? stateMap["paper_max_weekly_loss_pct"] : stateMap["live_max_weekly_loss_pct"]) ||
-    stateMap["max_weekly_loss_pct"] || (mode === "paper" ? "12" : "8")
+    stateMap[`${prefix}_max_weekly_loss_pct`] || (mode === "paper" ? "15" : mode === "demo" ? "10" : "6")
   );
   const maxDrawdownPct = parseFloat(
-    stateMap[`${prefix}_max_drawdown_pct`] ||
-    (mode === "paper" ? stateMap["paper_max_drawdown_pct"] : stateMap["live_max_drawdown_pct"]) ||
-    stateMap["max_drawdown_pct"] || (mode === "paper" ? "20" : "15")
+    stateMap[`${prefix}_max_drawdown_pct`] || (mode === "paper" ? "25" : mode === "demo" ? "18" : "12")
   );
 
   const dailyLossPct = (dailyPnl / totalCapital) * 100;

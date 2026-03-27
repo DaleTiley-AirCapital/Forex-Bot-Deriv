@@ -87,7 +87,7 @@ Each family is a distinct trading approach, activated only when its matching mar
 
 ### 2.2 Mean Reversion
 - **When**: z-score > 1.8 or < -1.8, RSI extreme (>68 or <32), 3+ adverse candles OR liquidity sweep
-- **Regime**: mean_reversion
+- **Regime**: mean_reversion or ranging
 - **Best for**: Boom/Crash indices that overshoot
 
 ### 2.3 Breakout Expansion
@@ -97,7 +97,7 @@ Each family is a distinct trading approach, activated only when its matching mar
 
 ### 2.4 Spike Event
 - **When**: Spike hazard score > 0.70 on Boom or Crash indices only
-- **Regime**: spike_zone
+- **Regime**: spike_zone or ranging
 - **Best for**: BOOM and CRASH indices exclusively
 
 ## 3. V2 Trade Management — S/R + Fibonacci TP/SL
@@ -130,7 +130,7 @@ In V2, TP and SL are computed dynamically at trade execution using Support/Resis
 ## 4. Signal Pipeline — How Trades are Born
 1. **Tick Streaming** → Live price ticks from Deriv WebSocket
 2. **Feature Extraction** → 20+ technical features (EMA, RSI, z-score, ATR, BB, spike hazard, swing H/L, Fibonacci levels)
-3. **Regime Classification** → Cached hourly: trend_up, trend_down, mean_reversion, compression, breakout_expansion, spike_zone, or no_trade
+3. **Regime Classification** → Cached hourly: trend_up, trend_down, mean_reversion, ranging, compression, breakout_expansion, spike_zone, or no_trade
 4. **Strategy Evaluation** → Only matching strategies run per regime
 5. **ML Scoring** → Logistic regression model per family scores features (0-1)
 6. **Composite Scoring** → 6-dimension weighted score (0-100):
@@ -143,7 +143,7 @@ In V2, TP and SL are computed dynamically at trade execution using Support/Resis
 
 ## 5. Position Sizing (V2)
 - One position per symbol (no probe/confirmation/momentum stages)
-- Size = equity × equity_pct_per_trade × (0.8 + 0.4 × confidence) × allocation_mode multiplier
+- Size = equity × equity_pct_per_trade × clamp(confidence, 0.5, 1.0) × allocation_mode multiplier
 - Clamped to min 5% equity and max remaining capacity
 
 ## 6. Capital Extraction Cycle

@@ -724,8 +724,8 @@ function simulateOnCandles(
         const remainingCapacity = maxDeployable - currentDeployed;
         if (remainingCapacity <= 0) break;
 
-        const scaledPct = basePct * (0.8 + 0.4 * signal.confidence);
-        let positionSize = equity * scaledPct;
+        const confidenceScale = Math.max(0.5, Math.min(1.0, signal.confidence));
+        let positionSize = equity * basePct * confidenceScale;
         positionSize = Math.min(positionSize, remainingCapacity);
         positionSize = Math.max(positionSize, equity * 0.05);
         if (positionSize > remainingCapacity) continue;

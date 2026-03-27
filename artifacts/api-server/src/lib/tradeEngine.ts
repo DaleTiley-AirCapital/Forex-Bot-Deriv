@@ -39,8 +39,8 @@ export function calculatePositionSize(
   }
 
   const pctDecimal = equityPctPerTrade / 100;
-  const basePct = pctDecimal * (0.8 + 0.4 * confidence);
-  let size = equity * basePct;
+  const confidenceScale = Math.max(0.5, Math.min(1.0, confidence));
+  let size = equity * pctDecimal * confidenceScale;
 
   size = Math.min(size, remainingCapacity);
   size = Math.max(size, equity * 0.05);

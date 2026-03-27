@@ -1,2 +1,2 @@
 export * from "./generated/api";
-export * from "./generated/types";
+export type { OverrideAiSettingBody as OverrideAiSettingBodyType } from "./generated/types/overrideAiSettingBody";

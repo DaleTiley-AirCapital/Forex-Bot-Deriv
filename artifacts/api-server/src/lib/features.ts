@@ -602,7 +602,8 @@ export async function computeFeatures(symbol: string, lookback = 100): Promise<F
     prevSessionLow: prevSession.low,
     prevSessionClose: prevSession.close,
     ...(() => {
-      const trendlines = findMultiSwingTrendlines(highs, lows, closes, 5, atr14);
+      const atr14Abs = atr14 * price;
+      const trendlines = findMultiSwingTrendlines(highs, lows, closes, 5, atr14Abs);
       return {
         trendlineResistanceSlope: trendlines.resistance.slope,
         trendlineSupportSlope: trendlines.support.slope,

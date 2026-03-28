@@ -128,21 +128,20 @@ Replaces the old price-based trailing stop with profit-percentage trailing:
 
 ---
 
-## 4. Exit Policy: No Time Exits
+## 4. Exit Policy
 
 Trades exit ONLY via:
 1. **TP hit** (primary exit) — targeting full spike magnitude (50-200%+ moves)
 2. **SL hit** — structural S/R confluence placement
 3. **30% trailing stop** — safety net, activates only in profit
+4. **72h profitable exit** — capital efficiency backstop: if trade is open 72+ hours AND in profit, close it to redeploy capital. Trades at a loss remain open until TP/SL/trailing.
 
 ### Removed (V2.1)
 
-- `TIME_EXIT_PROFIT_HOURS` (72h) and `TIME_EXIT_HARD_CAP_HOURS` (168h) constants — deleted.
-- `checkTimeExit()` function — now returns `{shouldExit: false}` always (no-op).
+- `TIME_EXIT_HARD_CAP_HOURS` (168h) constant — deleted. No forced closure of losing trades.
 - `INITIAL_EXIT_HOURS`, `EXTENSION_HOURS`, `MAX_EXIT_HOURS` constants.
 - Extension logic for near-breakeven trades.
 - Per-family hold profiles (`FAMILY_HOLD_PROFILE`).
-- All time-based forced closures from both live engine and backtest engine.
 
 ---
 

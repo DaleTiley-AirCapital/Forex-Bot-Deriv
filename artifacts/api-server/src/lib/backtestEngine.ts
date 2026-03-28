@@ -749,6 +749,15 @@ function simulateOnCandles(
         }
       }
 
+      if (!exitPrice && hoursOpen >= 72) {
+        const currentPnl = pos.direction === "buy"
+          ? (candle.close - pos.entryPrice) / pos.entryPrice
+          : (pos.entryPrice - candle.close) / pos.entryPrice;
+        if (currentPnl > 0) {
+          exitPrice = candle.close;
+          exitReason = "profitable_after_72h";
+        }
+      }
 
       if (exitPrice !== null && exitReason !== null) {
         const priceDiff = pos.direction === "buy"

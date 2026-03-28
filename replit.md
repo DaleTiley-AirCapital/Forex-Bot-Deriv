@@ -14,7 +14,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 
 **Core Layers:**
 1.  **Data Collector:** Handles tick ingestion, candle building, and spike event detection.
-2.  **Backtesting Engine (V2):** A production-grade simulator mirroring live V2 logic — S/R + Fibonacci TP/SL, 30% profit-based trailing stop (safety net only), NO time exits (trades hold until TP/SL/trailing), confidence-scaled position sizing, and portfolio-level equity management. Supports walk-forward testing and provides comprehensive metrics.
+2.  **Backtesting Engine (V2):** A production-grade simulator mirroring live V2 logic — S/R + Fibonacci TP/SL, 30% profit-based trailing stop (safety net only), 72h profitable exit (capital efficiency), confidence-scaled position sizing, and portfolio-level equity management. Supports walk-forward testing and provides comprehensive metrics.
 3.  **Probability Model:** Focuses on feature engineering and gradient boost scoring.
 4.  **Strategy Engine:** Incorporates four strategy families: trend_continuation (trend pullback), mean_reversion (exhaustion rebound, liquidity sweep), breakout_expansion (volatility breakout, volatility expansion), spike_event (spike hazard).
 5.  **Risk & Capital Manager:** Manages portfolio allocation, daily/weekly/max-drawdown limits, correlated family caps, and includes a kill switch mechanism.
@@ -37,7 +37,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
     -   **Signal Router:** Manages conflict resolution, multi-asset ranking, and tiered allocation.
     -   **AI Signal Verification:** GPT-4o powered verification of signals.
     -   **Signal Scheduler:** Manages staggered symbol scanning and position management.
-    -   **Trade Engine (V2):** Long-term structural TP/SL. Boom/Crash: TP = 50% of 90-day price range (min 10% of entry), targeting 50-200%+ full moves; SL = 5% of 90-day range (min 2%). Volatility: structural S/R (major swing levels, pivots, Camarilla) at 70% of major swing range. 1500+ candle structural window. No ATR fallbacks ever. TP is PRIMARY exit; 30% trailing stop is SAFETY NET ONLY. NO time exits — trades hold until TP, SL, or trailing stop. Composite thresholds: 80 (paper), 85 (demo), 90 (real). Up to 2 positions per symbol (different strategies). See `V2_SPECIFICATION.md`.
+    -   **Trade Engine (V2):** Long-term structural TP/SL. Boom/Crash: TP = 50% of 90-day price range (min 10% of entry), targeting 50-200%+ full moves; SL = 5% of 90-day range (min 2%). Volatility: structural S/R (major swing levels, pivots, Camarilla) at 70% of major swing range. 1500+ candle structural window. No ATR fallbacks ever. TP is PRIMARY exit; 30% trailing stop is SAFETY NET ONLY. 72h profitable exit for capital efficiency — trades at a loss hold until TP, SL, or trailing stop. Composite thresholds: 80 (paper), 85 (demo), 90 (real). Up to 2 positions per symbol (different strategies). See `V2_SPECIFICATION.md`.
     -   **Extraction Engine:** Manages capital cycles, targeting profit percentages for auto-extraction.
     -   **Symbol Diagnostics:** `/api/diagnostics/symbols` endpoint and Settings > Diagnostics tab show per-symbol stream health, validation status, tick counts, and errors.
 -   **Database Schema:** Key tables include `ticks`, `candles`, `spike_events`, `features`, `model_runs`, `backtest_trades`, `backtest_runs`, `trades`, `signal_log`, and `platform_state`.
@@ -45,9 +45,10 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 ### CRITICAL DESIGN MANDATES — DO NOT VIOLATE
 1. **TP is PRIMARY exit** targeting full spike magnitude (50-200%+). Trailing stop is SAFETY NET ONLY. NEVER dilute this to 0.01-0.3% targets.
 2. **Never use ATR-based TP/SL exits.** All exits from market structure and spike magnitude analysis.
-3. **Never compute structural indicators from only 100 one-minute candles.** Use 1500+ candles for structure, 100 for fast indicators.
-4. **Use rolling 60-90 day windows** (not static all-time levels) for spike magnitude analysis.
-5. **Boom/Crash and Volatility treated differently** — spike p75 TP for Boom/Crash, 70% major swing range TP for Volatility.
+3. **72h profitable exit for capital efficiency** — close in-profit trades after 72 hours to redeploy capital. No forced closure of losing trades.
+4. **Never compute structural indicators from only 100 one-minute candles.** Use 1500+ candles for structure, 100 for fast indicators.
+5. **Use rolling 60-90 day windows** (not static all-time levels) for spike magnitude analysis.
+6. **Boom/Crash and Volatility treated differently** — 50% of 90-day range TP for Boom/Crash, 70% major swing range TP for Volatility.
 
 **Deployment:**
 -   Recommended deployment via Railway, using `railway.toml` and a multi-stage `Dockerfile`.

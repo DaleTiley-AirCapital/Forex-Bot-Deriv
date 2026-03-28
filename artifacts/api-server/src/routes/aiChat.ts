@@ -137,9 +137,10 @@ TP is the PRIMARY exit. Trailing stop is SAFETY NET ONLY. No ATR-based TP/SL eve
 - Triggers exit when profit drops 30% from peak (e.g., peak 10% → exit at 7%)
 - This is a SAFETY NET — TP is the primary exit
 
-### NO Time Exits
-- No 72-hour profit exit. No 168-hour hard cap. Trades hold until TP, SL, or trailing stop.
-- Long-hold strategy: trades may remain open for days or weeks until the full spike move is captured.
+### 72-Hour Profitable Exit (Capital Efficiency Backstop)
+- If a trade has been open for 72+ hours AND is currently in profit, it is closed with reason "profitable_after_72h".
+- Trades at a loss after 72 hours remain open — they wait for TP, SL, or trailing stop.
+- No 168-hour hard cap. This is a capital redeployment measure, not a forced closure.
 
 ## 4. Signal Pipeline — How Trades are Born
 1. **Tick Streaming** → Live price ticks from Deriv WebSocket
@@ -219,7 +220,7 @@ TP is the PRIMARY exit. Trailing stop is SAFETY NET ONLY. No ATR-based TP/SL eve
 ## 10. Core Trading Philosophy
 - LARGE CAPITAL PER TRADE: Deploy 15-25% equity per position
 - HIGHEST-QUALITY SIGNALS ONLY: Composite score ≥ 80 (paper), ≥ 85 (demo), ≥ 90 (real)
-- LONG HOLD, NO TIME EXITS: Trades stay open until TP, SL, or trailing stop. No forced closures.
+- LONG HOLD + 72H PROFITABLE EXIT: Trades hold until TP, SL, trailing stop, or 72h profitable exit (capital efficiency backstop). No forced closure of losing trades.
 - DYNAMIC TP/SL: Spike-magnitude-aware (Boom/Crash) + structural S/R confluence (Volatility). TP is PRIMARY exit; trailing stop is SAFETY NET ONLY. No ATR fallbacks.
 - 30% PEAK-PROFIT TRAILING: Lock in gains from peak unrealised profit (safety net only)
 - FEW POSITIONS: Max 2-4 open trades. Expect ~5-30 trades per multi-month backtest, NOT hundreds.

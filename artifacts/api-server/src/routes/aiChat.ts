@@ -110,7 +110,7 @@ TP is the PRIMARY exit. Trailing stop is SAFETY NET ONLY. No ATR-based TP/SL eve
 
 ### Take-Profit (TP) — Boom/Crash Indices
 1. Primary TP = entry ± spike p75 magnitude (from rolling 60-90 day spike_events analysis)
-2. Targets full spike travel (50-200%+ moves). Never scalp 1-5% moves.
+2. Targets full spike travel (spike p75 magnitude from rolling 60-90 day window). Never scalp; hold until TP hit.
 3. Structural confluence (major swing levels, fib extensions, pivots) used to refine target within 15% of spike TP.
 4. Minimum TP floor = median spike magnitude.
 

@@ -26,7 +26,7 @@
 V2 replaces V1's static ATR-multiplier trade management with dynamic, market-structure-aware logic. The core principles:
 
 - **Large capital, long hold, max profit.** Swing trades on highest-probability signals only.
-- **TP targets full spike magnitude (50-200%+).** TP is the PRIMARY exit. Trailing stop is SAFETY NET ONLY. Never scalp 1-5% moves.
+- **TP targets spike p75 magnitude** (absolute price points from spike_events, converted to % of entry price). TP is the PRIMARY exit. Trailing stop is SAFETY NET ONLY.
 - **TP/SL derived from actual market structure + spike magnitude analysis** — never from ATR multiples.
 - **Rolling 60-90 day spike magnitude analysis** from `spike_events` table drives TP distance for Boom/Crash indices.
 - **1500+ candle structural window** for swing levels, VWAP, pivots, Fibonacci — never just 100 one-minute candles.
@@ -37,7 +37,7 @@ V2 replaces V1's static ATR-multiplier trade management with dynamic, market-str
 - **AI never auto-changes settings.** Blocked signals get `aiVerdict="skipped"`.
 
 ### CRITICAL DESIGN MANDATES — DO NOT VIOLATE
-1. **TP is PRIMARY exit** targeting full spike magnitude (50-200%+). Trailing stop is SAFETY NET ONLY.
+1. **TP is PRIMARY exit** targeting spike p75 magnitude. Trailing stop is SAFETY NET ONLY.
 2. **Never use ATR-based TP/SL exits.** All exits from market structure and spike magnitude analysis.
 3. **Never compute structural indicators from only 100 one-minute candles.** Use 1500+ candles for structure, 100 for fast indicators.
 4. **Use rolling 60-90 day windows** (not static all-time levels) for spike magnitude analysis.
@@ -131,7 +131,7 @@ Replaces the old price-based trailing stop with profit-percentage trailing:
 ## 4. Exit Policy: No Time Exits
 
 Trades exit ONLY via:
-1. **TP hit** (primary exit) — targeting full spike magnitude (50-200%+ moves)
+1. **TP hit** (primary exit) — targeting spike p75 magnitude from rolling 60-90 day window
 2. **SL hit** — structural S/R confluence placement
 3. **30% trailing stop** — safety net, activates only in profit
 

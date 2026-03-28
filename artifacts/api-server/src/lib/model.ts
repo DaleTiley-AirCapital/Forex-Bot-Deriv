@@ -48,18 +48,7 @@ const FAMILY_WEIGHTS: Record<StrategyFamily, ModelWeights> = {
     consecutive: -1.0,
     bbPctB: -1.5,
   },
-  breakout_expansion: {
-    intercept: -0.2,
-    emaSlope: 1.0,
-    rsi14: 0.5,
-    atr14: 2.0,
-    bbWidth: -2.5,
-    zScore: 0.5,
-    spikeHazard: 0.3,
-    consecutive: 0.3,
-    bbPctB: 1.5,
-  },
-  spike_event: {
+  spike_cluster_recovery: {
     intercept: -0.1,
     emaSlope: 0.3,
     rsi14: 0.2,
@@ -69,6 +58,17 @@ const FAMILY_WEIGHTS: Record<StrategyFamily, ModelWeights> = {
     spikeHazard: 4.0,
     consecutive: 0.2,
     bbPctB: 0.1,
+  },
+  swing_exhaustion: {
+    intercept: -0.2,
+    emaSlope: -1.0,
+    rsi14: -1.5,
+    atr14: 0.8,
+    bbWidth: 0.5,
+    zScore: -1.5,
+    spikeHazard: 1.5,
+    consecutive: -0.8,
+    bbPctB: -0.5,
   },
   trendline_breakout: {
     intercept: -0.15,
@@ -107,20 +107,20 @@ const FAMILY_RULE_CONFIGS: Record<StrategyFamily, {
     meanRevWeight: 0.25,
     atrWeight: 0.05,
   },
-  breakout_expansion: {
-    trendWeight: 0.10,
-    rsiWeight: 0.05,
-    bbWeight: 0.30,
-    spikeWeight: 0.05,
-    meanRevWeight: 0.05,
-    atrWeight: 0.25,
-  },
-  spike_event: {
+  spike_cluster_recovery: {
     trendWeight: 0.05,
     rsiWeight: 0.05,
     bbWeight: 0.05,
     spikeWeight: 0.50,
     meanRevWeight: 0.05,
+    atrWeight: 0.10,
+  },
+  swing_exhaustion: {
+    trendWeight: 0.10,
+    rsiWeight: 0.15,
+    bbWeight: 0.05,
+    spikeWeight: 0.25,
+    meanRevWeight: 0.20,
     atrWeight: 0.10,
   },
   trendline_breakout: {
@@ -178,7 +178,7 @@ function computeFamilyRuleScore(features: FeatureVector, family: StrategyFamily)
   }
 
   if (features.bbWidth < 0.005) {
-    const bbScore = family === "breakout_expansion" ? 0.75 : 0.55;
+    const bbScore = family === "swing_exhaustion" ? 0.75 : 0.55;
     ruleScore += bbScore * cfg.bbWeight;
     ruleWeight += cfg.bbWeight;
   }
@@ -194,7 +194,7 @@ function computeFamilyRuleScore(features: FeatureVector, family: StrategyFamily)
   }
 
   if (features.atrAccel > 0.1) {
-    const atrScore = family === "breakout_expansion" ? 0.75 : 0.55;
+    const atrScore = family === "swing_exhaustion" ? 0.75 : 0.55;
     ruleScore += atrScore * cfg.atrWeight;
     ruleWeight += cfg.atrWeight;
   }

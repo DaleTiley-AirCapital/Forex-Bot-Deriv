@@ -13,6 +13,11 @@ export const V1_DEFAULT_SYMBOLS = [
   "R_75", "R_100",
 ];
 
+export const ACTIVE_TRADING_SYMBOLS = [
+  "CRASH300", "BOOM300",
+  "R_75", "R_100",
+];
+
 export type TradingMode = "paper" | "demo" | "real";
 
 export interface BackfillSymbolProgress {

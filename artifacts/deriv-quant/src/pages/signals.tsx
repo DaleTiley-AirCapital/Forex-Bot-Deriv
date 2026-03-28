@@ -7,7 +7,7 @@ import { ClipboardList, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, Chevro
 import { downloadCSV, downloadJSON } from "@/lib/export";
 import { motion, AnimatePresence } from "framer-motion";
 
-const FAMILIES = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event"] as const;
+const FAMILIES = ["trend_continuation", "mean_reversion", "spike_cluster_recovery", "swing_exhaustion", "trendline_breakout"] as const;
 
 const STATUSES = ["approved", "blocked"] as const;
 const AI_VERDICTS = ["agree", "disagree", "uncertain"] as const;
@@ -15,15 +15,17 @@ const AI_VERDICTS = ["agree", "disagree", "uncertain"] as const;
 const FAMILY_LABELS: Record<string, string> = {
   trend_continuation: "Trend",
   mean_reversion: "Reversion",
-  breakout_expansion: "Breakout",
-  spike_event: "Spike",
+  spike_cluster_recovery: "Spike Cluster",
+  swing_exhaustion: "Swing Exhaust",
+  trendline_breakout: "Trendline",
 };
 
 const FAMILY_COLORS: Record<string, string> = {
   trend_continuation: "bg-blue-500/12 text-blue-400 border-blue-500/25",
   mean_reversion: "bg-purple-500/12 text-purple-400 border-purple-500/25",
-  breakout_expansion: "bg-orange-500/12 text-orange-400 border-orange-500/25",
-  spike_event: "bg-pink-500/12 text-pink-400 border-pink-500/25",
+  spike_cluster_recovery: "bg-pink-500/12 text-pink-400 border-pink-500/25",
+  swing_exhaustion: "bg-orange-500/12 text-orange-400 border-orange-500/25",
+  trendline_breakout: "bg-cyan-500/12 text-cyan-400 border-cyan-500/25",
 };
 
 function AIVerdictBadge({ verdict, reasoning, blocked }: { verdict: string | null | undefined; reasoning: string | null | undefined; blocked?: boolean }) {

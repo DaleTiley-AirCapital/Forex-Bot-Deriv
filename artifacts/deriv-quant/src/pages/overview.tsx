@@ -26,8 +26,9 @@ const STRATEGY_DESCRIPTIONS = [
 const FAMILY_LABELS: Record<string, string> = {
   trend_continuation: "Trend",
   mean_reversion: "Reversion",
-  breakout_expansion: "Breakout",
-  spike_event: "Spike",
+  spike_cluster_recovery: "Spike Cluster",
+  swing_exhaustion: "Swing Exhaust",
+  trendline_breakout: "Trendline",
 };
 
 export default function Overview() {

@@ -33,7 +33,7 @@ function decryptSecret(stored: string): string {
 }
 
 const ALL_SYMBOLS_DEFAULT = "BOOM1000,CRASH1000,BOOM900,CRASH900,BOOM600,CRASH600,BOOM500,CRASH500,BOOM300,CRASH300,R_75,R_100";
-const ALL_STRATEGIES_DEFAULT = "trend_continuation,mean_reversion,breakout_expansion,spike_event,trendline_breakout";
+const ALL_STRATEGIES_DEFAULT = "trend_continuation,mean_reversion,spike_cluster_recovery,swing_exhaustion,trendline_breakout";
 
 const SETTING_DEFAULTS: Record<string, string> = {
   kill_switch: "false",
@@ -270,7 +270,7 @@ router.get("/settings/openai-health", async (_req, res): Promise<void> => {
   }
 });
 
-const STRATEGIES = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event", "trendline_breakout"];
+const STRATEGIES = ["trend_continuation", "mean_reversion", "spike_cluster_recovery", "swing_exhaustion", "trendline_breakout"];
 const DEFAULT_SYMBOLS = [
   "BOOM1000", "CRASH1000", "BOOM900", "CRASH900",
   "BOOM600", "CRASH600", "BOOM500", "CRASH500",
@@ -329,16 +329,16 @@ async function runBacktestForOptimisation(
         signal = rsi < 32 || rsi > 68;
         direction = rsi < 32 ? 1 : -1;
         break;
-      case "breakout_expansion": {
-        const std = Math.sqrt(closes.slice(-20).reduce((acc, c) => acc + (c - ema20) ** 2, 0) / 20);
-        signal = std / ema20 < 0.005 && Math.abs(distFromEma) > 0.003;
-        direction = distFromEma > 0 ? 1 : -1;
+      case "spike_cluster_recovery": {
+        signal = Math.random() < 0.10;
+        direction = symbol.startsWith("CRASH") ? 1 : -1;
         break;
       }
-      case "spike_event":
-        signal = Math.random() < 0.15;
-        direction = symbol.startsWith("BOOM") ? 1 : -1;
+      case "swing_exhaustion": {
+        signal = (rsi > 72 || rsi < 28) && Math.abs(distFromEma) > 0.005;
+        direction = rsi > 72 ? -1 : 1;
         break;
+      }
       case "trendline_breakout": {
         const highs20 = windowCandles.slice(-20).map(c => c.high);
         const lows20 = windowCandles.slice(-20).map(c => c.low);

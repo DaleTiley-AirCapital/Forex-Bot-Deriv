@@ -16,7 +16,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 1.  **Data Collector:** Handles tick ingestion, candle building, and spike event detection.
 2.  **Backtesting Engine (V2):** A production-grade simulator mirroring live V2 logic — S/R + Fibonacci TP/SL, 30% profit-based trailing stop (safety net only), 72h profitable exit (capital efficiency), confidence-scaled position sizing, and portfolio-level equity management. Supports walk-forward testing and provides comprehensive metrics.
 3.  **Probability Model:** Focuses on feature engineering and gradient boost scoring.
-4.  **Strategy Engine:** Incorporates four strategy families: trend_continuation (trend pullback), mean_reversion (exhaustion rebound, liquidity sweep), breakout_expansion (volatility breakout, volatility expansion), spike_event (spike hazard).
+4.  **Strategy Engine (V2):** Five strategy families: trend_continuation (drift riding after confirmed reversal), mean_reversion (multi-day range extreme entries), spike_cluster_recovery (counter-trend after 3+ spike clusters in 4h), swing_exhaustion (multi-day rally/decline exhaustion at range extremes), trendline_breakout (dynamic trendline breaks with VWAP/pivot confluence).
 5.  **Risk & Capital Manager:** Manages portfolio allocation, daily/weekly/max-drawdown limits, correlated family caps, and includes a kill switch mechanism.
 6.  **Symbol Validator:** Validates configured symbols against Deriv active_symbols API at startup, refuses invalid subscriptions, and runs a stale-stream watchdog with auto-resubscription.
 
@@ -37,7 +37,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
     -   **Signal Router:** Manages conflict resolution, multi-asset ranking, and tiered allocation.
     -   **AI Signal Verification:** GPT-4o powered verification of signals.
     -   **Signal Scheduler:** Manages staggered symbol scanning and position management.
-    -   **Trade Engine (V2):** Full market move TP/SL. Boom/Crash: TP = 50% of 90-day longTermRangePct (min 10% of entry), targeting 50-200%+ full moves. Volatility: TP = 70% of major swing range from 1500+ candle window (min 2% of entry). SL = TP distance / 5 (fixed 1:5 R:R ratio) with 10% equity safety cap. No structural S/R-based SL, no ATR fallbacks ever. TP is PRIMARY exit; 30% trailing stop is SAFETY NET ONLY. 72h profitable exit for capital efficiency — trades at a loss hold until TP, SL, or trailing stop. Composite thresholds: 80 (paper), 85 (demo), 90 (real). Strategy entry thresholds tightened per V2 Blueprint Section 3. Up to 2 positions per symbol (different strategies). See `V2_SPECIFICATION.md`.
+    -   **Trade Engine (V2):** Full market move TP/SL. Boom/Crash: TP = 50% of 90-day longTermRangePct (min 10% of entry), targeting 50-200%+ full moves. Volatility: TP = 70% of major swing range from 1500+ candle window (min 2% of entry). SL = TP distance / 5 (fixed 1:5 R:R ratio) with 10% equity safety cap. No structural S/R-based SL, no ATR fallbacks ever. TP is PRIMARY exit; 30% trailing stop is SAFETY NET ONLY — activates only after trade reaches 30% of TP target (before that, only fixed SL protects). 72h profitable exit for capital efficiency — trades at a loss hold until TP, SL, or trailing stop. Composite thresholds: 80 (paper), 85 (demo), 90 (real). Strategy entry thresholds tightened per V2 Blueprint Section 3. Up to 2 positions per symbol (different strategies). See `V2_SPECIFICATION.md`.
     -   **Extraction Engine:** Manages capital cycles, targeting profit percentages for auto-extraction.
     -   **Symbol Diagnostics:** `/api/diagnostics/symbols` endpoint and Settings > Diagnostics tab show per-symbol stream health, validation status, tick counts, and errors.
 -   **Database Schema:** Key tables include `ticks`, `candles`, `spike_events`, `features`, `model_runs`, `backtest_trades`, `backtest_runs`, `trades`, `signal_log`, and `platform_state`.
@@ -54,8 +54,9 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 -   Recommended deployment via Railway, using `railway.toml` and a multi-stage `Dockerfile`.
 -   Legacy Docker Compose deployments are supported for Docker and Synology NAS environments.
 
-**Instrument Catalog (29 total, 12 v1-deployed):**
-- v1 Deployable (12): BOOM1000, CRASH1000, BOOM900, CRASH900, BOOM600, CRASH600, BOOM500, CRASH500, BOOM300, CRASH300, R_75, R_100
+**Instrument Catalog (29 total, 12 data-download, 4 active-trading):**
+- Active Trading (4): CRASH300, BOOM300, R_75, R_100
+- Data Download (12): BOOM1000, CRASH1000, BOOM900, CRASH900, BOOM600, CRASH600, BOOM500, CRASH500, BOOM300, CRASH300, R_75, R_100
 - Future catalog: R_10, R_25, R_50, RDBULL, RDBEAR, JD10-JD100, stpRNG, STP2-5, RDBR100, RDBR200
 
 **API Keys:** deriv_api_token_demo, deriv_api_token_real, openai_api_key (legacy single deriv_api_token removed)
@@ -74,7 +75,9 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 
 **Data Backfill:** On startup, auto-backfills 12 months of 1m and 5m candle history for all 12 symbols via paginated Deriv API calls (5,000 candles per page). Uses `onConflictDoNothing` so re-runs fill gaps without duplicating. Partial success model: proceeds if ≥8/12 symbols succeed; failed symbols shown with "Re-download from Research > Data Status". Data older than 12 months is automatically pruned.
 
-**Research Page:** Overhauled with Data Status section (per-symbol health cards), Download & Simulate (SSE per-symbol), Re-run Backtest, grouped backtest results by symbol (only profitable strategies), and AI Chat per backtest. Routes in `artifacts/api-server/src/routes/research.ts`. Backtests now run 1 pass per symbol with all 4 strategies, storing strategyBreakdown in metricsJson (12 backtests instead of 48).
+**Research Page:** Overhauled with Data Status section (per-symbol health cards), Download & Simulate (SSE per-symbol), Re-run Backtest, grouped backtest results by symbol (only profitable strategies), and AI Chat per backtest. Routes in `artifacts/api-server/src/routes/research.ts`. Backtests now run 1 pass per symbol with all 5 strategies, storing strategyBreakdown in metricsJson.
+
+**New FeatureVector Fields (V2):** `spikeCount4h`, `spikeCount24h`, `spikeCount7d` (rolling spike cluster counts), `priceChange24hPct`, `priceChange7dPct` (multi-day momentum), `distFromRange30dHighPct`, `distFromRange30dLowPct` (range position). Computed in both live features.ts (DB query) and backtestEngine.ts (candle approximation).
 
 ## External Dependencies
 

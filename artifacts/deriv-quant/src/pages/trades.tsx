@@ -26,7 +26,7 @@ function formatHours(hours: number): string {
 
 const SYMBOLS = ["BOOM1000","BOOM900","BOOM600","BOOM500","BOOM300","CRASH1000","CRASH900","CRASH600","CRASH500","CRASH300","R_75","R_100"];
 const SIDES = ["buy","sell"];
-const STRATEGIES = ["trend_continuation","mean_reversion","breakout_expansion","spike_event"];
+const STRATEGIES = ["trend_continuation","mean_reversion","spike_cluster_recovery","swing_exhaustion","trendline_breakout"];
 
 function FilterSelect({ value, onChange, options, placeholder }: {
   value: string;

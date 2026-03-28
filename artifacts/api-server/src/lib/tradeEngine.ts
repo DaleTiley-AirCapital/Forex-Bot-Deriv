@@ -152,8 +152,9 @@ export function calculateProfitTrailingStop(params: {
   peakPrice: number;
   direction: "buy" | "sell";
   currentSl: number;
+  tpPrice?: number;
 }): { newSl: number; updated: boolean } {
-  const { entryPrice, currentPrice, peakPrice, direction, currentSl } = params;
+  const { entryPrice, currentPrice, peakPrice, direction, currentSl, tpPrice } = params;
 
   const currentPnlPct = direction === "buy"
     ? (currentPrice - entryPrice) / entryPrice
@@ -161,6 +162,16 @@ export function calculateProfitTrailingStop(params: {
 
   if (currentPnlPct <= 0) {
     return { newSl: currentSl, updated: false };
+  }
+
+  if (tpPrice && tpPrice > 0) {
+    const tpPct = direction === "buy"
+      ? (tpPrice - entryPrice) / entryPrice
+      : (entryPrice - tpPrice) / entryPrice;
+    const activationThreshold = tpPct * 0.30;
+    if (currentPnlPct < activationThreshold) {
+      return { newSl: currentSl, updated: false };
+    }
   }
 
   const peakPnlPct = direction === "buy"
@@ -451,6 +462,7 @@ export async function manageOpenPositions(): Promise<void> {
         peakPrice: newPeak,
         direction,
         currentSl: trade.sl,
+        tpPrice: trade.tp,
       });
 
       let activeSl = trade.sl;

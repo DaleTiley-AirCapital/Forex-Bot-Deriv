@@ -17,8 +17,8 @@ export type InstrumentFamily = "boom" | "crash" | "volatility" | "other_syntheti
 export type StrategyFamily =
   | "trend_continuation"
   | "mean_reversion"
-  | "breakout_expansion"
-  | "spike_event"
+  | "spike_cluster_recovery"
+  | "swing_exhaustion"
   | "trendline_breakout";
 
 export interface RegimeClassification {
@@ -36,13 +36,13 @@ export function classifyInstrument(symbol: string): InstrumentFamily {
 }
 
 const STRATEGY_PERMISSION_MATRIX: Record<RegimeState, StrategyFamily[]> = {
-  trend_up: ["trend_continuation", "breakout_expansion", "trendline_breakout"],
-  trend_down: ["trend_continuation", "breakout_expansion", "trendline_breakout"],
-  mean_reversion: ["mean_reversion"],
-  ranging: ["mean_reversion", "spike_event", "trendline_breakout"],
-  compression: ["breakout_expansion", "trendline_breakout"],
-  breakout_expansion: ["breakout_expansion", "trend_continuation", "trendline_breakout"],
-  spike_zone: ["spike_event"],
+  trend_up: ["trend_continuation", "swing_exhaustion", "trendline_breakout"],
+  trend_down: ["trend_continuation", "swing_exhaustion", "trendline_breakout"],
+  mean_reversion: ["mean_reversion", "spike_cluster_recovery", "swing_exhaustion"],
+  ranging: ["mean_reversion", "spike_cluster_recovery", "trendline_breakout"],
+  compression: ["trendline_breakout", "spike_cluster_recovery"],
+  breakout_expansion: ["trend_continuation", "trendline_breakout", "swing_exhaustion"],
+  spike_zone: ["spike_cluster_recovery", "swing_exhaustion"],
   no_trade: [],
 };
 

@@ -53,11 +53,11 @@ export interface SignalCandidate {
 const FAMILY_CONFIG: Record<StrategyFamily, {
   minModelScore: number;
 }> = {
-  trend_continuation: { minModelScore: 0.58 },
-  mean_reversion: { minModelScore: 0.60 },
-  breakout_expansion: { minModelScore: 0.55 },
-  spike_event: { minModelScore: 0.62 },
-  trendline_breakout: { minModelScore: 0.55 },
+  trend_continuation: { minModelScore: 0.55 },
+  mean_reversion: { minModelScore: 0.55 },
+  spike_cluster_recovery: { minModelScore: 0.50 },
+  swing_exhaustion: { minModelScore: 0.50 },
+  trendline_breakout: { minModelScore: 0.52 },
 };
 
 function buildCandidate(
@@ -121,22 +121,46 @@ function buildCandidate(
 
 function trendContinuation(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
   const cfg = FAMILY_CONFIG.trend_continuation;
-
-  const inUptrend = features.emaSlope > 0.0003;
-  const inDowntrend = features.emaSlope < -0.0003;
-  const pulledBack = Math.abs(features.emaDist) < 0.008;
-  const rsiNeutral = features.rsi14 > 38 && features.rsi14 < 65;
-  const noExtreme = Math.abs(features.zScore) < 2.0;
+  const isBoom = features.symbol.startsWith("BOOM");
+  const isCrash = features.symbol.startsWith("CRASH");
+  const isVol = features.symbol.startsWith("R_");
 
   let direction: "buy" | "sell" | null = null;
   let reason = "";
 
-  if (inUptrend && pulledBack && rsiNeutral && noExtreme) {
-    direction = "buy";
-    reason = `Trend continuation pullback (slope=${features.emaSlope.toFixed(5)}, RSI=${features.rsi14.toFixed(1)}, regime=${regime.regime})`;
-  } else if (inDowntrend && pulledBack && rsiNeutral && noExtreme) {
-    direction = "sell";
-    reason = `Trend continuation pullback (slope=${features.emaSlope.toFixed(5)}, RSI=${features.rsi14.toFixed(1)}, regime=${regime.regime})`;
+  if (isCrash) {
+    const driftDown = features.emaSlope < -0.0002;
+    const notExhausted = features.rsi14 > 25 && features.rsi14 < 60;
+    const trendConfirmed = features.priceChange24hPct < -0.01;
+    const notOverextended = features.distFromRange30dLowPct > 0.02;
+
+    if (driftDown && notExhausted && trendConfirmed && notOverextended) {
+      direction = "sell";
+      reason = `Crash drift continuation: slope=${features.emaSlope.toFixed(5)}, 24h_change=${(features.priceChange24hPct*100).toFixed(2)}%, RSI=${features.rsi14.toFixed(1)}`;
+    }
+  } else if (isBoom) {
+    const driftUp = features.emaSlope > 0.0002;
+    const notExhausted = features.rsi14 > 40 && features.rsi14 < 75;
+    const trendConfirmed = features.priceChange24hPct > 0.01;
+    const notOverextended = features.distFromRange30dHighPct < -0.02;
+
+    if (driftUp && notExhausted && trendConfirmed && notOverextended) {
+      direction = "buy";
+      reason = `Boom drift continuation: slope=${features.emaSlope.toFixed(5)}, 24h_change=${(features.priceChange24hPct*100).toFixed(2)}%, RSI=${features.rsi14.toFixed(1)}`;
+    }
+  } else if (isVol) {
+    const strongUptrend = features.emaSlope > 0.0003 && features.priceChange24hPct > 0.005;
+    const strongDowntrend = features.emaSlope < -0.0003 && features.priceChange24hPct < -0.005;
+    const pulledBack = Math.abs(features.emaDist) < 0.01;
+    const rsiNeutral = features.rsi14 > 35 && features.rsi14 < 65;
+
+    if (strongUptrend && pulledBack && rsiNeutral) {
+      direction = "buy";
+      reason = `Vol trend continuation up: slope=${features.emaSlope.toFixed(5)}, pullback=${(features.emaDist*100).toFixed(3)}%`;
+    } else if (strongDowntrend && pulledBack && rsiNeutral) {
+      direction = "sell";
+      reason = `Vol trend continuation down: slope=${features.emaSlope.toFixed(5)}, pullback=${(features.emaDist*100).toFixed(3)}%`;
+    }
   }
 
   if (!direction) return null;
@@ -149,31 +173,48 @@ function trendContinuation(features: FeatureVector, regime: RegimeClassification
 
 function meanReversion(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
   const cfg = FAMILY_CONFIG.mean_reversion;
+  const isBoom = features.symbol.startsWith("BOOM");
+  const isCrash = features.symbol.startsWith("CRASH");
 
-  const oversold = features.rsi14 < 32 && features.zScore < -1.8;
-  const overbought = features.rsi14 > 68 && features.zScore > 1.8;
-  const multipleAdverse = Math.abs(features.consecutive) >= 3;
+  let direction: "buy" | "sell" | null = null;
+  let reason = "";
+
+  const nearRange30dLow = features.distFromRange30dLowPct < 0.03;
+  const nearRange30dHigh = features.distFromRange30dHighPct > -0.03;
+  const multiDayDecline = features.priceChange7dPct < -0.05;
+  const multiDayRally = features.priceChange7dPct > 0.05;
+
+  if (isCrash) {
+    if (nearRange30dLow && multiDayDecline && features.rsi14 < 35) {
+      direction = "buy";
+      reason = `Crash range low reversal: dist_from_30d_low=${(features.distFromRange30dLowPct*100).toFixed(2)}%, 7d_change=${(features.priceChange7dPct*100).toFixed(2)}%, RSI=${features.rsi14.toFixed(1)}`;
+    }
+  } else if (isBoom) {
+    if (nearRange30dHigh && multiDayRally && features.rsi14 > 65) {
+      direction = "sell";
+      reason = `Boom range high reversal: dist_from_30d_high=${(features.distFromRange30dHighPct*100).toFixed(2)}%, 7d_change=${(features.priceChange7dPct*100).toFixed(2)}%, RSI=${features.rsi14.toFixed(1)}`;
+    }
+  } else {
+    if (nearRange30dLow && multiDayDecline && features.zScore < -1.5) {
+      direction = "buy";
+      reason = `Range low mean reversion: dist_from_30d_low=${(features.distFromRange30dLowPct*100).toFixed(2)}%, 7d_change=${(features.priceChange7dPct*100).toFixed(2)}%, z=${features.zScore.toFixed(2)}`;
+    } else if (nearRange30dHigh && multiDayRally && features.zScore > 1.5) {
+      direction = "sell";
+      reason = `Range high mean reversion: dist_from_30d_high=${(features.distFromRange30dHighPct*100).toFixed(2)}%, 7d_change=${(features.priceChange7dPct*100).toFixed(2)}%, z=${features.zScore.toFixed(2)}`;
+    }
+  }
 
   const sweepSetup = features.swingBreached && features.swingReclaimed &&
     features.swingBreachCandles >= 0 && features.swingBreachCandles <= 3 &&
     features.candleBody < 0.35;
 
-  let direction: "buy" | "sell" | null = null;
-  let reason = "";
-
-  if (oversold && multipleAdverse) {
-    direction = "buy";
-    reason = `Exhaustion rebound: RSI=${features.rsi14.toFixed(1)}, z=${features.zScore.toFixed(2)}, ${Math.abs(features.consecutive)} consecutive down`;
-  } else if (overbought && multipleAdverse) {
-    direction = "sell";
-    reason = `Exhaustion rebound: RSI=${features.rsi14.toFixed(1)}, z=${features.zScore.toFixed(2)}, ${Math.abs(features.consecutive)} consecutive up`;
-  } else if (sweepSetup) {
+  if (!direction && sweepSetup) {
     if (features.swingBreachDirection === "above") {
       direction = "sell";
-      reason = `Liquidity sweep above swing high: breach ${features.swingBreachCandles} candles ago, body=${features.candleBody.toFixed(2)}`;
+      reason = `Liquidity sweep above swing high: breach ${features.swingBreachCandles} candles ago`;
     } else if (features.swingBreachDirection === "below") {
       direction = "buy";
-      reason = `Liquidity sweep below swing low: breach ${features.swingBreachCandles} candles ago, body=${features.candleBody.toFixed(2)}`;
+      reason = `Liquidity sweep below swing low: breach ${features.swingBreachCandles} candles ago`;
     }
   }
 
@@ -185,58 +226,92 @@ function meanReversion(features: FeatureVector, regime: RegimeClassification): S
   return buildCandidate(features, regime, "mean_reversion", direction, score, confidence, expectedValue, `[${regime.regime}] ${reason}`, "mean_reversion");
 }
 
-function breakoutExpansion(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
-  const cfg = FAMILY_CONFIG.breakout_expansion;
+function spikeClusterRecovery(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
+  const cfg = FAMILY_CONFIG.spike_cluster_recovery;
+  const isBoom = features.symbol.startsWith("BOOM");
+  const isCrash = features.symbol.startsWith("CRASH");
 
-  const squeeze = features.bbWidth < 0.006;
-  const atrExpanding = features.atrRank > 0.8;
-  const atUpperBand = features.bbPctB > 0.85;
-  const atLowerBand = features.bbPctB < 0.15;
+  if (!isBoom && !isCrash) return null;
 
-  const wasCompressed = features.bbWidth < 0.008;
-  const bbExpanding = features.bbWidthRoc > 0.10;
-  const atrAccelerating = features.atrAccel > 0.08;
-  const bodyExpanding = features.candleBody > 0.6;
+  const hasCluster4h = features.spikeCount4h >= 3;
+  const hasModerateCluster = features.spikeCount24h >= 5;
+
+  if (!hasCluster4h && !hasModerateCluster) return null;
+
+  let direction: "buy" | "sell";
+  let reason: string;
+
+  if (isCrash) {
+    direction = "buy";
+    reason = `Crash spike cluster exhaustion → BUY: ${features.spikeCount4h} spikes in 4h, ${features.spikeCount24h} in 24h, ${features.spikeCount7d} in 7d`;
+  } else {
+    direction = "sell";
+    reason = `Boom spike cluster exhaustion → SELL: ${features.spikeCount4h} spikes in 4h, ${features.spikeCount24h} in 24h, ${features.spikeCount7d} in 7d`;
+  }
+
+  const clusterDensity = Math.min(1, features.spikeCount4h / 10);
+  const hazardBoost = features.spikeHazardScore;
+  const rawScore = 0.5 + clusterDensity * 0.3 + hazardBoost * 0.2;
+  const score = Math.min(0.95, rawScore);
+  const confidence = Math.min(0.90, 0.4 + clusterDensity * 0.3 + hazardBoost * 0.2);
+  const expectedValue = Math.max(0.01, clusterDensity * 0.03);
+
+  if (score < cfg.minModelScore) return null;
+
+  return buildCandidate(features, regime, "spike_cluster_recovery", direction, score, confidence, expectedValue, `[${regime.regime}] ${reason}`, "spike_cluster_recovery");
+}
+
+function swingExhaustion(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
+  const cfg = FAMILY_CONFIG.swing_exhaustion;
+  const isBoom = features.symbol.startsWith("BOOM");
+  const isCrash = features.symbol.startsWith("CRASH");
+  const isVol = features.symbol.startsWith("R_");
 
   let direction: "buy" | "sell" | null = null;
   let reason = "";
 
-  if (squeeze && atrExpanding && atUpperBand) {
-    direction = "buy";
-    reason = `BB squeeze breakout up: width=${features.bbWidth.toFixed(4)}, %B=${features.bbPctB.toFixed(2)}, ATR rank=${features.atrRank.toFixed(2)}`;
-  } else if (squeeze && atrExpanding && atLowerBand) {
-    direction = "sell";
-    reason = `BB squeeze breakout down: width=${features.bbWidth.toFixed(4)}, %B=${features.bbPctB.toFixed(2)}, ATR rank=${features.atrRank.toFixed(2)}`;
-  } else if (wasCompressed && bbExpanding && atrAccelerating && bodyExpanding) {
-    direction = features.bbPctB > 0.5 ? "buy" : "sell";
-    reason = `Volatility expansion: bbWidthRoC=${features.bbWidthRoc.toFixed(3)}, atrAccel=${features.atrAccel.toFixed(3)}, body=${features.candleBody.toFixed(2)}`;
+  if (isCrash) {
+    const highSpikeCount7d = features.spikeCount7d >= 14;
+    const priceUp7d = features.priceChange7dPct > 0.08;
+    const nearRangeHigh = features.distFromRange30dHighPct > -0.05;
+
+    if (highSpikeCount7d && priceUp7d && nearRangeHigh) {
+      direction = "sell";
+      reason = `Crash topping exhaustion: ${features.spikeCount7d} spikes in 7d, price up ${(features.priceChange7dPct*100).toFixed(1)}%, near 30d high`;
+    }
+  } else if (isBoom) {
+    const highSpikeCount7d = features.spikeCount7d >= 14;
+    const priceDown7d = features.priceChange7dPct < -0.08;
+    const nearRangeLow = features.distFromRange30dLowPct < 0.05;
+
+    if (highSpikeCount7d && priceDown7d && nearRangeLow) {
+      direction = "buy";
+      reason = `Boom bottoming exhaustion: ${features.spikeCount7d} spikes in 7d, price down ${(features.priceChange7dPct*100).toFixed(1)}%, near 30d low`;
+    }
+  } else if (isVol) {
+    const bigRally = features.priceChange7dPct > 0.10 && features.distFromRange30dHighPct > -0.03;
+    const bigDecline = features.priceChange7dPct < -0.10 && features.distFromRange30dLowPct < 0.03;
+    const rsiExtreme = features.rsi14 > 72 || features.rsi14 < 28;
+
+    if (bigRally && rsiExtreme) {
+      direction = "sell";
+      reason = `Vol rally exhaustion: 7d_change=${(features.priceChange7dPct*100).toFixed(1)}%, RSI=${features.rsi14.toFixed(1)}, near 30d high`;
+    } else if (bigDecline && rsiExtreme) {
+      direction = "buy";
+      reason = `Vol decline exhaustion: 7d_change=${(features.priceChange7dPct*100).toFixed(1)}%, RSI=${features.rsi14.toFixed(1)}, near 30d low`;
+    }
   }
 
   if (!direction) return null;
 
-  const { score, confidence, expectedValue } = scoreFeaturesForFamily(features, "breakout_expansion");
+  const exhaustionStrength = Math.min(1, Math.abs(features.priceChange7dPct) / 0.20);
+  const score = Math.min(0.92, 0.55 + exhaustionStrength * 0.25 + (features.spikeCount7d >= 14 ? 0.12 : 0));
+  const confidence = Math.min(0.85, 0.45 + exhaustionStrength * 0.25);
+  const expectedValue = Math.max(0.01, exhaustionStrength * 0.025);
+
   if (score < cfg.minModelScore) return null;
 
-  return buildCandidate(features, regime, "breakout_expansion", direction, score, confidence, expectedValue, `[${regime.regime}] ${reason}`, "breakout_expansion");
-}
-
-function spikeEvent(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
-  const cfg = FAMILY_CONFIG.spike_event;
-
-  const hazardHigh = features.spikeHazardScore > 0.70;
-  const isBoom = features.symbol.startsWith("BOOM");
-  const isCrash = features.symbol.startsWith("CRASH");
-
-  if (!hazardHigh || (!isBoom && !isCrash)) return null;
-
-  const direction: "buy" | "sell" = isBoom ? "buy" : "sell";
-  const reason = `Spike hazard elevated: score=${features.spikeHazardScore.toFixed(2)}, ticks since last=${features.ticksSinceSpike}`;
-
-  const { score, confidence, expectedValue } = scoreFeaturesForFamily(features, "spike_event");
-  const boostedScore = Math.min(0.99, score * 0.4 + features.spikeHazardScore * 0.5);
-  if (boostedScore < cfg.minModelScore) return null;
-
-  return buildCandidate(features, regime, "spike_event", direction, boostedScore, features.spikeHazardScore, Math.max(expectedValue, 0.008), `[${regime.regime}] ${reason}`, "spike_capture");
+  return buildCandidate(features, regime, "swing_exhaustion", direction, score, confidence, expectedValue, `[${regime.regime}] ${reason}`, "swing_exhaustion");
 }
 
 function trendlineBreakout(features: FeatureVector, regime: RegimeClassification): SignalCandidate | null {
@@ -252,49 +327,37 @@ function trendlineBreakout(features: FeatureVector, regime: RegimeClassification
   const resSlope = features.trendlineResistanceSlope ?? 0;
   const supSlope = features.trendlineSupportSlope ?? 0;
 
-  const hasResistanceTrendline = resTouches >= 3 && resLevel > 0;
-  const hasSupportTrendline = supTouches >= 3 && supLevel > 0;
+  const hasResistanceTrendline = resTouches >= 2 && resLevel > 0;
+  const hasSupportTrendline = supTouches >= 2 && supLevel > 0;
 
   if (!hasResistanceTrendline && !hasSupportTrendline) return null;
 
-  const momentumConfirm = features.atrAccel > 0.02 && features.candleBody > 0.35;
-  const bbExpanding = features.bbWidth > 0.008;
+  const momentumConfirm = features.atrAccel > 0.01 && features.candleBody > 0.30;
 
   let direction: "buy" | "sell" | null = null;
   let reason = "";
 
   if (hasResistanceTrendline) {
     const breakDistPct = (price - resLevel) / price;
-    const breakAbove = breakDistPct > 0 && breakDistPct < atrNorm * 2 && momentumConfirm && features.emaSlope > 0;
-    const nearBreakAbove = !breakAbove &&
-      Math.abs(breakDistPct) < atrNorm * 0.5 && breakDistPct > -atrNorm * 0.3 &&
-      features.bbPctB > 0.85 && features.emaSlope > 0.0001 && bbExpanding;
+    const breakAbove = breakDistPct > 0 && breakDistPct < atrNorm * 2.5 && momentumConfirm && features.emaSlope > 0;
 
-    if (breakAbove || nearBreakAbove) {
+    if (breakAbove) {
       direction = "buy";
-      reason = `Trendline breakout up: price=${price.toFixed(2)}, trendlineRes=${resLevel.toFixed(2)}, slope=${resSlope.toFixed(6)}, touches=${resTouches}, breakPct=${(breakDistPct*100).toFixed(3)}%`;
+      reason = `Trendline breakout up: price=${price.toFixed(2)}, res=${resLevel.toFixed(2)}, touches=${resTouches}, slope=${resSlope.toFixed(6)}`;
     }
   }
 
   if (!direction && hasSupportTrendline) {
     const breakDistPct = (supLevel - price) / price;
-    const breakBelow = breakDistPct > 0 && breakDistPct < atrNorm * 2 && momentumConfirm && features.emaSlope < 0;
-    const nearBreakBelow = !breakBelow &&
-      Math.abs(breakDistPct) < atrNorm * 0.5 && breakDistPct > -atrNorm * 0.3 &&
-      features.bbPctB < 0.15 && features.emaSlope < -0.0001 && bbExpanding;
+    const breakBelow = breakDistPct > 0 && breakDistPct < atrNorm * 2.5 && momentumConfirm && features.emaSlope < 0;
 
-    if (breakBelow || nearBreakBelow) {
+    if (breakBelow) {
       direction = "sell";
-      reason = `Trendline breakout down: price=${price.toFixed(2)}, trendlineSup=${supLevel.toFixed(2)}, slope=${supSlope.toFixed(6)}, touches=${supTouches}, breakPct=${(breakDistPct*100).toFixed(3)}%`;
+      reason = `Trendline breakout down: price=${price.toFixed(2)}, sup=${supLevel.toFixed(2)}, touches=${supTouches}, slope=${supSlope.toFixed(6)}`;
     }
   }
 
   if (!direction) return null;
-
-  const vwapConfirm = features.vwap && features.vwap > 0
-    ? (direction === "buy" ? price > features.vwap : price < features.vwap)
-    : true;
-  if (!vwapConfirm) return null;
 
   const { score, confidence, expectedValue } = scoreFeaturesForFamily(features, "trendline_breakout");
   if (score < cfg.minModelScore) return null;
@@ -305,8 +368,8 @@ function trendlineBreakout(features: FeatureVector, regime: RegimeClassification
 const FAMILY_RUNNERS: Record<StrategyFamily, (f: FeatureVector, r: RegimeClassification) => SignalCandidate | null> = {
   trend_continuation: trendContinuation,
   mean_reversion: meanReversion,
-  breakout_expansion: breakoutExpansion,
-  spike_event: spikeEvent,
+  spike_cluster_recovery: spikeClusterRecovery,
+  swing_exhaustion: swingExhaustion,
   trendline_breakout: trendlineBreakout,
 };
 

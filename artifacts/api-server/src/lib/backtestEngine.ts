@@ -529,6 +529,57 @@ export function computeFeaturesFromCandles(
       }
       return { majorSwingHigh: swingHigh, majorSwingLow: swingLow };
     })(),
+    ...(() => {
+      const isBoomCrash = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+      const spikeThreshold = atr14 * 3;
+      let sc4h = 0, sc24h = 0, sc7d = 0;
+      if (isBoomCrash) {
+        const fourHoursCandles = 4 * 60;
+        const twentyFourHoursCandles = 24 * 60;
+        const sevenDaysCandles = 7 * 24 * 60;
+        for (let i = candles.length - 1; i >= 1; i--) {
+          const candlesBack = candles.length - 1 - i;
+          const move = Math.abs(candles[i].close - candles[i - 1].close) / candles[i - 1].close;
+          if (move > spikeThreshold) {
+            if (candlesBack <= fourHoursCandles) sc4h++;
+            if (candlesBack <= twentyFourHoursCandles) sc24h++;
+            if (candlesBack <= sevenDaysCandles) sc7d++;
+          }
+          if (candlesBack > sevenDaysCandles) break;
+        }
+      }
+
+      const pc24h = (() => {
+        const target = candles.length - 1 - 24 * 60;
+        if (target >= 0 && target < candles.length - 1) {
+          return (price - candles[target].close) / candles[target].close;
+        }
+        return 0;
+      })();
+
+      const pc7d = (() => {
+        const target = candles.length - 1 - 7 * 24 * 60;
+        if (target >= 0 && target < candles.length - 1) {
+          return (price - candles[target].close) / candles[target].close;
+        }
+        return 0;
+      })();
+
+      const range30dStart = candles.length - 1 - 30 * 24 * 60;
+      const range30d = candles.slice(Math.max(0, range30dStart));
+      const high30d = range30d.length >= 10 ? Math.max(...range30d.map(c => c.high)) : price;
+      const low30d = range30d.length >= 10 ? Math.min(...range30d.map(c => c.low)) : price;
+
+      return {
+        spikeCount4h: sc4h,
+        spikeCount24h: sc24h,
+        spikeCount7d: sc7d,
+        priceChange24hPct: pc24h,
+        priceChange7dPct: pc7d,
+        distFromRange30dHighPct: high30d > 0 ? (price - high30d) / high30d : 0,
+        distFromRange30dLowPct: low30d > 0 ? (price - low30d) / low30d : 0,
+      };
+    })(),
   };
 }
 
@@ -763,6 +814,7 @@ function simulateOnCandles(
           peakPrice: pos.peakPrice,
           direction: pos.direction,
           currentSl: pos.currentSl,
+          tpPrice: pos.tp,
         });
         if (trailResult.updated) {
           pos.currentSl = trailResult.newSl;
@@ -1050,7 +1102,7 @@ export async function runFullBacktest(config: BacktestConfig): Promise<BacktestR
     trades,
     config: {
       symbols,
-      strategies: strategies || ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event", "trendline_breakout"],
+      strategies: strategies || ["trend_continuation", "mean_reversion", "spike_cluster_recovery", "swing_exhaustion", "trendline_breakout"],
       initialCapital: config.initialCapital,
       mode: config.mode,
     },
@@ -1409,7 +1461,7 @@ export async function runSymbolBacktest(
     scoringWeights,
   });
 
-  const strategies = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event", "trendline_breakout"];
+  const strategies = ["trend_continuation", "mean_reversion", "spike_cluster_recovery", "swing_exhaustion", "trendline_breakout"];
   const profitableStrategies: SymbolBacktestResult["profitableStrategies"] = [];
 
   for (const stratName of strategies) {

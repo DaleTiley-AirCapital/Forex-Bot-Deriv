@@ -16,8 +16,9 @@ const api = (path: string) => `${BASE}api${path}`;
 const STRATEGY_LABELS: Record<string, string> = {
   trend_continuation: "Trend Continuation",
   mean_reversion: "Mean Reversion",
-  breakout_expansion: "Breakout / Expansion",
-  spike_event: "Spike / Event",
+  spike_cluster_recovery: "Spike Cluster Recovery",
+  swing_exhaustion: "Swing Exhaustion",
+  trendline_breakout: "Trendline Breakout",
   all_strategies: "All Strategies",
 };
 

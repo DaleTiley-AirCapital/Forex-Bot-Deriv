@@ -39,7 +39,7 @@ async function getCurrentSettings(): Promise<Record<string, string>> {
 }
 
 const MODE_PREFIXES = ["paper", "demo", "real"];
-const FAMILIES = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event", "trendline_breakout"];
+const FAMILIES = ["trend_continuation", "mean_reversion", "spike_cluster_recovery", "swing_exhaustion", "trendline_breakout"];
 const PER_MODE_KEYS = [
   "capital", "equity_pct_per_trade", "max_open_trades", "allocation_mode",
   "max_daily_loss_pct", "max_weekly_loss_pct", "max_drawdown_pct",
@@ -90,15 +90,15 @@ Each family is a distinct trading approach, activated only when its matching mar
 - **Regime**: mean_reversion or ranging
 - **Best for**: Boom/Crash indices that overshoot
 
-### 2.3 Breakout Expansion
-- **When**: BB squeeze (width < 0.012), ATR expanding, price at BB edge
-- **Regime**: compression or breakout_expansion
-- **Best for**: All instruments during consolidation → expansion transitions
+### 2.3 Spike Cluster Recovery
+- **When**: 3+ crash/boom spikes detected in prior 4h window (exhaustion cluster) OR 5+ in 24h
+- **Regime**: spike_zone, mean_reversion, ranging, compression
+- **Best for**: BOOM and CRASH indices — fires counter-trend after spike exhaustion
 
-### 2.4 Spike Event
-- **When**: Spike hazard score > 0.70 on Boom or Crash indices only
-- **Regime**: spike_zone or ranging
-- **Best for**: BOOM and CRASH indices exclusively
+### 2.4 Swing Exhaustion
+- **When**: 14+ spikes in 7 days with price up 8%+ (crash topping) or down 8%+ (boom bottoming), or multi-day 10%+ move near range extremes for volatility indices
+- **Regime**: trend_up, trend_down, mean_reversion, spike_zone, breakout_expansion
+- **Best for**: All instruments at multi-day exhaustion points
 
 ### 2.5 Trendline Breakout
 - **When**: BB width expanding (> 0.008), price breaking above/below dynamic trendline with ATR confirmation, VWAP/pivot confluence
@@ -132,8 +132,9 @@ TP is the PRIMARY exit. Trailing stop is SAFETY NET ONLY. No ATR-based TP/SL eve
 4. Safety cap: max loss = 10% of equity per position
 
 ### Trailing Stop — 30% Peak-Profit Drawdown (SAFETY NET ONLY)
-- Activates only when the trade is in profit
-- Tracks peak unrealised profit percentage
+- Activates ONLY after trade reaches 30% of TP target (e.g., if TP = 50%, trailing activates at +15%)
+- Before activation threshold, only fixed SL protects downside
+- Once active, tracks peak unrealised profit percentage
 - Triggers exit when profit drops 30% from peak (e.g., peak 10% → exit at 7%)
 - This is a SAFETY NET — TP is the primary exit
 
@@ -202,9 +203,9 @@ TP is the PRIMARY exit. Trailing stop is SAFETY NET ONLY. No ATR-based TP/SL eve
 | trend_up | Clear upward trend | trend_continuation |
 | trend_down | Clear downward trend | trend_continuation |
 | mean_reversion | Price overstretched | mean_reversion |
-| compression | Low volatility squeeze | breakout_expansion |
-| breakout_expansion | Volatility expanding | breakout_expansion |
-| spike_zone | Boom/Crash spike imminent | spike_event |
+| compression | Low volatility squeeze | trendline_breakout, spike_cluster_recovery |
+| breakout_expansion | Volatility expanding | trend_continuation, trendline_breakout, swing_exhaustion |
+| spike_zone | Boom/Crash spike cluster | spike_cluster_recovery, swing_exhaustion |
 | no_trade | Unclear signals | NONE — system waits |
 
 ## 9. AI Advisor Rules

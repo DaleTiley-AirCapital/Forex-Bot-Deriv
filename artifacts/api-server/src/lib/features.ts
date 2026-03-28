@@ -82,6 +82,13 @@ export interface FeatureVector {
   spikeMagnitude: SpikeMagnitudeStats | null;
   majorSwingHigh: number;
   majorSwingLow: number;
+  spikeCount4h: number;
+  spikeCount24h: number;
+  spikeCount7d: number;
+  priceChange24hPct: number;
+  priceChange7dPct: number;
+  distFromRange30dHighPct: number;
+  distFromRange30dLowPct: number;
 }
 
 function ema(values: number[], period: number): number[] {
@@ -594,38 +601,75 @@ export async function computeFeatures(symbol: string, lookback = STRUCTURAL_LOOK
   const rollingSkew = skewness(z20Closes);
 
   // Spike features
-  const recentSpikes = await db.select().from(spikeEventsTable)
-    .where(eq(spikeEventsTable.symbol, symbol))
-    .orderBy(desc(spikeEventsTable.eventTs))
-    .limit(10);
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const fourHoursAgo = nowEpoch - 4 * 3600;
+  const twentyFourHoursAgo = nowEpoch - 24 * 3600;
+  const sevenDaysAgo = nowEpoch - 7 * 86400;
+
+  const allRecentSpikes = await db.select().from(spikeEventsTable)
+    .where(and(eq(spikeEventsTable.symbol, symbol), gte(spikeEventsTable.eventTs, sevenDaysAgo)))
+    .orderBy(desc(spikeEventsTable.eventTs));
+
+  const spikeCount4h = allRecentSpikes.filter(s => s.eventTs >= fourHoursAgo).length;
+  const spikeCount24h = allRecentSpikes.filter(s => s.eventTs >= twentyFourHoursAgo).length;
+  const spikeCount7d = allRecentSpikes.length;
 
   let ticksSinceSpike = 9999;
   let runLengthSinceSpike = 500;
   let spikeHazardScore = 0;
 
-  if (recentSpikes.length > 0) {
-    const lastSpike = recentSpikes[0];
+  if (allRecentSpikes.length > 0) {
+    const lastSpike = allRecentSpikes[0];
     ticksSinceSpike = lastSpike.ticksSincePreviousSpike ?? 999;
-    runLengthSinceSpike = candles.length; // approximation
+    runLengthSinceSpike = candles.length;
 
-    // Compute mean interval between spikes
-    if (recentSpikes.length >= 3) {
-      const intervals = recentSpikes
+    if (allRecentSpikes.length >= 3) {
+      const intervals = allRecentSpikes
         .slice(0, 8)
         .map(s => s.ticksSincePreviousSpike ?? 0)
         .filter(i => i > 0);
       const meanInterval = mean(intervals);
       const stdInterval = stdDev(intervals);
-      // Hazard score: how many std devs past the mean interval have we gone?
       if (stdInterval > 0) {
         const z = (ticksSinceSpike - meanInterval) / stdInterval;
-        // Sigmoid to compress into 0-1
         spikeHazardScore = 1 / (1 + Math.exp(-z));
       } else {
         spikeHazardScore = ticksSinceSpike > meanInterval ? 0.7 : 0.3;
       }
     }
   }
+
+  const priceChange24hPct = (() => {
+    const target24hTs = last.openTs - 24 * 3600;
+    const idx24h = candles.findIndex(c => c.openTs >= target24hTs);
+    if (idx24h >= 0 && idx24h < candles.length - 1) {
+      return (price - candles[idx24h].close) / candles[idx24h].close;
+    }
+    return 0;
+  })();
+
+  const priceChange7dPct = (() => {
+    const target7dTs = last.openTs - 7 * 86400;
+    const idx7d = candles.findIndex(c => c.openTs >= target7dTs);
+    if (idx7d >= 0 && idx7d < candles.length - 1) {
+      return (price - candles[idx7d].close) / candles[idx7d].close;
+    }
+    return 0;
+  })();
+
+  const { distFromRange30dHighPct, distFromRange30dLowPct } = (() => {
+    const target30dTs = last.openTs - 30 * 86400;
+    const range30dCandles = candles.filter(c => c.openTs >= target30dTs);
+    if (range30dCandles.length < 10) {
+      return { distFromRange30dHighPct: 0, distFromRange30dLowPct: 0 };
+    }
+    const high30d = Math.max(...range30dCandles.map(c => c.high));
+    const low30d = Math.min(...range30dCandles.map(c => c.low));
+    return {
+      distFromRange30dHighPct: high30d > 0 ? (price - high30d) / high30d : 0,
+      distFromRange30dLowPct: low30d > 0 ? (price - low30d) / low30d : 0,
+    };
+  })();
 
   const regimeLabel = detectRegime(fastCloses, atr14, ema20Arr);
 
@@ -746,6 +790,13 @@ export async function computeFeatures(symbol: string, lookback = STRUCTURAL_LOOK
     spikeMagnitude,
     majorSwingHigh: majorSwings.majorSwingHigh,
     majorSwingLow: majorSwings.majorSwingLow,
+    spikeCount4h,
+    spikeCount24h,
+    spikeCount7d,
+    priceChange24hPct,
+    priceChange7dPct,
+    distFromRange30dHighPct,
+    distFromRange30dLowPct,
   };
 }
 

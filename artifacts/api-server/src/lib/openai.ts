@@ -135,7 +135,7 @@ TECHNICAL INDICATORS:
 - Z-Score: ${ctx.zScore.toFixed(3)}
 
 STRATEGY-SPECIFIC EVALUATION:
-${ctx.strategyFamily === "trend_continuation" ? "- Is the trend strong enough to justify a continuation entry?\n- Is pullback depth appropriate (not too deep/shallow)?\n- Does momentum support the trend?" : ""}${ctx.strategyFamily === "mean_reversion" ? "- Is the overstretch genuine (not a trend continuation)?\n- Are reversal signals present (rejection candles, volume)?\n- Is smart money sweep confirmed?" : ""}${ctx.strategyFamily === "breakout_expansion" ? "- Is compression sufficient for a meaningful breakout?\n- Is expansion confirmed (not a false breakout)?\n- Does volume/ATR support the move?" : ""}${ctx.strategyFamily === "spike_event" ? "- Is spike probability statistically elevated?\n- Is the position sizing appropriate for spike risk?\n- Is the hold duration reasonable for spike capture?" : ""}
+${ctx.strategyFamily === "trend_continuation" ? "- Is the trend strong enough to justify a continuation entry?\n- Is pullback depth appropriate (not too deep/shallow)?\n- Does momentum support the trend?" : ""}${ctx.strategyFamily === "mean_reversion" ? "- Is the overstretch genuine (not a trend continuation)?\n- Are reversal signals present (rejection candles, volume)?\n- Is smart money sweep confirmed?" : ""}${ctx.strategyFamily === "spike_cluster_recovery" ? "- Is the spike cluster dense enough (3+ in 4h)?\n- Is this a genuine exhaustion point?\n- Is counter-trend entry at a favorable price level?" : ""}${ctx.strategyFamily === "swing_exhaustion" ? "- Has the multi-day move been significant enough (>8% in 7d)?\n- Is the price near range extremes (30d high/low)?\n- Are reversal signals present?" : ""}
 
 REASON: ${ctx.reason}
 

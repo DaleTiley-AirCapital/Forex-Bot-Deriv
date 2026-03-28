@@ -12,17 +12,14 @@ import { getActiveModes, isAnyModeActive } from "./deriv.js";
 import type { TradingMode } from "./deriv.js";
 import type { AllocationDecision } from "./signalRouter.js";
 
-const DEFAULT_SYMBOLS = [
-  "BOOM1000", "CRASH1000", "BOOM900", "CRASH900",
-  "BOOM600", "CRASH600", "BOOM500", "CRASH500",
-  "BOOM300", "CRASH300",
-  "R_75", "R_100",
-];
+import { ACTIVE_TRADING_SYMBOLS } from "./deriv.js";
+
+const DEFAULT_SYMBOLS = ACTIVE_TRADING_SYMBOLS;
 const DEFAULT_SCAN_INTERVAL_MS = 30_000;
 const DEFAULT_STAGGER_SECONDS = 10;
 const POSITION_MGMT_INTERVAL_MS = 10_000;
 
-const STRATEGY_FAMILIES = ["trend_continuation", "mean_reversion", "breakout_expansion", "spike_event", "trendline_breakout"] as const;
+const STRATEGY_FAMILIES = ["trend_continuation", "mean_reversion", "spike_cluster_recovery", "swing_exhaustion", "trendline_breakout"] as const;
 
 let schedulerHandle: ReturnType<typeof setInterval> | null = null;
 let positionMgmtHandle: ReturnType<typeof setInterval> | null = null;
@@ -340,8 +337,9 @@ const WEEKLY_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const STRATEGIES_LIST = [
   "trend_continuation",
   "mean_reversion",
-  "breakout_expansion",
-  "spike_event",
+  "spike_cluster_recovery",
+  "swing_exhaustion",
+  "trendline_breakout",
 ] as const;
 const AI_LOCKABLE_KEYS = [
   "equity_pct_per_trade", "paper_equity_pct_per_trade", "demo_equity_pct_per_trade", "real_equity_pct_per_trade",

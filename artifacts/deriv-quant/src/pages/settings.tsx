@@ -361,8 +361,8 @@ const ALL_INSTRUMENTS = [
 const STRATEGY_FAMILIES = [
   { key: "trend_continuation", label: "Trend Continuation", desc: "Enters on pullbacks within established trends", subStrategies: ["Trend Pullback"] },
   { key: "mean_reversion", label: "Mean Reversion", desc: "Catches reversals after extreme moves or liquidity sweeps", subStrategies: ["Exhaustion Rebound", "Liquidity Sweep + Reversal"] },
-  { key: "breakout_expansion", label: "Breakout / Expansion", desc: "Trades breakouts and explosive volatility moves", subStrategies: ["Volatility Breakout", "Volatility Expansion Capture"] },
-  { key: "spike_event", label: "Spike / Event", desc: "Exploits Boom/Crash spike patterns deterministically", subStrategies: ["Spike Hazard Capture"] },
+  { key: "spike_cluster_recovery", label: "Spike Cluster Recovery", desc: "Counter-trend entries after 3+ spike clusters in 4h exhaustion window", subStrategies: ["Spike Cluster Counter-Trend"] },
+  { key: "swing_exhaustion", label: "Swing Exhaustion", desc: "Multi-day exhaustion entries at range extremes after 14+ spikes or 8%+ moves", subStrategies: ["Multi-Day Exhaustion Reversal"] },
   { key: "trendline_breakout", label: "Trendline Breakout", desc: "Breakouts from dynamic trendlines with VWAP/pivot confluence", subStrategies: ["Trendline Breakout"] },
 ];
 
@@ -400,7 +400,7 @@ function InstrumentsPicker({ enabledSymbols, onChange, aiSuggestion, onApplySugg
 
 function StrategyFamilySelector({ enabledStrategies, onChange, aiSuggestion, onApplySuggestion }: { enabledStrategies: string; onChange: (v: string) => void; aiSuggestion?: string; onApplySuggestion?: () => void }) {
   const parsed = enabledStrategies.split(",").filter(Boolean);
-  const OLD_TO_FAMILY: Record<string, string> = { "trend-pullback": "trend_continuation", "exhaustion-rebound": "mean_reversion", "liquidity-sweep": "mean_reversion", "volatility-breakout": "breakout_expansion", "volatility-expansion": "breakout_expansion", "spike-hazard": "spike_event" };
+  const OLD_TO_FAMILY: Record<string, string> = { "trend-pullback": "trend_continuation", "exhaustion-rebound": "mean_reversion", "liquidity-sweep": "mean_reversion", "volatility-breakout": "swing_exhaustion", "volatility-expansion": "swing_exhaustion", "spike-hazard": "spike_cluster_recovery", "breakout_expansion": "swing_exhaustion", "spike_event": "spike_cluster_recovery" };
   const migrated = new Set<string>();
   for (const p of parsed) { if (OLD_TO_FAMILY[p]) migrated.add(OLD_TO_FAMILY[p]); else migrated.add(p); }
   const enabled = migrated.size > 0 ? migrated : new Set(STRATEGY_FAMILIES.map(f => f.key));

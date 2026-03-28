@@ -77,7 +77,7 @@ router.post("/models/score", async (req, res): Promise<void> => {
       signalType: strategyName,
       confidence,
       expectedValue,
-      regimeCompatible: features.regimeLabel !== "volatile" || strategyName === "spike_event",
+      regimeCompatible: features.regimeLabel !== "volatile" || strategyName === "spike_cluster_recovery",
       suggestedDirection: score > 0.5 ? (isBoom ? "buy" : "sell") : (isBoom ? "sell" : "buy"),
       suggestedSl: features.atr14 > 0 ? -(features.atr14 * 1.5) : null,
       suggestedTp: features.atr14 > 0 ? features.atr14 * 3.0 : null,

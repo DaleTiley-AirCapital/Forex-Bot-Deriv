@@ -219,9 +219,9 @@ async function initDb(): Promise<void> {
   const alreadySetUp = setupCheckRow.length > 0 && setupCheckRow[0].value === "true";
 
   if (alreadySetUp) {
-    console.log("[DB] Setup already complete — preserving existing data. Skipping truncation.");
+    console.log("[DB] Setup already complete — preserving existing data.");
   } else {
-    console.log("[DB] First-run detected — truncating data tables for clean state...");
+    console.log("[DB] Initial setup not yet complete — clearing derived data only (preserving candles & API keys)...");
     await db.execute(sql`TRUNCATE TABLE backtest_trades CASCADE`);
     await db.execute(sql`TRUNCATE TABLE backtest_runs CASCADE`);
     await db.execute(sql`TRUNCATE TABLE trades CASCADE`);
@@ -229,22 +229,7 @@ async function initDb(): Promise<void> {
     await db.execute(sql`TRUNCATE TABLE features CASCADE`);
     await db.execute(sql`TRUNCATE TABLE model_runs CASCADE`);
     await db.execute(sql`TRUNCATE TABLE spike_events CASCADE`);
-    await db.execute(sql`TRUNCATE TABLE candles CASCADE`);
     await db.execute(sql`TRUNCATE TABLE ticks CASCADE`);
-
-    const apiKeyKeys = ["deriv_api_token", "deriv_api_token_demo", "deriv_api_token_real", "openai_api_key"];
-    const existingKeys = await db.select().from(platformStateTable);
-    const savedApiKeys: { key: string; value: string }[] = [];
-    for (const row of existingKeys) {
-      if (apiKeyKeys.includes(row.key) && row.value) {
-        savedApiKeys.push({ key: row.key, value: row.value });
-      }
-    }
-    await db.execute(sql`TRUNCATE TABLE platform_state CASCADE`);
-
-    for (const { key, value } of savedApiKeys) {
-      await db.insert(platformStateTable).values({ key, value }).onConflictDoNothing();
-    }
   }
 
   await db.execute(sql`

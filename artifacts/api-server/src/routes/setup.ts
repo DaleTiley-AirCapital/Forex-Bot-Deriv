@@ -349,7 +349,6 @@ async function runSetupInBackground(send: (data: Record<string, unknown>) => voi
         const coverageResult = await db
           .select({
             cnt: count(),
-            minTs: sql<number>`MIN(${candlesTable.openTs})`,
             maxTs: sql<number>`MAX(${candlesTable.openTs})`,
           })
           .from(candlesTable)

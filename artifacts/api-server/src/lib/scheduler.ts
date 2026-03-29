@@ -282,6 +282,7 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
           signal: candidate,
           allowed: false,
           capitalAmount: 0,
+          capitalAllocationPct: 0,
           rejectionReason: "Awaiting multi-window confirmation (not yet promoted)",
           aiVerdict: "skipped",
           aiReasoning: "Signal pending confirmation — AI check deferred",

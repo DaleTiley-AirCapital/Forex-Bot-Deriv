@@ -493,6 +493,7 @@ export function computeFeaturesFromCandles(
     bbUpper,
     bbLower,
     latestClose: price,
+    latestCandleCloseTs: last.closeTs * 1000,
     latestOpen: last.open,
     vwap: vwapCalc,
     pivotPoint: pp,

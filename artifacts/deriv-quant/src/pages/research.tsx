@@ -24,6 +24,7 @@ const STRATEGY_LABELS: Record<string, string> = {
 
 interface SymbolStatus {
   symbol: string;
+  tier: "active" | "data" | "research";
   count1m: number;
   count5m: number;
   totalCandles: number;
@@ -320,148 +321,181 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
     );
   }
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <span className="flex items-center gap-2">
-            <Database className="w-4 h-4" />
-            Data Status
-          </span>
+  const activeSymbols = data?.symbols.filter(s => s.tier === "active") ?? [];
+  const otherSymbols = data?.symbols.filter(s => s.tier !== "active") ?? [];
+
+  const renderSymbolCard = (sym: SymbolStatus, showBacktest: boolean) => {
+    const progress = sseProgress[sym.symbol];
+    const isRunning = runningSymbol === sym.symbol;
+    const isRerunning = rerunning === sym.symbol;
+    const isExpanded = expandedSymbol === sym.symbol;
+
+    return (
+      <div
+        key={sym.symbol}
+        className={cn(
+          "border rounded-lg p-3 transition-all",
+          sym.status === "healthy" ? "border-green-500/20 bg-green-500/5" :
+          sym.status === "stale" ? "border-amber-500/20 bg-amber-500/5" :
+          "border-red-500/20 bg-red-500/5"
+        )}
+      >
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {data?.totalStorage?.toLocaleString() ?? 0} total candles
-            </span>
-            <Button variant="outline" size="sm" onClick={handlePrune} disabled={pruning} className="text-xs h-7">
-              {pruning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
-              Prune Old
-            </Button>
-            <Button variant="outline" size="sm" onClick={fetchStatus} disabled={loading} className="text-xs h-7">
-              <RefreshCw className={cn("w-3 h-3 mr-1", loading && "animate-spin")} />
-              Refresh
-            </Button>
+            <StatusIcon status={sym.status} />
+            <span className="font-medium text-sm">{sym.symbol}</span>
+            {sym.tier === "data" && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-medium">STREAMING</span>
+            )}
+            {sym.tier === "research" && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 font-medium">RESEARCH</span>
+            )}
           </div>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {data?.symbols.map(sym => {
-            const progress = sseProgress[sym.symbol];
-            const isRunning = runningSymbol === sym.symbol;
-            const isRerunning = rerunning === sym.symbol;
-            const isExpanded = expandedSymbol === sym.symbol;
-
-            return (
-              <div
-                key={sym.symbol}
-                className={cn(
-                  "border rounded-lg p-3 transition-all",
-                  sym.status === "healthy" ? "border-green-500/20 bg-green-500/5" :
-                  sym.status === "stale" ? "border-amber-500/20 bg-amber-500/5" :
-                  "border-red-500/20 bg-red-500/5"
-                )}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <StatusIcon status={sym.status} />
-                    <span className="font-medium text-sm">{sym.symbol}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <StatusBadge status={sym.status} />
-                    <button
-                      onClick={() => setExpandedSymbol(isExpanded ? null : sym.symbol)}
-                      className="text-muted-foreground hover:text-foreground p-0.5"
-                    >
-                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-1 text-xs text-muted-foreground mb-2">
-                  <span>1m: {sym.count1m.toLocaleString()}</span>
-                  <span>5m: {sym.count5m.toLocaleString()}</span>
-                  {sym.oldestDate && <span>From: {new Date(sym.oldestDate).toLocaleDateString()}</span>}
-                  {sym.newestDate && <span>To: {new Date(sym.newestDate).toLocaleDateString()}</span>}
-                </div>
-
-                {sym.lastBacktestDate && (
-                  <p className="text-[10px] text-muted-foreground">
-                    Last backtest: {new Date(sym.lastBacktestDate).toLocaleDateString()} {new Date(sym.lastBacktestDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </p>
-                )}
-
-                {progress && progress.phase !== "complete" && (
-                  <div className={cn(
-                    "mt-2 px-2 py-1.5 rounded text-xs",
-                    progress.phase === "error" ? "bg-red-500/10 text-red-400" :
-                    progress.phase === "data_sufficient" ? "bg-emerald-500/10 text-emerald-400" :
-                    "bg-blue-500/10 text-blue-300"
-                  )}>
-                    {progress.message}
-                  </div>
-                )}
-
-                {progress?.phase === "backtest_complete" && progress.profitableStrategies && (
-                  <div className="mt-2 px-2 py-1.5 rounded text-xs bg-green-500/10 text-green-400">
-                    {progress.profitableStrategies.length} profitable strategies found
-                  </div>
-                )}
-
-                <AnimatePresence>
-                  {isExpanded && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="mt-3 pt-3 border-t border-border/30 space-y-2"
-                    >
-                      <div className="flex gap-2">
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() => handleDownloadSimulate(sym.symbol)}
-                          disabled={isRunning || !!runningSymbol}
-                          className="flex-1 text-xs h-7"
-                        >
-                          {isRunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Download className="w-3 h-3 mr-1" />}
-                          {isRunning ? "Running..." : "Download & Simulate"}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleRerunBacktest(sym.symbol)}
-                          disabled={isRerunning || sym.totalCandles === 0 || !!runningSymbol}
-                          className="flex-1 text-xs h-7"
-                        >
-                          {isRerunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}
-                          {isRerunning ? "Running..." : "Re-run Backtest"}
-                        </Button>
-                      </div>
-                      {isRunning && (
-                        <div className="space-y-1.5">
-                          <div className="w-full h-1.5 bg-muted/30 rounded-full overflow-hidden">
-                            <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: progress?.phase === "backtest_start" || progress?.phase === "backtest_complete" ? "80%" : progress?.phase === "download_complete" ? "60%" : "30%", transition: "width 0.5s ease" }} />
-                          </div>
-                          <p className="text-[10px] text-blue-300">{progress?.message || "Starting..."}</p>
-                        </div>
-                      )}
-                      {isRerunning && (
-                        <div className="space-y-1.5">
-                          <div className="w-full h-1.5 bg-muted/30 rounded-full overflow-hidden">
-                            <div className="h-full bg-amber-500 rounded-full animate-[progress-indeterminate_1.5s_ease-in-out_infinite]" style={{ width: "40%" }} />
-                          </div>
-                          <p className="text-[10px] text-amber-300">Running backtest simulation...</p>
-                        </div>
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            );
-          })}
+          <div className="flex items-center gap-1.5">
+            <StatusBadge status={sym.status} />
+            <button
+              onClick={() => setExpandedSymbol(isExpanded ? null : sym.symbol)}
+              className="text-muted-foreground hover:text-foreground p-0.5"
+            >
+              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          </div>
         </div>
-      </CardContent>
-    </Card>
+
+        <div className="grid grid-cols-2 gap-1 text-xs text-muted-foreground mb-2">
+          <span>1m: {sym.count1m.toLocaleString()}</span>
+          <span>5m: {sym.count5m.toLocaleString()}</span>
+          {sym.oldestDate && <span>From: {new Date(sym.oldestDate).toLocaleDateString()}</span>}
+          {sym.newestDate && <span>To: {new Date(sym.newestDate).toLocaleDateString()}</span>}
+        </div>
+
+        {sym.lastBacktestDate && (
+          <p className="text-[10px] text-muted-foreground">
+            Last backtest: {new Date(sym.lastBacktestDate).toLocaleDateString()} {new Date(sym.lastBacktestDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </p>
+        )}
+
+        {progress && progress.phase !== "complete" && (
+          <div className={cn(
+            "mt-2 px-2 py-1.5 rounded text-xs",
+            progress.phase === "error" ? "bg-red-500/10 text-red-400" :
+            progress.phase === "data_sufficient" ? "bg-emerald-500/10 text-emerald-400" :
+            "bg-blue-500/10 text-blue-300"
+          )}>
+            {progress.message}
+          </div>
+        )}
+
+        {progress?.phase === "backtest_complete" && progress.profitableStrategies && (
+          <div className="mt-2 px-2 py-1.5 rounded text-xs bg-green-500/10 text-green-400">
+            {progress.profitableStrategies.length} profitable strategies found
+          </div>
+        )}
+
+        <AnimatePresence>
+          {isExpanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mt-3 pt-3 border-t border-border/30 space-y-2"
+            >
+              <div className="flex gap-2">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => handleDownloadSimulate(sym.symbol)}
+                  disabled={isRunning || !!runningSymbol}
+                  className="flex-1 text-xs h-7"
+                >
+                  {isRunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Download className="w-3 h-3 mr-1" />}
+                  {isRunning ? "Running..." : showBacktest ? "Download & Simulate" : "Download Data"}
+                </Button>
+                {showBacktest && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleRerunBacktest(sym.symbol)}
+                    disabled={isRerunning || sym.totalCandles === 0 || !!runningSymbol}
+                    className="flex-1 text-xs h-7"
+                  >
+                    {isRerunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}
+                    {isRerunning ? "Running..." : "Re-run Backtest"}
+                  </Button>
+                )}
+              </div>
+              {isRunning && (
+                <div className="space-y-1.5">
+                  <div className="w-full h-1.5 bg-muted/30 rounded-full overflow-hidden">
+                    <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: progress?.phase === "backtest_start" || progress?.phase === "backtest_complete" ? "80%" : progress?.phase === "download_complete" ? "60%" : "30%", transition: "width 0.5s ease" }} />
+                  </div>
+                  <p className="text-[10px] text-blue-300">{progress?.message || "Starting..."}</p>
+                </div>
+              )}
+              {isRerunning && (
+                <div className="space-y-1.5">
+                  <div className="w-full h-1.5 bg-muted/30 rounded-full overflow-hidden">
+                    <div className="h-full bg-amber-500 rounded-full animate-[progress-indeterminate_1.5s_ease-in-out_infinite]" style={{ width: "40%" }} />
+                  </div>
+                  <p className="text-[10px] text-amber-300">Running backtest simulation...</p>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-green-400" />
+              Active Trading Symbols
+              <span className="text-xs font-normal text-muted-foreground">({activeSymbols.length})</span>
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {data?.totalStorage?.toLocaleString() ?? 0} total candles
+              </span>
+              <Button variant="outline" size="sm" onClick={handlePrune} disabled={pruning} className="text-xs h-7">
+                {pruning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                Prune Old
+              </Button>
+              <Button variant="outline" size="sm" onClick={fetchStatus} disabled={loading} className="text-xs h-7">
+                <RefreshCw className={cn("w-3 h-3 mr-1", loading && "animate-spin")} />
+                Refresh
+              </Button>
+            </div>
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">Scanned for signals and traded. Download data and run backtests.</p>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {activeSymbols.map(sym => renderSymbolCard(sym, true))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-violet-400" />
+            Research & Data Collection
+            <span className="text-xs font-normal text-muted-foreground">({otherSymbols.length})</span>
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">Data collection and research symbols. Download data manually for analysis.</p>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {otherSymbols.map(sym => renderSymbolCard(sym, false))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

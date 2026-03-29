@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, and, count, min, max, desc, lt, asc, gte, lte, sql } from "drizzle-orm";
 import { db, candlesTable, backtestRunsTable, backtestTradesTable, platformStateTable } from "@workspace/db";
-import { getDerivClientWithDbToken, ACTIVE_TRADING_SYMBOLS } from "../lib/deriv.js";
+import { getDerivClientWithDbToken, ACTIVE_TRADING_SYMBOLS, V1_DEFAULT_SYMBOLS, RESEARCH_ONLY_SYMBOLS, ALL_SYMBOLS } from "../lib/deriv.js";
 import { getApiSymbol } from "../lib/symbolValidator.js";
 import { runSymbolBacktest } from "../lib/backtestEngine.js";
 import { isOpenAIConfigured } from "../lib/openai.js";
@@ -50,61 +50,65 @@ export async function pruneOldCandles(): Promise<number> {
   return deletedCount;
 }
 
+async function getSymbolStatus(symbol: string) {
+  const [r1m] = await db.select({ n: count() }).from(candlesTable)
+    .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m")));
+  const [r5m] = await db.select({ n: count() }).from(candlesTable)
+    .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "5m")));
+
+  const [oldest1m] = await db.select({ ts: min(candlesTable.openTs) }).from(candlesTable)
+    .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m")));
+  const [newest1m] = await db.select({ ts: max(candlesTable.openTs) }).from(candlesTable)
+    .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m")));
+
+  const [latestBt] = await db.select({
+    createdAt: backtestRunsTable.createdAt,
+  }).from(backtestRunsTable)
+    .where(eq(backtestRunsTable.symbol, symbol))
+    .orderBy(desc(backtestRunsTable.createdAt))
+    .limit(1);
+
+  const count1m = r1m?.n ?? 0;
+  const count5m = r5m?.n ?? 0;
+  const totalCandles = count1m + count5m;
+  const oldestDate = oldest1m?.ts ? new Date((oldest1m.ts as number) * 1000).toISOString() : null;
+  const newestDate = newest1m?.ts ? new Date((newest1m.ts as number) * 1000).toISOString() : null;
+  const lastBacktestDate = latestBt?.createdAt?.toISOString() ?? null;
+
+  let status: "healthy" | "stale" | "no_data" = "no_data";
+  if (totalCandles > 0 && lastBacktestDate) {
+    const daysSinceBacktest = (Date.now() - new Date(lastBacktestDate).getTime()) / (1000 * 3600 * 24);
+    status = daysSinceBacktest <= 31 ? "healthy" : "stale";
+  } else if (totalCandles > 0) {
+    status = "stale";
+  }
+
+  const tier: "active" | "data" | "research" =
+    ACTIVE_TRADING_SYMBOLS.includes(symbol) ? "active" :
+    V1_DEFAULT_SYMBOLS.includes(symbol) ? "data" : "research";
+
+  return {
+    symbol,
+    tier,
+    count1m,
+    count5m,
+    totalCandles,
+    oldestDate,
+    newestDate,
+    lastBacktestDate,
+    status,
+  };
+}
+
 router.get("/research/data-status", async (_req, res): Promise<void> => {
   try {
-    const symbolStatuses = await Promise.all(
-      ACTIVE_TRADING_SYMBOLS.map(async (symbol) => {
-        const [r1m] = await db.select({ n: count() }).from(candlesTable)
-          .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m")));
-        const [r5m] = await db.select({ n: count() }).from(candlesTable)
-          .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "5m")));
-
-        const [oldest1m] = await db.select({ ts: min(candlesTable.openTs) }).from(candlesTable)
-          .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m")));
-        const [newest1m] = await db.select({ ts: max(candlesTable.openTs) }).from(candlesTable)
-          .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m")));
-
-        const [latestBt] = await db.select({
-          createdAt: backtestRunsTable.createdAt,
-        }).from(backtestRunsTable)
-          .where(eq(backtestRunsTable.symbol, symbol))
-          .orderBy(desc(backtestRunsTable.createdAt))
-          .limit(1);
-
-        const count1m = r1m?.n ?? 0;
-        const count5m = r5m?.n ?? 0;
-        const totalCandles = count1m + count5m;
-        const oldestDate = oldest1m?.ts ? new Date((oldest1m.ts as number) * 1000).toISOString() : null;
-        const newestDate = newest1m?.ts ? new Date((newest1m.ts as number) * 1000).toISOString() : null;
-        const lastBacktestDate = latestBt?.createdAt?.toISOString() ?? null;
-
-        let status: "healthy" | "stale" | "no_data" = "no_data";
-        if (totalCandles > 0 && lastBacktestDate) {
-          const daysSinceBacktest = (Date.now() - new Date(lastBacktestDate).getTime()) / (1000 * 3600 * 24);
-          status = daysSinceBacktest <= 31 ? "healthy" : "stale";
-        } else if (totalCandles > 0) {
-          status = "stale";
-        }
-
-        return {
-          symbol,
-          count1m,
-          count5m,
-          totalCandles,
-          oldestDate,
-          newestDate,
-          lastBacktestDate,
-          status,
-        };
-      })
-    );
-
+    const symbolStatuses = await Promise.all(ALL_SYMBOLS.map(getSymbolStatus));
     const totalStorage = symbolStatuses.reduce((s, r) => s + r.totalCandles, 0);
 
     res.json({
       symbols: symbolStatuses,
       totalStorage,
-      symbolCount: ACTIVE_TRADING_SYMBOLS.length,
+      symbolCount: ALL_SYMBOLS.length,
     });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
@@ -120,7 +124,7 @@ router.post("/research/download-simulate", async (req, res): Promise<void> => {
   const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
   const { symbol } = req.body ?? {};
 
-  if (!symbol || !ACTIVE_TRADING_SYMBOLS.includes(symbol)) {
+  if (!symbol || !ALL_SYMBOLS.includes(symbol)) {
     send({ phase: "error", message: `Invalid symbol: ${symbol}` });
     res.end();
     return;
@@ -347,7 +351,7 @@ router.post("/research/download-simulate", async (req, res): Promise<void> => {
 router.post("/research/rerun-backtest", async (req, res): Promise<void> => {
   const { symbol } = req.body ?? {};
 
-  if (!symbol || !ACTIVE_TRADING_SYMBOLS.includes(symbol)) {
+  if (!symbol || !ALL_SYMBOLS.includes(symbol)) {
     res.status(400).json({ error: `Invalid symbol: ${symbol}` });
     return;
   }

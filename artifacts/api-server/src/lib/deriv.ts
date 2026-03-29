@@ -18,6 +18,16 @@ export const ACTIVE_TRADING_SYMBOLS = [
   "R_75", "R_100",
 ];
 
+export const RESEARCH_ONLY_SYMBOLS = [
+  "R_10", "R_25", "R_50",
+  "RDBULL", "RDBEAR",
+  "JD10", "JD25", "JD50", "JD75", "JD100",
+  "stpRNG", "stpRNG2", "stpRNG3", "stpRNG5",
+  "RB100", "RB200",
+];
+
+export const ALL_SYMBOLS = [...V1_DEFAULT_SYMBOLS, ...RESEARCH_ONLY_SYMBOLS];
+
 export type TradingMode = "paper" | "demo" | "real";
 
 export interface BackfillSymbolProgress {

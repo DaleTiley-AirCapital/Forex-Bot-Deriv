@@ -42,6 +42,22 @@ const SYMBOL_ALIASES: Record<string, string[]> = {
   "CRASH300": ["CRASH300", "CRASH300N", "1HZ300V"],
   "R_75": ["R_75", "1HZ75V"],
   "R_100": ["R_100", "1HZ100V"],
+  "R_10": ["R_10", "1HZ10V"],
+  "R_25": ["R_25", "1HZ25V"],
+  "R_50": ["R_50", "1HZ50V"],
+  "RDBULL": ["RDBULL"],
+  "RDBEAR": ["RDBEAR"],
+  "JD10": ["JD10"],
+  "JD25": ["JD25"],
+  "JD50": ["JD50"],
+  "JD75": ["JD75"],
+  "JD100": ["JD100"],
+  "stpRNG": ["stpRNG"],
+  "stpRNG2": ["stpRNG2"],
+  "stpRNG3": ["stpRNG3"],
+  "stpRNG5": ["stpRNG5"],
+  "RB100": ["RB100"],
+  "RB200": ["RB200"],
 };
 
 const symbolHealthStore: Map<string, {

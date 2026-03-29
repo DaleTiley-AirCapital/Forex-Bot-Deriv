@@ -55,10 +55,10 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 -   Recommended deployment via Railway, using `railway.toml` and a multi-stage `Dockerfile`.
 -   Legacy Docker Compose deployments are supported for Docker and Synology NAS environments.
 
-**Instrument Catalog (29 total, 12 data-download, 4 active-trading):**
-- Active Trading (4): CRASH300, BOOM300, R_75, R_100
-- Data Download (12): BOOM1000, CRASH1000, BOOM900, CRASH900, BOOM600, CRASH600, BOOM500, CRASH500, BOOM300, CRASH300, R_75, R_100
-- Future catalog: R_10, R_25, R_50, RDBULL, RDBEAR, JD10-JD100, stpRNG, STP2-5, RDBR100, RDBR200
+**Instrument Catalog (28 total, 3 tiers):**
+- Active Trading (4): CRASH300, BOOM300, R_75, R_100 — scanned for signals, traded
+- Data Streaming (12): BOOM1000, CRASH1000, BOOM900, CRASH900, BOOM600, CRASH600, BOOM500, CRASH500, BOOM300, CRASH300, R_75, R_100 — auto-streamed on startup
+- Research Only (16): R_10, R_25, R_50, RDBULL, RDBEAR, JD10, JD25, JD50, JD75, JD100, stpRNG, stpRNG2, stpRNG3, stpRNG5, RB100, RB200 — manual download only, no streaming, no auto-backfill
 
 **API Keys:** deriv_api_token_demo, deriv_api_token_real, openai_api_key (legacy single deriv_api_token removed)
 
@@ -76,7 +76,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 
 **Data Backfill:** On startup, auto-backfills 12 months of 1m and 5m candle history for all 12 symbols via paginated Deriv API calls (5,000 candles per page). Uses `onConflictDoNothing` so re-runs fill gaps without duplicating. Partial success model: proceeds if ≥8/12 symbols succeed; failed symbols shown with "Re-download from Research > Data Status". Data older than 12 months is automatically pruned.
 
-**Research Page:** Overhauled with Data Status section (per-symbol health cards), Download & Simulate (SSE per-symbol), Re-run Backtest, grouped backtest results by symbol (only profitable strategies), and AI Chat per backtest. Routes in `artifacts/api-server/src/routes/research.ts`. Backtests now run 1 pass per symbol with all 5 strategies, storing strategyBreakdown in metricsJson.
+**Research Page:** Restructured into two sections: Active Trading Symbols (4) at top with Download & Simulate + Re-run Backtest, and Research & Data Collection below (24 symbols) with Download Data only. Data collection symbols show STREAMING badge, research-only symbols show RESEARCH badge. All 28 symbols available for manual data download. Routes in `artifacts/api-server/src/routes/research.ts`. Backtests now run 1 pass per symbol with all 5 strategies, storing strategyBreakdown in metricsJson.
 
 **New FeatureVector Fields (V2):** `spikeCount4h`, `spikeCount24h`, `spikeCount7d` (rolling spike cluster counts), `priceChange24hPct`, `priceChange7dPct` (multi-day momentum), `distFromRange30dHighPct`, `distFromRange30dLowPct` (range position). Computed in both live features.ts (DB query) and backtestEngine.ts (candle approximation).
 

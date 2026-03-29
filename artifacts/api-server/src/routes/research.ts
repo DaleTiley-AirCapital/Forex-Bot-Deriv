@@ -608,17 +608,17 @@ router.post("/research/enrich-timeframes", async (req, res): Promise<void> => {
 
       if (oneMinCandles.length === 0) continue;
 
-      const aggregated: { openTs: Date; closeTs: Date; open: number; high: number; low: number; close: number; tickCount: number }[] = [];
-      let bucketStart = Math.floor(new Date(oneMinCandles[0].openTs).getTime() / 1000 / tfSeconds) * tfSeconds;
+      const aggregated: { openTs: number; closeTs: number; open: number; high: number; low: number; close: number; tickCount: number }[] = [];
+      let bucketStart = Math.floor(oneMinCandles[0].openTs / tfSeconds) * tfSeconds;
       let open = 0, high = -Infinity, low = Infinity, close = 0, ticks = 0, bucketHasData = false;
 
       for (const c of oneMinCandles) {
-        const cEpoch = new Date(c.openTs).getTime() / 1000;
+        const cEpoch = c.openTs;
         while (cEpoch >= bucketStart + tfSeconds) {
           if (bucketHasData) {
             aggregated.push({
-              openTs: new Date(bucketStart * 1000),
-              closeTs: new Date((bucketStart + tfSeconds) * 1000),
+              openTs: bucketStart,
+              closeTs: bucketStart + tfSeconds,
               open, high, low, close, tickCount: ticks,
             });
           }
@@ -633,8 +633,8 @@ router.post("/research/enrich-timeframes", async (req, res): Promise<void> => {
       }
       if (bucketHasData) {
         aggregated.push({
-          openTs: new Date(bucketStart * 1000),
-          closeTs: new Date((bucketStart + tfSeconds) * 1000),
+          openTs: bucketStart,
+          closeTs: bucketStart + tfSeconds,
           open, high, low, close, tickCount: ticks,
         });
       }

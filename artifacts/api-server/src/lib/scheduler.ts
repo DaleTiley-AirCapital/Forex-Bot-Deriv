@@ -145,7 +145,6 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
   invalidateUnconfirmedPending(symbol, confirmedKeysThisWindow);
 
   const aiEnabled = stateMap["ai_verification_enabled"] === "true";
-  const allCandidates = candidates.map(c => ({ candidate: c, atr: features.atr14 }));
 
   const activeModes = getActiveModes(stateMap);
 
@@ -161,31 +160,19 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
     }
 
     const effectiveMode = isIntelOnly ? "paper" : mode;
-
-    const candidatesForRouting = promotedCandidates.length > 0
-      ? promotedCandidates.map(c => c.candidate)
-      : [];
-
-    const allForLogging = allCandidates.map(c => c.candidate);
-    const logDecisions = await routeSignals(allForLogging, effectiveMode);
     const logMode = isIntelOnly ? undefined : mode;
 
-    const promotedSet = new Set(candidatesForRouting.map(c => `${c.symbol}|${c.strategyName}|${c.direction}`));
+    const promotedCandidateSignals = promotedCandidates.map(c => c.candidate);
+    const promotedSet = new Set(promotedCandidateSignals.map(c => `${c.symbol}|${c.strategyName}|${c.direction}`));
 
-    const finalDecisions: AllocationDecision[] = [];
+    const execDecisions = promotedCandidateSignals.length > 0
+      ? await routeSignals(promotedCandidateSignals, effectiveMode)
+      : [];
 
-    for (const decision of logDecisions) {
-      const isPromoted = promotedSet.has(`${decision.signal.symbol}|${decision.signal.strategyName}|${decision.signal.direction}`);
+    for (const decision of execDecisions) {
       const compositeScore = decision.signal.compositeScore ?? 0;
 
-      if (!isPromoted) {
-        decision.allowed = false;
-        if (!decision.rejectionReason) {
-          decision.rejectionReason = "Awaiting multi-window confirmation (not yet promoted)";
-        }
-        decision.aiVerdict = "skipped";
-        decision.aiReasoning = "Signal pending confirmation — AI check deferred";
-      } else if (!decision.allowed) {
+      if (!decision.allowed) {
         decision.aiVerdict = "skipped";
         decision.aiReasoning = `AI check skipped — signal blocked by system: ${decision.rejectionReason || "unknown"}`;
       } else if (aiEnabled && compositeScore >= 75) {
@@ -267,28 +254,55 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
           decision.rejectionReason = "No execution mode active — intelligence only";
         }
       }
+    }
 
-      const sig = decision.signal;
-      const composite = sig.compositeScore ?? 0;
-      const modeTag = isIntelOnly ? "intel" : mode;
-      const aiTag = decision.aiVerdict ? ` | ai=${decision.aiVerdict}` : "";
-      const allocTag = decision.allowed ? ` | alloc=${((decision.capitalAmount ?? 0)).toFixed(2)}` : "";
-      const rejectTag = !decision.allowed && decision.rejectionReason ? ` | reject=${decision.rejectionReason}` : "";
-      const confirmTag = isPromoted ? " | CONFIRMED" : "";
-      console.log(`[Scan] ${sig.symbol} | ${modeTag} | family=${sig.strategyFamily || sig.strategyName} | dir=${sig.direction} | score=${sig.score.toFixed(3)} | EV=${sig.expectedValue.toFixed(4)} | composite=${composite}${aiTag}${allocTag}${rejectTag}${confirmTag} | ${decision.allowed ? "EXECUTE" : "BLOCKED"}`);
+    const allDecisionsForLog: AllocationDecision[] = [];
 
-      finalDecisions.push(decision);
+    for (const candidate of candidates) {
+      const candidateKey = `${candidate.symbol}|${candidate.strategyName}|${candidate.direction}`;
+      const isPromoted = promotedSet.has(candidateKey);
+
+      const execMatch = execDecisions.find(d =>
+        d.signal.symbol === candidate.symbol &&
+        d.signal.strategyName === candidate.strategyName &&
+        d.signal.direction === candidate.direction
+      );
+
+      if (isPromoted && execMatch) {
+        const sig = execMatch.signal;
+        const composite = sig.compositeScore ?? 0;
+        const modeTag = isIntelOnly ? "intel" : mode;
+        const aiTag = execMatch.aiVerdict ? ` | ai=${execMatch.aiVerdict}` : "";
+        const allocTag = execMatch.allowed ? ` | alloc=${((execMatch.capitalAmount ?? 0)).toFixed(2)}` : "";
+        const rejectTag = !execMatch.allowed && execMatch.rejectionReason ? ` | reject=${execMatch.rejectionReason}` : "";
+        console.log(`[Scan] ${sig.symbol} | ${modeTag} | family=${sig.strategyFamily || sig.strategyName} | dir=${sig.direction} | score=${sig.score.toFixed(3)} | EV=${sig.expectedValue.toFixed(4)} | composite=${composite}${aiTag}${allocTag}${rejectTag} | CONFIRMED | ${execMatch.allowed ? "EXECUTE" : "BLOCKED"}`);
+        allDecisionsForLog.push(execMatch);
+      } else {
+        const logDecision: AllocationDecision = {
+          signal: candidate,
+          allowed: false,
+          capitalAmount: 0,
+          rejectionReason: "Awaiting multi-window confirmation (not yet promoted)",
+          aiVerdict: "skipped",
+          aiReasoning: "Signal pending confirmation — AI check deferred",
+        };
+        const sig = candidate;
+        const composite = sig.compositeScore ?? 0;
+        const modeTag = isIntelOnly ? "intel" : mode;
+        console.log(`[Scan] ${sig.symbol} | ${modeTag} | family=${sig.strategyFamily || sig.strategyName} | dir=${sig.direction} | score=${sig.score.toFixed(3)} | EV=${sig.expectedValue.toFixed(4)} | composite=${composite} | reject=awaiting_confirmation | BLOCKED`);
+        allDecisionsForLog.push(logDecision);
+      }
     }
 
     try {
-      await logSignalDecisions(finalDecisions, logMode);
-      totalDecisionsLogged += finalDecisions.length;
+      await logSignalDecisions(allDecisionsForLog, logMode);
+      totalDecisionsLogged += allDecisionsForLog.length;
     } catch (err) {
-      console.error(`[Scheduler] Failed to log ${finalDecisions.length} signal decisions:`, err instanceof Error ? err.message : err);
+      console.error(`[Scheduler] Failed to log ${allDecisionsForLog.length} signal decisions:`, err instanceof Error ? err.message : err);
     }
 
     if (!isIntelOnly && promotedCandidates.length > 0) {
-      const allowedExec = finalDecisions.filter(d => d.allowed && promotedSet.has(`${d.signal.symbol}|${d.signal.strategyName}|${d.signal.direction}`));
+      const allowedExec = execDecisions.filter(d => d.allowed);
       for (const decision of allowedExec) {
         const matchingCandidate = promotedCandidates.find(c => c.candidate.symbol === decision.signal.symbol && c.candidate.strategyName === decision.signal.strategyName);
         const atr = matchingCandidate?.atr ?? 0.01;

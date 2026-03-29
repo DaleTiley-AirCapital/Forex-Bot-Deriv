@@ -91,7 +91,7 @@ export async function getPortfolioContext(mode: TradingMode): Promise<PortfolioC
   const modeMaxTrades = parseInt(
     stateMap[`${prefix}_max_open_trades`] ||
     stateMap["max_open_trades"] ||
-    (mode === "paper" ? "4" : "3")
+    "6"
   );
 
   const modeMaxDailyLoss = parseFloat(

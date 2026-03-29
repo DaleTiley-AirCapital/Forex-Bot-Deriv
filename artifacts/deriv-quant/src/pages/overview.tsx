@@ -277,17 +277,13 @@ export default function Overview() {
                       <div className="flex items-center justify-between">
                         <span className="text-muted-foreground">Capital Deployed</span>
                         <span className="font-mono tabular-nums text-foreground">
-                          {formatPercent(
-                            portfolio.totalCapital > 0
-                              ? ((portfolio.totalCapital - (kpiCapital || 0)) / portfolio.totalCapital) * 100
-                              : 0
-                          )}
+                          {formatPercent(portfolio.openRiskPct ?? 0)}
                         </span>
                       </div>
                       <div className="h-1.5 bg-muted/50 rounded-full overflow-hidden">
                         <div
                           className="h-full rounded-full bg-primary transition-all"
-                          style={{ width: `${Math.min(100, portfolio.totalCapital > 0 ? ((portfolio.totalCapital - (kpiCapital || 0)) / portfolio.totalCapital) * 100 : 0)}%` }}
+                          style={{ width: `${Math.min(100, portfolio.openRiskPct ?? 0)}%` }}
                         />
                       </div>
                     </div>

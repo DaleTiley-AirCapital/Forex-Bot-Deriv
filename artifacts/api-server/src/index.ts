@@ -284,6 +284,9 @@ async function initDb(): Promise<void> {
     UPDATE platform_state SET value = '85' WHERE key = 'paper_min_composite_score' AND CAST(value AS INTEGER) < 85;
     UPDATE platform_state SET value = '90' WHERE key = 'demo_min_composite_score' AND CAST(value AS INTEGER) < 90;
     UPDATE platform_state SET value = '92' WHERE key = 'real_min_composite_score' AND CAST(value AS INTEGER) < 92;
+    UPDATE platform_state SET value = '85' WHERE key = 'ai_suggest_paper_min_composite_score' AND CAST(value AS INTEGER) < 85;
+    UPDATE platform_state SET value = '90' WHERE key = 'ai_suggest_demo_min_composite_score' AND CAST(value AS INTEGER) < 90;
+    UPDATE platform_state SET value = '92' WHERE key = 'ai_suggest_real_min_composite_score' AND CAST(value AS INTEGER) < 92;
   `);
 
   console.log("[DB] Schema ready.");

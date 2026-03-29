@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from "react";
-import { useGetLatestSignals } from "@workspace/api-client-react";
+import { useGetLatestSignals, useGetPendingSignals } from "@workspace/api-client-react";
 import type { ScoringDimensions, GetLatestSignalsParams, SignalLog } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, Badge } from "@/components/ui-elements";
 import { formatNumber, cn } from "@/lib/utils";
-import { ClipboardList, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, ChevronUp, Filter, X, ChevronLeft, ChevronRight, Download, ShieldAlert, Target, BarChart3 } from "lucide-react";
+import { ClipboardList, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, ChevronUp, Filter, X, ChevronLeft, ChevronRight, Download, ShieldAlert, Target, BarChart3, Clock, Layers } from "lucide-react";
 import { downloadCSV, downloadJSON } from "@/lib/export";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -304,6 +304,7 @@ export default function Signals() {
   }, [symbolFilter, familyFilter, statusFilter, aiFilter, page]);
 
   const { data, isLoading } = useGetLatestSignals(params, { query: { refetchInterval: 5000 } });
+  const { data: pendingData } = useGetPendingSignals({ query: { refetchInterval: 5000 } });
 
   const signals = data?.signals ?? [];
   const total = data?.total ?? 0;
@@ -395,6 +396,73 @@ export default function Signals() {
           </div>
         </CardContent>
       </Card>
+
+      {pendingData && pendingData.count > 0 && (
+        <Card className="border-amber-500/20">
+          <CardHeader>
+            <CardTitle>
+              <Clock className="w-4 h-4 text-amber-400" />
+              Pending Confirmations ({pendingData.count})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="grid gap-3 p-4">
+              {pendingData.signals.map((ps) => (
+                <div key={`${ps.symbol}-${ps.strategyName}-${ps.direction}`} className="rounded-xl border border-border/60 p-4 bg-muted/15">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2.5">
+                      {ps.direction === "buy"
+                        ? <span className="inline-flex items-center gap-1 text-success text-xs font-semibold"><ArrowUpRight className="w-3.5 h-3.5" />BUY</span>
+                        : <span className="inline-flex items-center gap-1 text-destructive text-xs font-semibold"><ArrowDownRight className="w-3.5 h-3.5" />SELL</span>}
+                      <span className="font-semibold text-foreground">{ps.symbol}</span>
+                      <span className={cn("inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border", FAMILY_COLORS[ps.strategyFamily] || "bg-gray-500/12 text-gray-400 border-gray-500/25")}>
+                        {FAMILY_LABELS[ps.strategyFamily] || ps.strategyFamily}
+                      </span>
+                      {ps.pyramidLevel > 0 && (
+                        <Badge variant="outline" className="text-[10px]">
+                          <Layers className="w-3 h-3 mr-1" />
+                          Pyramid L{ps.pyramidLevel + 1}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <CompositeScoreBadge score={ps.lastCompositeScore} />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-muted-foreground">Confirmation Progress</span>
+                        <span className="text-xs font-semibold mono-num text-amber-400">{ps.confirmCount}/{ps.requiredConfirmations} windows</span>
+                      </div>
+                      <div className="h-2 bg-muted/50 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-amber-500 transition-all"
+                          style={{ width: `${ps.progressPct}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-xs shrink-0">
+                      <div>
+                        <span className="text-muted-foreground block text-[10px]">EV</span>
+                        <span className={cn("mono-num font-semibold", ps.lastExpectedValue > 0 ? "text-success" : "text-destructive")}>
+                          {formatNumber(ps.lastExpectedValue, 4)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground block text-[10px]">First Seen</span>
+                        <span className="mono-num text-foreground text-[11px]">
+                          {new Date(ps.firstDetectedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

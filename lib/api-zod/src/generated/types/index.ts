@@ -40,6 +40,8 @@ export * from "./modeOverviewSnapshot";
 export * from "./modeRiskSnapshot";
 export * from "./ohlcCandle";
 export * from "./overrideAiSettingBody";
+export * from "./pendingSignal";
+export * from "./pendingSignalsResponse";
 export * from "./platformOverview";
 export * from "./platformOverviewMode";
 export * from "./platformOverviewPerMode";

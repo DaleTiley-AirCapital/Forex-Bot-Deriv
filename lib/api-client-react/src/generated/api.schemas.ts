@@ -220,6 +220,28 @@ export interface ScoringDimensions {
   probabilityOfSuccess: number;
 }
 
+export interface PendingSignal {
+  symbol: string;
+  strategyName: string;
+  strategyFamily: string;
+  direction: string;
+  confirmCount: number;
+  requiredConfirmations: number;
+  firstDetectedAt: string;
+  lastConfirmedAt: string;
+  lastCompositeScore: number;
+  lastExpectedValue: number;
+  priceAtFirst: number;
+  priceAtLast: number;
+  pyramidLevel: number;
+  progressPct: number;
+}
+
+export interface PendingSignalsResponse {
+  count: number;
+  signals: PendingSignal[];
+}
+
 export interface SignalLog {
   id: number;
   ts: string;

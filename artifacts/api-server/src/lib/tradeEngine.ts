@@ -5,7 +5,7 @@ import type { TradingMode } from "./deriv.js";
 import type { AllocationDecision } from "./signalRouter.js";
 import { checkAndAutoExtract } from "./extractionEngine.js";
 
-const MAX_OPEN_TRADES = 3;
+const MAX_OPEN_TRADES = 6;
 const MAX_EQUITY_DEPLOYED_PCT = 0.80;
 const PROFIT_TRAILING_DRAWDOWN_PCT = 0.30;
 

@@ -173,14 +173,14 @@ function checkConflicts(
   const pendingOnSymbol = alreadyAllowed.filter(s => s.symbol === signal.symbol);
   const allOnSymbol = [...existingOnSymbol, ...pendingOnSymbol.map(s => ({ symbol: s.symbol, side: s.direction, strategyName: s.strategyName }))];
 
-  const MAX_PER_SYMBOL = 2;
+  const MAX_PER_SYMBOL = 3;
   if (allOnSymbol.length >= MAX_PER_SYMBOL) {
     return { blocked: true, reason: `Max ${MAX_PER_SYMBOL} positions on ${signal.symbol} (has ${allOnSymbol.length})` };
   }
 
-  const sameStrategy = allOnSymbol.find(t => t.strategyName === signal.strategyName);
-  if (sameStrategy) {
-    return { blocked: true, reason: `Already has ${signal.strategyName} position on ${signal.symbol}` };
+  const sameStrategyCount = allOnSymbol.filter(t => t.strategyName === signal.strategyName).length;
+  if (sameStrategyCount >= MAX_PER_SYMBOL) {
+    return { blocked: true, reason: `Max ${MAX_PER_SYMBOL} ${signal.strategyName} positions on ${signal.symbol}` };
   }
 
   return { blocked: false, reason: null };

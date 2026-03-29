@@ -402,6 +402,31 @@ export const GetLatestSignalsResponse = zod.object({
 });
 
 /**
+ * @summary Get pending signal confirmations
+ */
+export const GetPendingSignalsResponse = zod.object({
+  count: zod.number(),
+  signals: zod.array(
+    zod.object({
+      symbol: zod.string(),
+      strategyName: zod.string(),
+      strategyFamily: zod.string(),
+      direction: zod.string(),
+      confirmCount: zod.number(),
+      requiredConfirmations: zod.number(),
+      firstDetectedAt: zod.string(),
+      lastConfirmedAt: zod.string(),
+      lastCompositeScore: zod.number(),
+      lastExpectedValue: zod.number(),
+      priceAtFirst: zod.number(),
+      priceAtLast: zod.number(),
+      pyramidLevel: zod.number(),
+      progressPct: zod.number(),
+    }),
+  ),
+});
+
+/**
  * @summary Toggle a trading mode on or off
  */
 export const ToggleTradingModeBody = zod.object({

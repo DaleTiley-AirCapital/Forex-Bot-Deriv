@@ -41,6 +41,7 @@ import type {
   ModelRun,
   OhlcCandle,
   OverrideAiSettingBody,
+  PendingSignalsResponse,
   PlatformOverview,
   PlatformSettings,
   PortfolioStatus,
@@ -1704,6 +1705,81 @@ export function useGetLatestSignals<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetLatestSignalsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get pending signal confirmations
+ */
+export const getGetPendingSignalsUrl = () => {
+  return `/api/signals/pending`;
+};
+
+export const getPendingSignals = async (
+  options?: RequestInit,
+): Promise<PendingSignalsResponse> => {
+  return customFetch<PendingSignalsResponse>(getGetPendingSignalsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPendingSignalsQueryKey = () => {
+  return [`/api/signals/pending`] as const;
+};
+
+export const getGetPendingSignalsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPendingSignals>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getPendingSignals>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetPendingSignalsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPendingSignals>>
+  > = ({ signal }) => getPendingSignals({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPendingSignals>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPendingSignalsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPendingSignals>>
+>;
+export type GetPendingSignalsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get pending signal confirmations
+ */
+
+export function useGetPendingSignals<
+  TData = Awaited<ReturnType<typeof getPendingSignals>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getPendingSignals>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPendingSignalsQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

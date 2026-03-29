@@ -5,6 +5,7 @@ import { computeFeatures } from "../lib/features.js";
 import { runAllStrategies } from "../lib/strategies.js";
 import { routeSignals, logSignalDecisions } from "../lib/signalRouter.js";
 import type { ScoringWeights } from "../lib/scoring.js";
+import { getPendingSignalStatus } from "../lib/pendingSignals.js";
 
 async function loadScoringWeights(): Promise<ScoringWeights | undefined> {
   const states = await db.select().from(platformStateTable);
@@ -175,6 +176,16 @@ router.get("/signals/features/:symbol", async (req, res): Promise<void> => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     res.status(500).json({ error: `Feature computation failed: ${message}` });
+  }
+});
+
+router.get("/signals/pending", async (_req, res): Promise<void> => {
+  try {
+    const status = getPendingSignalStatus();
+    res.json(status);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.status(500).json({ error: `Failed to get pending signals: ${message}` });
   }
 });
 

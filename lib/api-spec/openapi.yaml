@@ -463,6 +463,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/SignalReviewResponse"
 
+  /signals/pending:
+    get:
+      operationId: getPendingSignals
+      tags: [signals]
+      summary: Get pending signal confirmations
+      responses:
+        "200":
+          description: Pending signals awaiting multi-window confirmation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingSignalsResponse"
+
   /trade/mode/toggle:
     post:
       operationId: toggleTradingMode
@@ -1163,6 +1176,66 @@ components:
         - volatilityCondition
         - rewardRisk
         - probabilityOfSuccess
+
+    PendingSignalsResponse:
+      type: object
+      properties:
+        count:
+          type: integer
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/PendingSignal"
+      required:
+        - count
+        - signals
+
+    PendingSignal:
+      type: object
+      properties:
+        symbol:
+          type: string
+        strategyName:
+          type: string
+        strategyFamily:
+          type: string
+        direction:
+          type: string
+        confirmCount:
+          type: integer
+        requiredConfirmations:
+          type: integer
+        firstDetectedAt:
+          type: string
+        lastConfirmedAt:
+          type: string
+        lastCompositeScore:
+          type: number
+        lastExpectedValue:
+          type: number
+        priceAtFirst:
+          type: number
+        priceAtLast:
+          type: number
+        pyramidLevel:
+          type: integer
+        progressPct:
+          type: integer
+      required:
+        - symbol
+        - strategyName
+        - strategyFamily
+        - direction
+        - confirmCount
+        - requiredConfirmations
+        - firstDetectedAt
+        - lastConfirmedAt
+        - lastCompositeScore
+        - lastExpectedValue
+        - priceAtFirst
+        - priceAtLast
+        - pyramidLevel
+        - progressPct
 
     SignalReviewResponse:
       type: object

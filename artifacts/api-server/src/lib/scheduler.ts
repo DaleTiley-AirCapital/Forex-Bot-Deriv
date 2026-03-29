@@ -11,6 +11,7 @@ import { runBacktestSimulation } from "./backtestEngine.js";
 import { getActiveModes, isAnyModeActive } from "./deriv.js";
 import type { TradingMode } from "./deriv.js";
 import type { AllocationDecision } from "./signalRouter.js";
+import { confirmSignal, removePendingSignal, expireStaleSignals, shouldEvaluateWindow, get30MinWindowTs } from "./pendingSignals.js";
 
 import { ACTIVE_TRADING_SYMBOLS } from "./deriv.js";
 
@@ -105,6 +106,35 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
 
   console.log(`[Intel] ${symbol} | regime=${regime.regime} | families=[${regime.allowedFamilies.join(",")}] | candidates=${candidates.length} | top=${candidates[0].strategyFamily}(${candidates[0].score.toFixed(3)}, EV=${candidates[0].expectedValue.toFixed(4)})`);
 
+  expireStaleSignals();
+
+  const isNewWindow = shouldEvaluateWindow(symbol);
+  const windowTs = get30MinWindowTs();
+
+  const openSymbolTrades = await db.select().from(tradesTable)
+    .where(and(eq(tradesTable.status, "open"), eq(tradesTable.symbol, symbol)));
+  const existingPositionCount = openSymbolTrades.length;
+
+  const promotedCandidates: { candidate: typeof candidates[0]; atr: number }[] = [];
+
+  for (const candidate of candidates) {
+    if (!isNewWindow) {
+      console.log(`[Confirm] ${symbol} | ${candidate.strategyName} | SKIP=same_30min_window`);
+      continue;
+    }
+
+    const currentPrice = features.latestClose ?? 0;
+    const result = confirmSignal(candidate, windowTs, currentPrice, existingPositionCount);
+
+    if (result.promoted) {
+      console.log(`[Confirm] ${symbol} | ${candidate.strategyName} | dir=${candidate.direction} | PROMOTED after ${result.pending.confirmCount}/${result.pending.requiredConfirmations} windows | pyramid=${result.pending.pyramidLevel}`);
+      promotedCandidates.push({ candidate, atr: features.atr14 });
+      removePendingSignal(symbol, candidate.strategyName, candidate.direction);
+    } else {
+      console.log(`[Confirm] ${symbol} | ${candidate.strategyName} | dir=${candidate.direction} | window=${result.pending.confirmCount}/${result.pending.requiredConfirmations} | score=${candidate.compositeScore} | EV=${candidate.expectedValue.toFixed(4)}`);
+    }
+  }
+
   const aiEnabled = stateMap["ai_verification_enabled"] === "true";
   const allCandidates = candidates.map(c => ({ candidate: c, atr: features.atr14 }));
 
@@ -122,15 +152,31 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
     }
 
     const effectiveMode = isIntelOnly ? "paper" : mode;
-    const decisions = await routeSignals(allCandidates.map(c => c.candidate), effectiveMode);
+
+    const candidatesForRouting = promotedCandidates.length > 0
+      ? promotedCandidates.map(c => c.candidate)
+      : [];
+
+    const allForLogging = allCandidates.map(c => c.candidate);
+    const logDecisions = await routeSignals(allForLogging, effectiveMode);
     const logMode = isIntelOnly ? undefined : mode;
+
+    const promotedSet = new Set(candidatesForRouting.map(c => `${c.symbol}|${c.strategyName}|${c.direction}`));
 
     const finalDecisions: AllocationDecision[] = [];
 
-    for (const decision of decisions) {
+    for (const decision of logDecisions) {
+      const isPromoted = promotedSet.has(`${decision.signal.symbol}|${decision.signal.strategyName}|${decision.signal.direction}`);
       const compositeScore = decision.signal.compositeScore ?? 0;
 
-      if (!decision.allowed) {
+      if (!isPromoted) {
+        decision.allowed = false;
+        if (!decision.rejectionReason) {
+          decision.rejectionReason = "Awaiting multi-window confirmation (not yet promoted)";
+        }
+        decision.aiVerdict = "skipped";
+        decision.aiReasoning = "Signal pending confirmation — AI check deferred";
+      } else if (!decision.allowed) {
         decision.aiVerdict = "skipped";
         decision.aiReasoning = `AI check skipped — signal blocked by system: ${decision.rejectionReason || "unknown"}`;
       } else if (aiEnabled && compositeScore >= 75) {
@@ -208,7 +254,9 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
 
       if (isIntelOnly) {
         decision.allowed = false;
-        decision.rejectionReason = "No execution mode active — intelligence only";
+        if (!decision.rejectionReason) {
+          decision.rejectionReason = "No execution mode active — intelligence only";
+        }
       }
 
       const sig = decision.signal;
@@ -217,7 +265,8 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
       const aiTag = decision.aiVerdict ? ` | ai=${decision.aiVerdict}` : "";
       const allocTag = decision.allowed ? ` | alloc=${((decision.capitalAmount ?? 0)).toFixed(2)}` : "";
       const rejectTag = !decision.allowed && decision.rejectionReason ? ` | reject=${decision.rejectionReason}` : "";
-      console.log(`[Scan] ${sig.symbol} | ${modeTag} | family=${sig.strategyFamily || sig.strategyName} | dir=${sig.direction} | score=${sig.score.toFixed(3)} | EV=${sig.expectedValue.toFixed(4)} | composite=${composite}${aiTag}${allocTag}${rejectTag} | ${decision.allowed ? "EXECUTE" : "BLOCKED"}`);
+      const confirmTag = isPromoted ? " | CONFIRMED" : "";
+      console.log(`[Scan] ${sig.symbol} | ${modeTag} | family=${sig.strategyFamily || sig.strategyName} | dir=${sig.direction} | score=${sig.score.toFixed(3)} | EV=${sig.expectedValue.toFixed(4)} | composite=${composite}${aiTag}${allocTag}${rejectTag}${confirmTag} | ${decision.allowed ? "EXECUTE" : "BLOCKED"}`);
 
       finalDecisions.push(decision);
     }
@@ -229,13 +278,13 @@ async function scanSingleSymbol(symbol: string, stateMap: Record<string, string>
       console.error(`[Scheduler] Failed to log ${finalDecisions.length} signal decisions:`, err instanceof Error ? err.message : err);
     }
 
-    if (!isIntelOnly) {
-      const allowed = finalDecisions.filter(d => d.allowed);
-      for (const decision of allowed) {
-        const matchingCandidate = allCandidates.find(c => c.candidate.symbol === decision.signal.symbol && c.candidate.strategyName === decision.signal.strategyName);
+    if (!isIntelOnly && promotedCandidates.length > 0) {
+      const allowedExec = finalDecisions.filter(d => d.allowed && promotedSet.has(`${d.signal.symbol}|${d.signal.strategyName}|${d.signal.direction}`));
+      for (const decision of allowedExec) {
+        const matchingCandidate = promotedCandidates.find(c => c.candidate.symbol === decision.signal.symbol && c.candidate.strategyName === decision.signal.strategyName);
         const atr = matchingCandidate?.atr ?? 0.01;
         await openPosition(decision, atr, mode);
-        console.log(`[Exec] ${decision.signal.symbol} | ${mode} | ${decision.signal.direction} | family=${decision.signal.strategyFamily || decision.signal.strategyName} | alloc=$${(decision.capitalAmount ?? 0).toFixed(2)}`);
+        console.log(`[Exec] ${decision.signal.symbol} | ${mode} | ${decision.signal.direction} | family=${decision.signal.strategyFamily || decision.signal.strategyName} | alloc=$${(decision.capitalAmount ?? 0).toFixed(2)} | MULTI-WINDOW-CONFIRMED`);
       }
     }
 

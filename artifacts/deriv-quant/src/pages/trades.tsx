@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle, Badge, Button } from "@/compo
 import { formatCurrency, formatNumber, cn } from "@/lib/utils";
 import { downloadCSV, downloadJSON } from "@/lib/export";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, ArrowDownRight, Clock, Target, ShieldAlert, TrendingUp, Filter, Square, Download, X } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Clock, Target, ShieldAlert, TrendingUp, Filter, Square, Download, X, Layers } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 function formatHours(hours: number): string {
@@ -205,64 +205,90 @@ export default function Trades() {
         </div>
       </div>
 
-      {filteredPositions.length > 0 && (
-        <Card className="border-primary/15">
-          <CardHeader>
-            <CardTitle>
-              <TrendingUp className="w-4 h-4 text-primary" />
-              Live Positions ({filteredPositions.length})
-            </CardTitle>
-            <div className={cn("text-base font-bold font-mono tabular-nums", totalFloatingPnl >= 0 ? "text-success" : "text-destructive")}>
-              {totalFloatingPnl >= 0 ? "+" : ""}{formatCurrency(totalFloatingPnl)}
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="grid gap-3 p-4">
-              {filteredPositions.map(p => (
-                <div key={p.id} className="rounded-xl border border-border/60 p-4 bg-muted/15">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2.5">
-                      <Badge variant={p.side === 'buy' ? 'success' : 'destructive'}>
-                        {p.side === 'buy' ? <ArrowUpRight className="w-3 h-3"/> : <ArrowDownRight className="w-3 h-3"/>}
-                        {p.side}
-                      </Badge>
-                      <span className="font-semibold text-foreground">{p.symbol}</span>
-                      <span className="text-xs text-muted-foreground">{p.strategyName}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className={cn("text-base font-bold font-mono tabular-nums", p.floatingPnl >= 0 ? "text-success" : "text-destructive")}>
-                        {p.floatingPnl >= 0 ? "+" : ""}{formatCurrency(p.floatingPnl)}
-                        <span className="text-xs font-normal ml-1 opacity-80">
-                          ({p.floatingPnlPct >= 0 ? "+" : ""}{p.floatingPnlPct.toFixed(2)}%)
+      {filteredPositions.length > 0 && (() => {
+        const grouped = new Map<string, typeof filteredPositions>();
+        for (const p of filteredPositions) {
+          const existing = grouped.get(p.symbol) || [];
+          existing.push(p);
+          grouped.set(p.symbol, existing);
+        }
+
+        return (
+          <Card className="border-primary/15">
+            <CardHeader>
+              <CardTitle>
+                <TrendingUp className="w-4 h-4 text-primary" />
+                Live Positions ({filteredPositions.length})
+              </CardTitle>
+              <div className={cn("text-base font-bold font-mono tabular-nums", totalFloatingPnl >= 0 ? "text-success" : "text-destructive")}>
+                {totalFloatingPnl >= 0 ? "+" : ""}{formatCurrency(totalFloatingPnl)}
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="grid gap-3 p-4">
+                {Array.from(grouped.entries()).map(([symbol, positions]) => (
+                  <div key={symbol}>
+                    {positions.length > 1 && (
+                      <div className="flex items-center gap-2 mb-2 px-1">
+                        <Layers className="w-3.5 h-3.5 text-primary" />
+                        <span className="text-xs font-semibold text-primary">{symbol}</span>
+                        <Badge variant="outline" className="text-[10px]">
+                          {positions.length} positions (pyramided)
+                        </Badge>
+                        <span className={cn("text-xs font-bold font-mono tabular-nums ml-auto", positions.reduce((s, p) => s + p.floatingPnl, 0) >= 0 ? "text-success" : "text-destructive")}>
+                          {positions.reduce((s, p) => s + p.floatingPnl, 0) >= 0 ? "+" : ""}
+                          {formatCurrency(positions.reduce((s, p) => s + p.floatingPnl, 0))}
                         </span>
                       </div>
-                      <Badge variant="outline">{p.mode}</Badge>
-                    </div>
-                  </div>
+                    )}
+                    {positions.map(p => (
+                      <div key={p.id} className={cn("rounded-xl border border-border/60 p-4 bg-muted/15", positions.length > 1 ? "ml-4 mb-2" : "")}>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2.5">
+                            <Badge variant={p.side === 'buy' ? 'success' : 'destructive'}>
+                              {p.side === 'buy' ? <ArrowUpRight className="w-3 h-3"/> : <ArrowDownRight className="w-3 h-3"/>}
+                              {p.side}
+                            </Badge>
+                            <span className="font-semibold text-foreground">{p.symbol}</span>
+                            <span className="text-xs text-muted-foreground">{p.strategyName}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className={cn("text-base font-bold font-mono tabular-nums", p.floatingPnl >= 0 ? "text-success" : "text-destructive")}>
+                              {p.floatingPnl >= 0 ? "+" : ""}{formatCurrency(p.floatingPnl)}
+                              <span className="text-xs font-normal ml-1 opacity-80">
+                                ({p.floatingPnlPct >= 0 ? "+" : ""}{p.floatingPnlPct.toFixed(2)}%)
+                              </span>
+                            </div>
+                            <Badge variant="outline">{p.mode}</Badge>
+                          </div>
+                        </div>
 
-                  <div className="grid grid-cols-3 md:grid-cols-6 gap-4 text-xs">
-                    {[
-                      { label: "Entry", value: formatNumber(p.entryPrice, 4) },
-                      { label: "Current", value: formatNumber(p.currentPrice, 4), colorClass: p.currentPrice > p.entryPrice ? "text-success" : p.currentPrice < p.entryPrice ? "text-destructive" : "" },
-                      { label: "SL", value: formatNumber(p.sl, 4), colorClass: "text-destructive", icon: <ShieldAlert className="w-3 h-3 text-destructive" /> },
-                      { label: "TP", value: formatNumber(p.tp, 4), colorClass: "text-success", icon: <Target className="w-3 h-3 text-success" /> },
-                      { label: "Size", value: formatCurrency(p.size) },
-                      { label: "Time Left", value: formatHours(p.hoursRemaining), colorClass: p.hoursRemaining < 12 ? "text-warning" : "", icon: <Clock className="w-3 h-3 text-warning" /> },
-                    ].map(({ label, value, colorClass, icon }) => (
-                      <div key={label}>
-                        <span className="text-muted-foreground block mb-0.5 flex items-center gap-1">
-                          {icon}{label}
-                        </span>
-                        <span className={cn("font-mono font-semibold tabular-nums", colorClass)}>{value}</span>
+                        <div className="grid grid-cols-3 md:grid-cols-6 gap-4 text-xs">
+                          {[
+                            { label: "Entry", value: formatNumber(p.entryPrice, 4) },
+                            { label: "Current", value: formatNumber(p.currentPrice, 4), colorClass: p.currentPrice > p.entryPrice ? "text-success" : p.currentPrice < p.entryPrice ? "text-destructive" : "" },
+                            { label: "SL", value: formatNumber(p.sl, 4), colorClass: "text-destructive", icon: <ShieldAlert className="w-3 h-3 text-destructive" /> },
+                            { label: "TP", value: formatNumber(p.tp, 4), colorClass: "text-success", icon: <Target className="w-3 h-3 text-success" /> },
+                            { label: "Size", value: formatCurrency(p.size) },
+                            { label: "Time Left", value: formatHours(p.hoursRemaining), colorClass: p.hoursRemaining < 12 ? "text-warning" : "", icon: <Clock className="w-3 h-3 text-warning" /> },
+                          ].map(({ label, value, colorClass, icon }) => (
+                            <div key={label}>
+                              <span className="text-muted-foreground block mb-0.5 flex items-center gap-1">
+                                {icon}{label}
+                              </span>
+                              <span className={cn("font-mono font-semibold tabular-nums", colorClass)}>{value}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ))}
                   </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <Card>
         <CardHeader>

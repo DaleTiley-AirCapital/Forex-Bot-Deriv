@@ -28,7 +28,7 @@ const FAMILY_COLORS: Record<string, string> = {
   trendline_breakout: "bg-cyan-500/12 text-cyan-400 border-cyan-500/25",
 };
 
-function AIVerdictBadge({ verdict, reasoning, blocked }: { verdict: string | null | undefined; reasoning: string | null | undefined; blocked?: boolean }) {
+function AIVerdictBadge({ verdict, blocked }: { verdict: string | null | undefined; blocked?: boolean }) {
   const effectiveVerdict = verdict || (blocked ? "skipped" : null);
   if (!effectiveVerdict) return <span className="text-xs text-muted-foreground/50">—</span>;
 
@@ -59,11 +59,6 @@ function AIVerdictBadge({ verdict, reasoning, blocked }: { verdict: string | nul
         <Brain className="w-3 h-3" />
         {labels[effectiveVerdict] || effectiveVerdict}
       </span>
-      {reasoning && effectiveVerdict !== "skipped" && (
-        <span className="text-[10px] text-muted-foreground leading-snug">
-          {reasoning}
-        </span>
-      )}
     </div>
   );
 }
@@ -518,8 +513,8 @@ export default function Signals() {
                 <th className="text-right">EV</th>
                 <th>Regime</th>
                 <th className="text-right">Alloc%</th>
-                <th>Status</th>
-                <th>AI</th>
+                <th className="w-20">Status</th>
+                <th className="w-20">AI</th>
               </tr>
             </thead>
             <tbody>
@@ -616,18 +611,11 @@ export default function Signals() {
                           {sig.allowedFlag ? (
                             <Badge variant="success">Approved</Badge>
                           ) : (
-                            <div className="flex flex-col gap-0.5">
-                              <Badge variant="destructive">Blocked</Badge>
-                              {sig.rejectionReason && (
-                                <span className="text-[10px] text-muted-foreground leading-snug">
-                                  {sig.rejectionReason}
-                                </span>
-                              )}
-                            </div>
+                            <Badge variant="destructive">Blocked</Badge>
                           )}
                         </td>
                         <td>
-                          <AIVerdictBadge verdict={sig.aiVerdict} reasoning={sig.aiReasoning} blocked={!sig.allowedFlag} />
+                          <AIVerdictBadge verdict={sig.aiVerdict} blocked={!sig.allowedFlag} />
                         </td>
                       </tr>
                       <AnimatePresence>

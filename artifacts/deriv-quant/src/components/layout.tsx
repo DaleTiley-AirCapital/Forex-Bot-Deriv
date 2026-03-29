@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
+import { APP_VERSION } from "@/lib/version";
 import {
   Activity,
   BarChart2,
@@ -267,7 +268,7 @@ function DesktopLayout({ children, location, tradingControls }: { children: Reac
         </nav>
 
         <div className="px-4 py-3 border-t border-border/40">
-          <p className="text-[10px] text-muted-foreground/40 text-center font-mono">v2.0.0</p>
+          <p className="text-[10px] text-muted-foreground/40 text-center font-mono">v{APP_VERSION}</p>
         </div>
       </aside>
 
@@ -411,7 +412,7 @@ function MobileLayout({ children, location, tradingControls }: { children: React
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-foreground leading-none truncate">Deriv Trading</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5 font-mono truncate">{tradingControls.realBalance ? `Real: ${tradingControls.realBalance}` : "Real: —"}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">Long Hold</p>
           </div>
         </div>
         <ModeToggleButtons compact controls={tradingControls} />

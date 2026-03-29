@@ -279,15 +279,14 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
       if (json.error) {
         setSSEProgress(prev => ({ ...prev, [symbol]: { phase: "error", symbol, message: json.error } }));
       } else {
+        const profitableCount = (json.profitableStrategies ?? []).filter((s: { netProfit: number }) => s.netProfit > 0).length;
         setSSEProgress(prev => ({
           ...prev,
           [symbol]: {
             phase: "backtest_complete",
             symbol,
             profitableStrategies: json.profitableStrategies,
-            message: json.profitableStrategies?.length > 0
-              ? `Re-run complete: ${json.profitableStrategies.length} profitable strategies`
-              : json.message || "No profitable strategies",
+            message: json.message || `Re-run complete: ${profitableCount} profitable strategies`,
           },
         }));
       }
@@ -388,7 +387,7 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
 
         {progress?.phase === "backtest_complete" && progress.profitableStrategies && (
           <div className="mt-2 px-2 py-1.5 rounded text-xs bg-green-500/10 text-green-400">
-            {progress.profitableStrategies.length} profitable strategies found
+            {progress.message || `${progress.profitableStrategies.filter(s => s.netProfit > 0).length} profitable strategies found`}
           </div>
         )}
 
@@ -401,27 +400,42 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
               className="mt-3 pt-3 border-t border-border/30 space-y-2"
             >
               <div className="flex gap-2">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => handleDownloadSimulate(sym.symbol)}
-                  disabled={isRunning || !!runningSymbol}
-                  className="flex-1 text-xs h-7"
-                >
-                  {isRunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Download className="w-3 h-3 mr-1" />}
-                  {isRunning ? "Running..." : showBacktest ? "Download & Simulate" : "Download Data"}
-                </Button>
-                {showBacktest && (
+                {sym.totalCandles === 0 ? (
                   <Button
-                    variant="outline"
+                    variant="primary"
                     size="sm"
-                    onClick={() => handleRerunBacktest(sym.symbol)}
-                    disabled={isRerunning || sym.totalCandles === 0 || !!runningSymbol}
+                    onClick={() => handleDownloadSimulate(sym.symbol)}
+                    disabled={isRunning || !!runningSymbol}
                     className="flex-1 text-xs h-7"
                   >
-                    {isRerunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}
-                    {isRerunning ? "Running..." : "Re-run Backtest"}
+                    {isRunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Download className="w-3 h-3 mr-1" />}
+                    {isRunning ? "Running..." : showBacktest ? "Download & Simulate" : "Download Data"}
                   </Button>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDownloadSimulate(sym.symbol)}
+                      disabled={isRunning || !!runningSymbol}
+                      className="text-xs h-7"
+                    >
+                      {isRunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Download className="w-3 h-3 mr-1" />}
+                      {isRunning ? "Updating..." : "Update Data"}
+                    </Button>
+                    {showBacktest && (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => handleRerunBacktest(sym.symbol)}
+                        disabled={isRerunning || !!runningSymbol}
+                        className="flex-1 text-xs h-7"
+                      >
+                        {isRerunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}
+                        {isRerunning ? "Running..." : "Re-run Backtest"}
+                      </Button>
+                    )}
+                  </>
                 )}
               </div>
               {isRunning && (
@@ -581,7 +595,7 @@ function GroupedResultsSection({ refreshTrigger }: { refreshTrigger: number }) {
                     {(sym.portfolioNetProfit ?? 0) > 0 ? "+" : ""}{formatCurrency(sym.portfolioNetProfit)}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
-                    {sym.strategies.length} profitable {sym.strategies.length === 1 ? "strategy" : "strategies"}
+                    {sym.strategies.filter(s => s.netProfit > 0).length}/{sym.strategies.length} strategies profitable
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
@@ -608,7 +622,7 @@ function GroupedResultsSection({ refreshTrigger }: { refreshTrigger: number }) {
                 >
                   <div className="p-4 space-y-4">
                     {sym.strategies.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-4">No profitable strategies found for this symbol.</p>
+                      <p className="text-sm text-muted-foreground text-center py-4">No strategy results yet. Run a backtest above.</p>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
@@ -624,11 +638,11 @@ function GroupedResultsSection({ refreshTrigger }: { refreshTrigger: number }) {
                           </thead>
                           <tbody>
                             {sym.strategies.map(strat => (
-                              <tr key={strat.strategyName} className="border-b border-border/20 hover:bg-muted/10">
+                              <tr key={strat.strategyName} className={cn("border-b border-border/20 hover:bg-muted/10", strat.netProfit <= 0 && strat.tradeCount === 0 && "opacity-40")}>
                                 <td className="px-3 py-2 font-medium">{STRATEGY_LABELS[strat.strategyName] ?? strat.strategyName}</td>
-                                <td className="px-3 py-2 text-right mono-num profit">{formatCurrency(strat.netProfit)}</td>
-                                <td className="px-3 py-2 text-right mono-num">{formatPercent(strat.winRate)}</td>
-                                <td className="px-3 py-2 text-right mono-num">{strat.profitFactor == null ? "—" : strat.profitFactor === Infinity ? "∞" : strat.profitFactor.toFixed(2)}</td>
+                                <td className={cn("px-3 py-2 text-right mono-num", strat.netProfit > 0 ? "text-green-400" : strat.netProfit < 0 ? "text-red-400" : "text-muted-foreground")}>{formatCurrency(strat.netProfit)}</td>
+                                <td className="px-3 py-2 text-right mono-num">{strat.tradeCount > 0 ? formatPercent(strat.winRate) : "—"}</td>
+                                <td className="px-3 py-2 text-right mono-num">{strat.tradeCount === 0 ? "—" : strat.profitFactor == null ? "—" : strat.profitFactor === Infinity ? "∞" : strat.profitFactor.toFixed(2)}</td>
                                 <td className="px-3 py-2 text-right mono-num">{strat.tradeCount}</td>
                                 <td className="px-3 py-2 text-right">
                                   <button

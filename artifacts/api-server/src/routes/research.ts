@@ -266,8 +266,7 @@ router.post("/research/download-simulate", async (req, res): Promise<void> => {
     try {
       const btResult = await runSymbolBacktest(symbol, initialCapital, "balanced");
 
-      if (btResult.profitableStrategies.length > 0) {
-        const [row] = await db.insert(backtestRunsTable).values({
+      const [row] = await db.insert(backtestRunsTable).values({
           strategyName: "all_strategies",
           symbol,
           initialCapital,
@@ -294,11 +293,8 @@ router.post("/research/download-simulate", async (req, res): Promise<void> => {
         }).returning();
 
         if (row && btResult.trades.length > 0) {
-          const profitableTrades = btResult.trades.filter(t => {
-            return btResult.profitableStrategies.some(s => s.strategyName === t.strategyName);
-          });
-          for (let i = 0; i < profitableTrades.length; i += 500) {
-            const batch = profitableTrades.slice(i, i + 500);
+          for (let i = 0; i < btResult.trades.length; i += 500) {
+            const batch = btResult.trades.slice(i, i + 500);
             await db.insert(backtestTradesTable).values(
               batch.map(t => ({
                 backtestRunId: row.id,
@@ -314,6 +310,7 @@ router.post("/research/download-simulate", async (req, res): Promise<void> => {
           }
         }
 
+        const profitableCount = btResult.profitableStrategies.filter(s => s.netProfit > 0).length;
         send({
           phase: "backtest_complete", symbol,
           profitableStrategies: btResult.profitableStrategies,
@@ -323,15 +320,8 @@ router.post("/research/download-simulate", async (req, res): Promise<void> => {
             profitFactor: btResult.portfolioMetrics.profitFactor,
             tradeCount: btResult.portfolioMetrics.tradeCount,
           },
-          message: `Backtest complete: ${btResult.profitableStrategies.length} profitable strategies found`,
+          message: `Backtest complete: ${profitableCount} profitable strategies, ${btResult.portfolioMetrics.tradeCount} total trades`,
         });
-      } else {
-        send({
-          phase: "backtest_complete", symbol,
-          profitableStrategies: [],
-          message: `Backtest complete: no profitable strategies found for ${symbol}`,
-        });
-      }
     } catch (btErr) {
       send({
         phase: "backtest_error", symbol,
@@ -364,8 +354,7 @@ router.post("/research/rerun-backtest", async (req, res): Promise<void> => {
 
     const btResult = await runSymbolBacktest(symbol, initialCapital, "balanced");
 
-    if (btResult.profitableStrategies.length > 0) {
-      const [row] = await db.insert(backtestRunsTable).values({
+    const [row] = await db.insert(backtestRunsTable).values({
         strategyName: "all_strategies",
         symbol,
         initialCapital,
@@ -392,11 +381,8 @@ router.post("/research/rerun-backtest", async (req, res): Promise<void> => {
       }).returning();
 
       if (row && btResult.trades.length > 0) {
-        const profitableTrades = btResult.trades.filter(t => {
-          return btResult.profitableStrategies.some(s => s.strategyName === t.strategyName);
-        });
-        for (let i = 0; i < profitableTrades.length; i += 500) {
-          const batch = profitableTrades.slice(i, i + 500);
+        for (let i = 0; i < btResult.trades.length; i += 500) {
+          const batch = btResult.trades.slice(i, i + 500);
           await db.insert(backtestTradesTable).values(
             batch.map(t => ({
               backtestRunId: row.id,
@@ -412,6 +398,7 @@ router.post("/research/rerun-backtest", async (req, res): Promise<void> => {
         }
       }
 
+      const profitableCount = btResult.profitableStrategies.filter(s => s.netProfit > 0).length;
       res.json({
         success: true,
         symbol,
@@ -423,15 +410,8 @@ router.post("/research/rerun-backtest", async (req, res): Promise<void> => {
           profitFactor: btResult.portfolioMetrics.profitFactor,
           tradeCount: btResult.portfolioMetrics.tradeCount,
         },
+        message: `${profitableCount} profitable strategies, ${btResult.portfolioMetrics.tradeCount} total trades`,
       });
-    } else {
-      res.json({
-        success: true,
-        symbol,
-        profitableStrategies: [],
-        message: `No profitable strategies found for ${symbol}`,
-      });
-    }
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
   }
@@ -545,7 +525,6 @@ router.get("/research/grouped-results", async (_req, res): Promise<void> => {
 
     for (const run of results) {
       const sym = run.symbol;
-      if (!ACTIVE_TRADING_SYMBOLS.includes(sym)) continue;
 
       if (!grouped[sym]) {
         grouped[sym] = {
@@ -562,41 +541,37 @@ router.get("/research/grouped-results", async (_req, res): Promise<void> => {
         const metricsJson = run.metricsJson as { strategyBreakdown?: Array<{ strategyName: string; winRate: number; profitFactor: number; netProfit: number; tradeCount: number }> } | null;
         if (metricsJson?.strategyBreakdown) {
           for (const s of metricsJson.strategyBreakdown) {
-            if (s.netProfit > 0 && s.tradeCount > 0) {
-              const existing = grouped[sym].strategies.find(x => x.strategyName === s.strategyName);
-              if (!existing) {
-                grouped[sym].strategies.push({
-                  strategyName: s.strategyName,
-                  winRate: s.winRate,
-                  profitFactor: s.profitFactor,
-                  netProfit: s.netProfit,
-                  tradeCount: s.tradeCount,
-                  backtestId: run.id,
-                });
-              }
+            const existing = grouped[sym].strategies.find(x => x.strategyName === s.strategyName);
+            if (!existing) {
+              grouped[sym].strategies.push({
+                strategyName: s.strategyName,
+                winRate: s.winRate,
+                profitFactor: s.profitFactor,
+                netProfit: s.netProfit,
+                tradeCount: s.tradeCount,
+                backtestId: run.id,
+              });
             }
           }
         }
         grouped[sym].portfolioNetProfit = run.netProfit ?? 0;
         grouped[sym].portfolioWinRate = run.winRate ?? 0;
       } else {
-        if ((run.netProfit ?? 0) > 0 && (run.tradeCount ?? 0) > 0) {
-          const existing = grouped[sym].strategies.find(x => x.strategyName === run.strategyName);
-          if (!existing) {
-            grouped[sym].strategies.push({
-              strategyName: run.strategyName,
-              winRate: run.winRate ?? 0,
-              profitFactor: run.profitFactor ?? 0,
-              netProfit: run.netProfit ?? 0,
-              tradeCount: run.tradeCount ?? 0,
-              backtestId: run.id,
-            });
-          }
+        const existing = grouped[sym].strategies.find(x => x.strategyName === run.strategyName);
+        if (!existing) {
+          grouped[sym].strategies.push({
+            strategyName: run.strategyName,
+            winRate: run.winRate ?? 0,
+            profitFactor: run.profitFactor ?? 0,
+            netProfit: run.netProfit ?? 0,
+            tradeCount: run.tradeCount ?? 0,
+            backtestId: run.id,
+          });
         }
       }
     }
 
-    const ordered = ACTIVE_TRADING_SYMBOLS
+    const ordered = ALL_SYMBOLS
       .filter(sym => grouped[sym])
       .map(sym => grouped[sym]);
     res.json({ symbols: ordered });

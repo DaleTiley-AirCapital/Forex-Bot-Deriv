@@ -126,7 +126,7 @@ TRADE MANAGEMENT (V2 Spike-Magnitude-Aware TP/SL):
 - TP: PRIMARY exit targeting 50-200%+ moves. Boom/Crash: 50% of 90-day range (min 10%). Vol: 70% major swing range.
 - SL: TP distance / 5 (1:5 R:R). Safety cap: 10% equity max loss.
 - Trailing: 30% peak-profit drawdown (SAFETY NET ONLY, activates after reaching 30% of TP target)
-- 72h profitable exit: capital efficiency backstop.
+- NO time-based exits. Trades hold until TP, SL, or trailing stop.
 
 TECHNICAL INDICATORS:
 - RSI(14): ${ctx.rsi14.toFixed(2)}
@@ -216,7 +216,7 @@ V2 TRADE MANAGEMENT CONTEXT:
 - Volatility TP: 70% of major swing range (multi-day structural levels). Volatility SL: nearest structural S/R confluence with 0.3% buffer.
 - No ATR-based TP/SL ever. All exits from market structure + spike magnitude analysis.
 - Trailing stop: 30% drawdown from peak unrealized profit (activates only in-profit, SAFETY NET ONLY)
-- 72h profitable exit: close in-profit trades after 72 hours to redeploy capital. No forced closure of losing trades.
+- NO time-based exits. Trades hold 9-44 days until TP, SL, or trailing stop closes them.
 - Position sizing: equity_pct_per_trade * confidence (single entry, no probe/confirmation stages)
 - Expect ~5-30 trades per multi-month backtest (long hold, few trades). NOT hundreds of trades.
 

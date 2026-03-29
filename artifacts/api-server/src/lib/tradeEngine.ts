@@ -200,20 +200,6 @@ export function calculateProfitTrailingStop(params: {
   return { newSl: currentSl, updated: false };
 }
 
-const TIME_EXIT_PROFIT_HOURS = 72;
-
-export function checkTimeExit(params: {
-  entryTs: Date;
-  currentPnl: number;
-}): { shouldExit: boolean; exitReason: string | null } {
-  const hoursOpen = (Date.now() - params.entryTs.getTime()) / 3600000;
-
-  if (hoursOpen >= TIME_EXIT_PROFIT_HOURS && params.currentPnl > 0) {
-    return { shouldExit: true, exitReason: "profitable_after_72h" };
-  }
-
-  return { shouldExit: false, exitReason: null };
-}
 
 export async function openPosition(decision: AllocationDecision, atrPct: number, mode: TradingMode): Promise<number | null> {
   const { signal } = decision;
@@ -501,15 +487,6 @@ export async function manageOpenPositions(): Promise<void> {
         continue;
       }
 
-      const timeCheck = checkTimeExit({
-        entryTs: trade.entryTs,
-        currentPnl: floatingPnl,
-      });
-
-      if (timeCheck.shouldExit) {
-        await closePosition(trade.id, currentPrice, timeCheck.exitReason ?? "time_exit");
-        continue;
-      }
 
     } catch (err) {
       console.error(`[TradeEngine] Error managing trade #${trade.id}:`, err instanceof Error ? err.message : err);

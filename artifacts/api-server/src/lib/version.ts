@@ -36,7 +36,7 @@ export const RELEASES: ReleaseEntry[] = [
       "5 strategy families: trend continuation, mean reversion, spike cluster recovery, swing exhaustion, trendline breakout",
       "Regime-first architecture with 8 market regime classifications",
       "Multi-mode trading: Paper, Demo, Real with independent configuration",
-      "30% trailing stop safety net, 72h profitable exit backstop",
+      "30% trailing stop safety net (no time-based exits)",
       "Multi-window signal confirmation (3 windows, 90min gaps)",
       "Pyramiding support up to 3 positions per symbol",
       "AI verification via GPT-4o",

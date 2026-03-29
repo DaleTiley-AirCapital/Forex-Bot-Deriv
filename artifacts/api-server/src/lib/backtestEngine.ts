@@ -825,15 +825,6 @@ function simulateOnCandles(
         }
       }
 
-      if (!exitPrice && hoursOpen >= 72) {
-        const currentPnl = pos.direction === "buy"
-          ? (candle.close - pos.entryPrice) / pos.entryPrice
-          : (pos.entryPrice - candle.close) / pos.entryPrice;
-        if (currentPnl > 0) {
-          exitPrice = candle.close;
-          exitReason = "profitable_after_72h";
-        }
-      }
 
       if (exitPrice !== null && exitReason !== null) {
         const priceDiff = pos.direction === "buy"
@@ -1464,35 +1455,32 @@ export async function runSymbolBacktest(
   });
 
   const strategies = ["trend_continuation", "mean_reversion", "spike_cluster_recovery", "swing_exhaustion", "trendline_breakout"];
-  const profitableStrategies: SymbolBacktestResult["profitableStrategies"] = [];
+  const allStrategies: SymbolBacktestResult["profitableStrategies"] = [];
 
   for (const stratName of strategies) {
     const stratTrades = result.trades.filter(t => t.strategyName === stratName);
-    if (stratTrades.length === 0) continue;
 
     const netProfit = stratTrades.reduce((s, t) => s + t.pnl, 0);
-    if (netProfit <= 0) continue;
-
     const wins = stratTrades.filter(t => t.pnl > 0);
     const losses = stratTrades.filter(t => t.pnl <= 0);
     const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
     const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
 
-    profitableStrategies.push({
+    allStrategies.push({
       strategyName: stratName,
-      winRate: wins.length / stratTrades.length,
+      winRate: stratTrades.length > 0 ? wins.length / stratTrades.length : 0,
       profitFactor: grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Infinity : 0),
       netProfit,
       tradeCount: stratTrades.length,
-      avgHoldingHours: stratTrades.reduce((s, t) => s + t.holdingHours, 0) / stratTrades.length,
+      avgHoldingHours: stratTrades.length > 0 ? stratTrades.reduce((s, t) => s + t.holdingHours, 0) / stratTrades.length : 0,
       sharpeRatio: result.strategyMetrics[stratName]?.sharpeRatio ?? 0,
-      expectancy: netProfit / stratTrades.length,
+      expectancy: stratTrades.length > 0 ? netProfit / stratTrades.length : 0,
     });
   }
 
   return {
     symbol,
-    profitableStrategies,
+    profitableStrategies: allStrategies,
     portfolioMetrics: result.portfolioMetrics,
     trades: result.trades,
   };

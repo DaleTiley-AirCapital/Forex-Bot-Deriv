@@ -2,7 +2,7 @@
 
 ## Overview
 
-Deriv Trading - Long Hold (v2.0.0) is a quantitative trading research and execution platform designed for Deriv synthetic indices, specifically focusing on Boom, Crash, and Volatility markets. Its primary purpose is to automate and optimize trading strategies through a comprehensive system that includes data collection, backtesting, probability modeling, strategy execution, and sophisticated risk and capital management. The platform targets real moves of 50-200%+, with TP as primary exit, 30% trailing stop as safety net only, and 72h profitable exit as capital efficiency backstop.
+Deriv Trading - Long Hold (v2.0.0) is a quantitative trading research and execution platform designed for Deriv synthetic indices, specifically focusing on Boom, Crash, and Volatility markets. Its primary purpose is to automate and optimize trading strategies through a comprehensive system that includes data collection, backtesting, probability modeling, strategy execution, and sophisticated risk and capital management. The platform targets real moves of 50-200%+, with TP as primary exit and 30% trailing stop as safety net only. No time-based exits — trades hold 9-44 days until TP, SL, or trailing stop.
 
 ## User Preferences
 
@@ -14,7 +14,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 
 **Core Layers:**
 1.  **Data Collector:** Handles tick ingestion, candle building, and spike event detection.
-2.  **Backtesting Engine (V2):** A production-grade simulator mirroring live V2 logic — S/R + Fibonacci TP/SL, 30% profit-based trailing stop (safety net only), 72h profitable exit (capital efficiency), confidence-scaled position sizing, and portfolio-level equity management. Supports walk-forward testing and provides comprehensive metrics.
+2.  **Backtesting Engine (V2):** A production-grade simulator mirroring live V2 logic — S/R + Fibonacci TP/SL, 30% profit-based trailing stop (safety net only), no time-based exits, confidence-scaled position sizing, and portfolio-level equity management. Supports walk-forward testing. Always saves results (including 0-trade strategies) and shows ALL strategies per symbol.
 3.  **Probability Model:** Focuses on feature engineering and gradient boost scoring.
 4.  **Strategy Engine (V2):** Five strategy families: trend_continuation (drift riding after confirmed reversal), mean_reversion (multi-day range extreme entries), spike_cluster_recovery (counter-trend after 3+ spike clusters in 4h), swing_exhaustion (multi-day rally/decline exhaustion at range extremes), trendline_breakout (dynamic trendline breaks with VWAP/pivot confluence).
 5.  **Risk & Capital Manager:** Manages portfolio allocation, daily/weekly/max-drawdown limits, correlated family caps, and includes a kill switch mechanism.
@@ -38,7 +38,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
     -   **Signal Scheduler:** Manages staggered symbol scanning and position management.
     -   **Multi-Window Signal Confirmation:** Signals must be confirmed across 3 consecutive 30-minute windows before being promoted to execution. In-memory pending signal store (`pendingSignals.ts`) tracks confirmation progress per symbol/strategy/direction. Signals expire if gap > 90 minutes between confirmations. Pyramiding requires 3 additional windows + 1% price move in expected direction. Frontend shows pending signals with progress bars on the Decision Review page.
     -   **Pyramiding:** Up to 3 positions per symbol (up from 2). After Trade 1 confirmed, continue monitoring; if 3+ more windows confirm with price moved 1%+ in expected direction, open Trade 2/3. MAX_OPEN_TRADES raised to 6 (up from 3). Trades page groups pyramided positions by symbol with combined P&L.
-    -   **Trade Engine (V2):** Full market move TP/SL. Boom/Crash: TP = 50% of 90-day longTermRangePct (min 10% of entry), targeting 50-200%+ full moves. Volatility: TP = 70% of major swing range from 1500+ candle window (min 2% of entry). SL = TP distance / 5 (fixed 1:5 R:R ratio) with 10% equity safety cap. No structural S/R-based SL, no ATR fallbacks ever. TP is PRIMARY exit; 30% trailing stop is SAFETY NET ONLY — activates only after trade reaches 30% of TP target (before that, only fixed SL protects). 72h profitable exit for capital efficiency — trades at a loss hold until TP, SL, or trailing stop. Composite thresholds: 85 (paper), 90 (demo), 92 (real). Strategy entry thresholds tightened per V2 Blueprint Section 3. Up to 3 positions per symbol (pyramided). See `V2_SPECIFICATION.md`.
+    -   **Trade Engine (V2):** Full market move TP/SL. Boom/Crash: TP = 50% of 90-day longTermRangePct (min 10% of entry), targeting 50-200%+ full moves. Volatility: TP = 70% of major swing range from 1500+ candle window (min 2% of entry). SL = TP distance / 5 (fixed 1:5 R:R ratio) with 10% equity safety cap. No structural S/R-based SL, no ATR fallbacks ever. TP is PRIMARY exit; 30% trailing stop is SAFETY NET ONLY — activates only after trade reaches 30% of TP target (before that, only fixed SL protects). No time-based exits — trades hold 9-44 days. Composite thresholds: 85 (paper), 90 (demo), 92 (real). Up to 3 positions per symbol (pyramided). See `V2_SPECIFICATION.md`.
     -   **Extraction Engine:** Manages capital cycles, targeting profit percentages for auto-extraction.
     -   **Symbol Diagnostics:** `/api/diagnostics/symbols` endpoint and Settings > Diagnostics tab show per-symbol stream health, validation status, tick counts, and errors.
 -   **Database Schema:** Key tables include `ticks`, `candles`, `spike_events`, `features`, `model_runs`, `backtest_trades`, `backtest_runs`, `trades`, `signal_log`, and `platform_state`.
@@ -46,7 +46,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 ### CRITICAL DESIGN MANDATES — DO NOT VIOLATE
 1. **TP is PRIMARY exit** targeting full spike magnitude (50-200%+). Trailing stop is SAFETY NET ONLY. NEVER dilute this to 0.01-0.3% targets.
 2. **Never use ATR-based TP/SL exits.** All exits from market structure and spike magnitude analysis.
-3. **72h profitable exit for capital efficiency** — close in-profit trades after 72 hours to redeploy capital. No forced closure of losing trades.
+3. **No time-based exits** — trades hold 9-44 days until TP, SL, or trailing stop. Research shows this captures full swing magnitude.
 4. **Never compute structural indicators from only 100 one-minute candles.** Use 1500+ candles for structure, 100 for fast indicators.
 5. **Use rolling 60-90 day windows** (not static all-time levels) for spike magnitude analysis.
 6. **Boom/Crash and Volatility treated differently** — 50% of 90-day range TP for Boom/Crash, 70% major swing range TP for Volatility.
@@ -76,7 +76,11 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 
 **Data Backfill:** On startup, auto-backfills 12 months of 1m and 5m candle history for all 12 symbols via paginated Deriv API calls (5,000 candles per page). Uses `onConflictDoNothing` so re-runs fill gaps without duplicating. Partial success model: proceeds if ≥8/12 symbols succeed; failed symbols shown with "Re-download from Research > Data Status". Data older than 12 months is automatically pruned.
 
-**Research Page:** Restructured into two sections: Active Trading Symbols (4) at top with Download & Simulate + Re-run Backtest, and Research & Data Collection below (24 symbols) with Download Data only. Data collection symbols show STREAMING badge, research-only symbols show RESEARCH badge. All 28 symbols available for manual data download. Routes in `artifacts/api-server/src/routes/research.ts`. Backtests now run 1 pass per symbol with all 5 strategies, storing strategyBreakdown in metricsJson.
+**Research Page:** Restructured into two sections: Active Trading Symbols (4) at top with Download & Simulate + Re-run Backtest, and Research & Data Collection below (24 symbols) with Download Data only. Data collection symbols show STREAMING badge, research-only symbols show RESEARCH badge. All 28 symbols available for manual data download. Routes in `artifacts/api-server/src/routes/research.ts`. Backtests now run 1 pass per symbol with all 5 strategies, storing strategyBreakdown in metricsJson. Always saves results (even 0-trade runs). Shows ALL strategies in results (profitable and unprofitable). Grouped-results shows all symbols with data. When data exists, shows "Update Data" + "Re-run Backtest" instead of "Download & Simulate".
+
+**Multi-Timeframe Candle Aggregation:** Live ticks aggregate into 14 timeframes: 1m, 5m, 15m, 1h, 2h, 4h, 8h, 12h, 1d, 2d, 4d, 7d, 15d, 30d. Higher timeframes enable multi-timeframe confluence for higher-conviction entries.
+
+**Strategy Skill File:** `.agents/skills/deriv-trading-strategy/SKILL.md` is the SINGLE SOURCE OF TRUTH for all trading parameters, TP/SL rules, scoring thresholds, empirical research findings, and AI calibration process. All code must conform to this skill.
 
 **New FeatureVector Fields (V2):** `spikeCount4h`, `spikeCount24h`, `spikeCount7d` (rolling spike cluster counts), `priceChange24hPct`, `priceChange7dPct` (multi-day momentum), `distFromRange30dHighPct`, `distFromRange30dLowPct` (range position). Computed in both live features.ts (DB query) and backtestEngine.ts (candle approximation).
 

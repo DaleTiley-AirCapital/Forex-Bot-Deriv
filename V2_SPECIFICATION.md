@@ -31,7 +31,7 @@
 - **Active trading restricted to 4 high-performance symbols** — CRASH300, BOOM300, R_75, R_100.
 - **Boom/Crash and Volatility indices treated differently** — spike-magnitude TP for Boom/Crash, structural S/R for Volatility.
 - **Trailing stop protects realized profit** — trails at 30% below peak unrealized profit, activates after reaching 30% of TP target.
-- **72h profitable exit** — capital efficiency backstop. Losing trades stay open.
+- **No time-based exits** — trades hold 9-44 days until TP, SL, or trailing stop.
 - **Up to 2 positions per symbol** (different strategy families). No multi-stage building.
 - **AI verification as strict gate** — disagree unless all 5 criteria met.
 
@@ -252,9 +252,8 @@ Additional filters: EV ≥ 0.001, R:R ≥ 1.5
 1. **TP hit** (primary exit) — targeting full 50-200%+ moves
 2. **SL hit** — 1:5 R:R derived from TP
 3. **30% trailing stop** — safety net, activates only after 30% of TP target reached
-4. **72h profitable exit** — capital efficiency backstop (open 72h+ AND in profit)
 
-Losing trades after 72h remain open. No forced closure.
+No time-based exits. Research shows trades need 9-44 days. The trailing stop handles profit protection.
 
 ---
 
@@ -325,9 +324,9 @@ The backtest engine (`backtestEngine.ts`) mirrors all V2 logic:
 - Uses `calculateSRFibTP` and `calculateSRFibSL` for entry TP/SL
 - Passes `spikeMagnitudeBySymbol` with `beforeTs` anchor (no lookahead bias)
 - Uses `calculateProfitTrailingStop` for trailing
-- 72h profitable exit for capital efficiency
+- No time-based exits — trades hold until TP, SL, or trailing stop
 - 1500-candle structural window for features
-- Active trading symbols for research routes (data-status, download-simulate, rerun-backtest, grouped-results)
+- All symbols with backtest data shown in grouped-results (not just active trading symbols)
 
 ---
 
@@ -357,7 +356,6 @@ The backtest engine (`backtestEngine.ts`) mirrors all V2 logic:
 | `MAX_EQUITY_DEPLOYED_PCT` | 0.80 | `tradeEngine.ts` |
 | `MAX_OPEN_TRADES` | 3 | `tradeEngine.ts` |
 | `RR_RATIO` | 5 | `tradeEngine.ts` |
-| `TIME_EXIT_PROFIT_HOURS` | 72 | `tradeEngine.ts` |
 | Structural candle window | 1500 | `features.ts` |
 | Fast indicator window | 100 | `features.ts` |
 | Regime cache TTL | 1 hour | `regimeEngine.ts` |

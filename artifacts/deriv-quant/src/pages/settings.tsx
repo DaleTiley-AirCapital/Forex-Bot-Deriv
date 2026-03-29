@@ -1231,13 +1231,13 @@ export default function Settings() {
                   <div className="border-t border-border/30 my-4" />
                   <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Dimension Weights (%)</p>
                   {[
-                    { key: "scoring_weight_range_position", label: "Range Position", desc: "Proximity to 30-day range extreme" },
-                    { key: "scoring_weight_ma_deviation", label: "MA Deviation", desc: "Distance from 7/14-day moving average" },
-                    { key: "scoring_weight_volatility_profile", label: "Volatility Profile", desc: "Elevated ATR rank + BB width" },
-                    { key: "scoring_weight_range_expansion", label: "Range Expansion", desc: "BB width ROC and ATR acceleration" },
-                    { key: "scoring_weight_directional_confirmation", label: "Directional Confirm", desc: "Reversal candle + MA slope change" },
+                    { key: "scoring_weight_range_position", label: "Range Position", desc: "Proximity to 30-day range extreme", defaultVal: "25" },
+                    { key: "scoring_weight_ma_deviation", label: "MA Deviation", desc: "Distance from 7/14-day moving average", defaultVal: "20" },
+                    { key: "scoring_weight_volatility_profile", label: "Volatility Profile", desc: "Elevated ATR rank + BB width", defaultVal: "20" },
+                    { key: "scoring_weight_range_expansion", label: "Range Expansion", desc: "BB width ROC and ATR acceleration", defaultVal: "15" },
+                    { key: "scoring_weight_directional_confirmation", label: "Directional Confirm", desc: "Reversal candle + MA slope change", defaultVal: "20" },
                   ].map(w => (
-                    <SettingField key={w.key} label={w.label} description={w.desc} value={form[w.key] || "20"} onChange={(v) => update(w.key, v)} suffix="%" min={0} max={100} step={1} locked={!unlockedSections.has("scoring")} onUnlock={() => handleUnlockSection("scoring")} aiSuggestion={suggestions[w.key]} onApplySuggestion={() => handleApplySuggestion(w.key)} />
+                    <SettingField key={w.key} label={w.label} description={w.desc} value={form[w.key] || w.defaultVal} onChange={(v) => update(w.key, v)} suffix="%" min={0} max={100} step={1} locked={!unlockedSections.has("scoring")} onUnlock={() => handleUnlockSection("scoring")} aiSuggestion={suggestions[w.key]} onApplySuggestion={() => handleApplySuggestion(w.key)} />
                   ))}
                   {unlockedSections.has("scoring") && <SectionSaveButton sectionKeys={["min_composite_score", "min_ev_threshold", "min_rr_ratio", "scoring_weight_range_position", "scoring_weight_ma_deviation", "scoring_weight_volatility_profile", "scoring_weight_range_expansion", "scoring_weight_directional_confirmation"]} form={form} saving={saving} onSave={handleSaveSection} />}
                 </CardContent>

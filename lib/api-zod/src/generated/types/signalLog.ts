@@ -46,4 +46,12 @@ export interface SignalLog {
   allocationPct: number | null;
   /** @nullable */
   executionStatus: string | null;
+  /** @nullable */
+  expectedMovePct?: number | null;
+  /** @nullable */
+  expectedHoldDays?: number | null;
+  /** @nullable */
+  captureRate?: number | null;
+  /** @nullable */
+  empiricalWinRate?: number | null;
 }

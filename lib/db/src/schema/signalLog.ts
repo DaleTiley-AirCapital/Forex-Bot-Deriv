@@ -26,6 +26,10 @@ export const signalLogTable = pgTable("signal_log", {
   subStrategy: text("sub_strategy"),
   allocationPct: doublePrecision("allocation_pct"),
   executionStatus: text("execution_status"),
+  expectedMovePct: doublePrecision("expected_move_pct"),
+  expectedHoldDays: doublePrecision("expected_hold_days"),
+  captureRate: doublePrecision("capture_rate"),
+  empiricalWinRate: doublePrecision("empirical_win_rate"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

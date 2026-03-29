@@ -146,6 +146,10 @@ CREATE TABLE IF NOT EXISTS signal_log (
   sub_strategy       TEXT,
   allocation_pct     DOUBLE PRECISION,
   execution_status   TEXT,
+  expected_move_pct  DOUBLE PRECISION,
+  expected_hold_days DOUBLE PRECISION,
+  capture_rate       DOUBLE PRECISION,
+  empirical_win_rate DOUBLE PRECISION,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_signals_ts ON signal_log (ts DESC);

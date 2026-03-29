@@ -17,21 +17,21 @@ import { useToast } from "@/hooks/use-toast";
 const V1_DEFAULTS: Record<string, Record<string, string>> = {
   paper: {
     capital: "10000", equity_pct_per_trade: "30", max_open_trades: "4", allocation_mode: "aggressive",
-    min_composite_score: "55", min_ev_threshold: "0.001", min_rr_ratio: "1.5",
+    min_composite_score: "85", min_ev_threshold: "0.001", min_rr_ratio: "1.5",
     max_daily_loss_pct: "8", max_weekly_loss_pct: "15", max_drawdown_pct: "25",
     extraction_target_pct: "50", auto_extraction: "false",
     correlated_family_cap: "4",
   },
   demo: {
     capital: "600", equity_pct_per_trade: "20", max_open_trades: "3", allocation_mode: "balanced",
-    min_composite_score: "65", min_ev_threshold: "0.001", min_rr_ratio: "1.5",
+    min_composite_score: "90", min_ev_threshold: "0.001", min_rr_ratio: "1.5",
     max_daily_loss_pct: "5", max_weekly_loss_pct: "10", max_drawdown_pct: "18",
     extraction_target_pct: "50", auto_extraction: "false",
     correlated_family_cap: "3",
   },
   real: {
     capital: "600", equity_pct_per_trade: "15", max_open_trades: "3", allocation_mode: "balanced",
-    min_composite_score: "75", min_ev_threshold: "0.001", min_rr_ratio: "1.5",
+    min_composite_score: "92", min_ev_threshold: "0.001", min_rr_ratio: "1.5",
     max_daily_loss_pct: "3", max_weekly_loss_pct: "6", max_drawdown_pct: "12",
     extraction_target_pct: "50", auto_extraction: "false",
     correlated_family_cap: "3",
@@ -834,10 +834,10 @@ function ModeSettingsTab({ mode, form, update, suggestions, onApplySuggestion, u
           <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="w-4 h-4" />Trade Management (V2)</CardTitle></CardHeader>
           <CardContent>
             <div className="space-y-2 text-xs text-muted-foreground">
-              <p><strong>TP/SL:</strong> Dynamically calculated using S/R levels + Fibonacci confluence (not configurable — adapts to market structure).</p>
-              <p><strong>Trailing Stop:</strong> 30% drawdown from peak unrealized profit. Activates only when trade is in profit.</p>
-              <p><strong>Time Exits:</strong> 72h profitable = close. 168h hard cap. Negative trades wait for first profit after 72h.</p>
-              <p><strong>Entry:</strong> Up to 2 positions per symbol (different strategies). No multi-stage building.</p>
+              <p><strong>TP/SL:</strong> TP targets 50-200%+ full spike magnitude. SL = TP / 5 (1:5 R:R). Not configurable — adapts to market structure.</p>
+              <p><strong>Trailing Stop:</strong> 30% drawdown from peak unrealized profit. Activates only after reaching 30% of TP target distance.</p>
+              <p><strong>No Time Exits:</strong> Trades hold 9-44 days until TP, SL, or trailing stop closes them.</p>
+              <p><strong>Pyramiding:</strong> Up to 3 positions per symbol (different strategies). Requires 3 confirmations + 1% price move in expected direction.</p>
             </div>
           </CardContent>
         </Card>
@@ -1225,9 +1225,9 @@ export default function Settings() {
                 <CardHeader><CardTitle className="flex items-center gap-2"><Crosshair className="w-4 h-4 text-primary" />Signal Scoring Thresholds</CardTitle></CardHeader>
                 <CardContent>
                   <p className="text-xs text-muted-foreground mb-3">These thresholds apply uniformly across all trading modes. Signals must pass all thresholds to be traded.</p>
-                  <SettingField label="Minimum Composite Score" description="Signals must score at least this high (0-100)" value={form.min_composite_score || "80"} onChange={(v) => update("min_composite_score", v)} min={50} max={100} step={1} locked={!unlockedSections.has("scoring")} onUnlock={() => handleUnlockSection("scoring")} aiSuggestion={suggestions.min_composite_score} onApplySuggestion={() => handleApplySuggestion("min_composite_score")} />
-                  <SettingField label="Minimum Expected Value" description="Minimum expected value required" value={form.min_ev_threshold || "0.003"} onChange={(v) => update("min_ev_threshold", v)} min={0} max={0.1} step={0.001} locked={!unlockedSections.has("scoring")} onUnlock={() => handleUnlockSection("scoring")} aiSuggestion={suggestions.min_ev_threshold} onApplySuggestion={() => handleApplySuggestion("min_ev_threshold")} />
-                  <SettingField label="Minimum Reward/Risk Ratio" description="Minimum TP/SL ratio" value={form.min_rr_ratio || "3.0"} onChange={(v) => update("min_rr_ratio", v)} suffix="x" min={0.5} max={5} step={0.1} locked={!unlockedSections.has("scoring")} onUnlock={() => handleUnlockSection("scoring")} aiSuggestion={suggestions.min_rr_ratio} onApplySuggestion={() => handleApplySuggestion("min_rr_ratio")} />
+                  <SettingField label="Minimum Composite Score" description="Signals must score at least this high (0-100)" value={form.min_composite_score || "85"} onChange={(v) => update("min_composite_score", v)} min={50} max={100} step={1} locked={!unlockedSections.has("scoring")} onUnlock={() => handleUnlockSection("scoring")} aiSuggestion={suggestions.min_composite_score} onApplySuggestion={() => handleApplySuggestion("min_composite_score")} />
+                  <SettingField label="Minimum Expected Value" description="Minimum expected value required" value={form.min_ev_threshold || "0.001"} onChange={(v) => update("min_ev_threshold", v)} min={0} max={0.1} step={0.001} locked={!unlockedSections.has("scoring")} onUnlock={() => handleUnlockSection("scoring")} aiSuggestion={suggestions.min_ev_threshold} onApplySuggestion={() => handleApplySuggestion("min_ev_threshold")} />
+                  <SettingField label="Minimum Reward/Risk Ratio" description="Minimum TP/SL ratio" value={form.min_rr_ratio || "1.5"} onChange={(v) => update("min_rr_ratio", v)} suffix="x" min={0.5} max={10} step={0.1} locked={!unlockedSections.has("scoring")} onUnlock={() => handleUnlockSection("scoring")} aiSuggestion={suggestions.min_rr_ratio} onApplySuggestion={() => handleApplySuggestion("min_rr_ratio")} />
                   <div className="border-t border-border/30 my-4" />
                   <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Dimension Weights (%)</p>
                   {[

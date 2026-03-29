@@ -372,6 +372,10 @@ export async function logSignalDecisions(decisions: AllocationDecision[], tradin
         subStrategy: d.signal.strategyName ?? null,
         allocationPct: d.capitalAllocationPct > 0 ? d.capitalAllocationPct * 100 : null,
         executionStatus: d.allowed ? "approved" : "blocked",
+        expectedMovePct: d.signal.expectedMovePct ?? null,
+        expectedHoldDays: d.signal.expectedHoldDays ?? null,
+        captureRate: d.signal.captureRate ?? null,
+        empiricalWinRate: d.signal.empiricalWinRate ?? null,
       });
     } catch (err) {
       console.error(`[SignalLog] INSERT failed for ${d.signal.symbol}/${d.signal.strategyName}:`, err instanceof Error ? err.message : err);

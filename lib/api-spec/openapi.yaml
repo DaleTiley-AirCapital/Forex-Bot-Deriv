@@ -1301,6 +1301,14 @@ components:
           type: ["number", "null"]
         executionStatus:
           type: ["string", "null"]
+        expectedMovePct:
+          type: ["number", "null"]
+        expectedHoldDays:
+          type: ["number", "null"]
+        captureRate:
+          type: ["number", "null"]
+        empiricalWinRate:
+          type: ["number", "null"]
       required:
         - id
         - ts

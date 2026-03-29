@@ -203,7 +203,17 @@ function SignalDetailPanel({ sig }: { sig: SignalLog }) {
         {sig.regime && (
           <div className="pt-2 border-t border-border/20 space-y-1">
             <DetailRow label="Regime" value={sig.regime} />
-            <DetailRow label="Confidence" value={sig.regimeConfidence != null ? `${(sig.regimeConfidence * 100).toFixed(0)}%` : "—"} />
+            <DetailRow label="Regime Certainty" value={sig.regimeConfidence != null ? `${(sig.regimeConfidence * 100).toFixed(0)}%` : "—"} />
+          </div>
+        )}
+
+        {(sig.expectedMovePct != null || sig.expectedHoldDays != null || sig.captureRate != null || sig.empiricalWinRate != null) && (
+          <div className="pt-2 border-t border-border/20 space-y-1">
+            <h4 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Signal Intelligence</h4>
+            {sig.expectedMovePct != null && <DetailRow label="Expected Move" value={`${(sig.expectedMovePct * 100).toFixed(1)}%`} highlight="green" />}
+            {sig.expectedHoldDays != null && <DetailRow label="Expected Hold" value={`${sig.expectedHoldDays.toFixed(0)} days`} />}
+            {sig.captureRate != null && <DetailRow label="Capture Rate" value={`${(sig.captureRate * 100).toFixed(0)}%`} />}
+            {sig.empiricalWinRate != null && <DetailRow label="Win Rate" value={`${(sig.empiricalWinRate * 100).toFixed(0)}%`} />}
           </div>
         )}
       </div>
@@ -327,6 +337,8 @@ export default function Signals() {
       score: s.score, expectedValue: s.expectedValue, regime: s.regime,
       regimeConfidence: s.regimeConfidence, allocationPct: s.allocationPct,
       suggestedTp: s.suggestedTp, suggestedSl: s.suggestedSl,
+      expectedMovePct: s.expectedMovePct, expectedHoldDays: s.expectedHoldDays,
+      captureRate: s.captureRate, empiricalWinRate: s.empiricalWinRate,
       status: s.allowedFlag ? "approved" : "blocked", rejectionReason: s.rejectionReason,
       aiVerdict: s.aiVerdict, aiReasoning: s.aiReasoning, mode: s.mode,
     })), "signals_log");
@@ -592,9 +604,6 @@ export default function Signals() {
                           {sig.regime ? (
                             <div className="flex flex-col gap-0.5">
                               <span className="text-xs text-foreground">{sig.regime}</span>
-                              {sig.regimeConfidence != null && (
-                                <span className="text-[10px] mono-num text-muted-foreground">{(sig.regimeConfidence * 100).toFixed(0)}%</span>
-                              )}
                             </div>
                           ) : (
                             <span className="text-xs text-muted-foreground/50">—</span>

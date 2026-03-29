@@ -24,7 +24,7 @@ router.post("/models/train", async (req, res): Promise<void> => {
     await buildAndStoreFeaturesForSymbol(symbol);
 
     const metrics = { accuracy: 1.0, precision: 1.0, recall: 1.0, f1: 1.0 };
-    await saveModelRun(symbol, modelName, trainingWindowDays, metrics, { type: "empirical-v2" });
+    await saveModelRun(symbol, modelName, trainingWindowDays, metrics, { empirical_v2: 1 });
 
     res.json({
       success: true,

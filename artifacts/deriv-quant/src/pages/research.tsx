@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, Button, Badge, Input } from "
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 import {
   Database, Download, RefreshCw, Play, Brain, Send, X, ChevronDown, ChevronUp,
-  CheckCircle2, AlertTriangle, XCircle, Loader2, BarChart2, TrendingUp,
+  CheckCircle2, AlertTriangle, XCircle, Loader2, BarChart2, TrendingUp, FileDown, Table,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -408,6 +408,27 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
           {sym.oldestDate && <span>From: {new Date(sym.oldestDate).toLocaleDateString()}</span>}
           {sym.newestDate && <span>To: {new Date(sym.newestDate).toLocaleDateString()}</span>}
         </div>
+
+        {sym.totalCandles > 0 && (
+          <div className="flex gap-1.5 mb-2">
+            <a
+              href={api(`/research/export-candles?symbol=${encodeURIComponent(sym.symbol)}&format=excel`)}
+              download
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+            >
+              <Table className="w-3 h-3" />
+              Excel
+            </a>
+            <a
+              href={api(`/research/export-candles?symbol=${encodeURIComponent(sym.symbol)}&format=json`)}
+              download
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
+            >
+              <FileDown className="w-3 h-3" />
+              JSON
+            </a>
+          </div>
+        )}
 
         {sym.lastBacktestDate && (
           <p className="text-[10px] text-muted-foreground">

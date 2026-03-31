@@ -18,6 +18,22 @@ import { ACTIVE_TRADING_SYMBOLS } from "./deriv.js";
 const DEFAULT_SYMBOLS = ACTIVE_TRADING_SYMBOLS;
 const DEFAULT_SCAN_INTERVAL_MS = 60_000;
 const DEFAULT_STAGGER_SECONDS = 10;
+
+async function dbWithRetry<T>(fn: () => Promise<T>, label: string, maxAttempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Scheduler] DB retry ${attempt}/${maxAttempts} for "${label}": ${msg}`);
+      if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 1000 * attempt));
+    }
+  }
+  throw lastErr;
+}
+
 const POSITION_MGMT_INTERVAL_MS = 10_000;
 
 const STRATEGY_FAMILIES = ["trend_continuation", "mean_reversion", "spike_cluster_recovery", "swing_exhaustion", "trendline_breakout"] as const;
@@ -324,7 +340,10 @@ async function scheduleStaggeredScan(symbols: string[], staggerMs: number): Prom
   staggerSymbolIndex++;
 
   try {
-    const freshStates = await db.select().from(platformStateTable);
+    const freshStates = await dbWithRetry(
+      () => db.select().from(platformStateTable),
+      `platform_state read (stagger scan ${symbol})`,
+    );
     const freshMap: Record<string, string> = {};
     for (const s of freshStates) freshMap[s.key] = s.value;
     await scanSingleSymbol(symbol, freshMap);
@@ -339,7 +358,10 @@ async function scheduleStaggeredScan(symbols: string[], staggerMs: number): Prom
 
 async function scanCycle(): Promise<void> {
   try {
-    const states = await db.select().from(platformStateTable);
+    const states = await dbWithRetry(
+      () => db.select().from(platformStateTable),
+      "platform_state read (scan cycle)",
+    );
     const stateMap: Record<string, string> = {};
     for (const s of states) stateMap[s.key] = s.value;
 
@@ -390,7 +412,10 @@ async function scanCycle(): Promise<void> {
 
 async function positionManagementCycle(): Promise<void> {
   try {
-    const states = await db.select().from(platformStateTable);
+    const states = await dbWithRetry(
+      () => db.select().from(platformStateTable),
+      "platform_state read (position management)",
+    );
     const stateMap: Record<string, string> = {};
     for (const s of states) stateMap[s.key] = s.value;
 

@@ -358,7 +358,7 @@ async function runSetupInBackground(send: (data: Record<string, unknown>) => voi
         const nowEpoch = Math.floor(Date.now() / 1000);
         const targetRangeStart = nowEpoch - 365 * 24 * 3600;
 
-        const recentWindowSecs = tf === "1m" ? 4 * 3600 : 2 * 3600;
+        const recentWindowSecs = 24 * 3600;
         const isRecent = existingMaxTs > 0 && existingMaxTs >= nowEpoch - recentWindowSecs;
         const hasAnyData = existingCnt > 0 && existingMaxTs > targetRangeStart;
         const stopEpoch = hasAnyData ? existingMaxTs + 1 : targetRangeStart;

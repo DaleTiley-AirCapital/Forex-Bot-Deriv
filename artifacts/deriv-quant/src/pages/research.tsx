@@ -339,7 +339,7 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
                 }));
               }
             } else if (parsed.phase !== "done") {
-              setSSEProgress(prev => ({ ...prev, [symbol]: { phase: parsed.phase as string, symbol, message: String(parsed.message ?? "") } }));
+              setSSEProgress(prev => ({ ...prev, [symbol]: { phase: parsed.phase as string, symbol, message: String(parsed.message ?? ""), pct: parsed.pct as number | undefined } }));
             }
           } catch { /* malformed line — skip */ }
         }
@@ -547,7 +547,7 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
                     />
                   </div>
                   <p className="text-[10px] text-blue-300">
-                    {progress?.phase === "progress" && progress.pct != null
+                    {progress?.pct != null
                       ? `${progress.pct}% — ${progress.message || "scanning…"}`
                       : (progress?.message || "Starting simulation…")}
                   </p>

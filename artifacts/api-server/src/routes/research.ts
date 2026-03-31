@@ -370,7 +370,7 @@ router.post("/research/rerun-backtest", async (req, res): Promise<void> => {
       (evt) => {
         const msg = evt.strategyName
           ? `[${evt.dateLabel}] Signal: ${evt.strategyName} ${evt.direction ?? ""} score=${evt.score}`
-          : `[${evt.dateLabel}] ${evt.pct}% — ${evt.openPositions} open position${evt.openPositions !== 1 ? "s" : ""}`;
+          : `[${evt.dateLabel}] ${evt.openPositions} open position${evt.openPositions !== 1 ? "s" : ""}`;
         send({
           phase: "progress",
           symbol,

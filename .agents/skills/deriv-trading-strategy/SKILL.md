@@ -351,10 +351,11 @@ Additional filters: EV ≥ 0.001, R:R ≥ 1.5
 Signals must persist across 2 consecutive 60-minute evaluation windows:
 - Window = 60 minutes (1 hour boundary)
 - Required confirmations = 2 (initial detection + 1 re-confirmation)
-- Price must not reverse >0.5% against signal direction between windows
 - Stale expiry = 4 hours (if gap > 4h between confirmations, signal resets)
 - Pyramiding requires 3 confirmations + 1% price move in expected direction
 - Implemented in `pendingSignals.ts`
+
+**No price-move invalidation between windows.** A previous implementation deleted pending signals when price moved >0.5% against the signal direction. This was removed (Task #69) because it incorrectly fired on normal crash/boom spike behaviour — CRASH300 BUY setups involve 5-14% downward spikes as their DEFINING PATTERN (see Section 2). Invalidation now happens only via `invalidateUnconfirmedPending()`: if the strategy stops generating the signal in a window, it is removed.
 
 **Design note — why fixed 60m windows instead of per-symbol candle-boundary confirmation:**
 Indicator HTF timeframes (4h-12h) are too long for confirmation windows. Waiting 12+ hours for a single CRASH300 confirmation would miss actionable entries. The 60-minute fixed window provides a practical balance: long enough to filter noise, short enough to capture signals while the setup is still valid. Indicator timeframes control *what* the scoring sees; confirmation windows control *how long* a signal must persist before execution.

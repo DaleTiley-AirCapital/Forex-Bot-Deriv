@@ -85,18 +85,6 @@ export function confirmSignal(
     return { promoted: false, pending: entry };
   }
 
-  const priceMoveDir = entry.direction === "buy"
-    ? (currentPrice - entry.priceAtFirst) / entry.priceAtFirst
-    : (entry.priceAtFirst - currentPrice) / entry.priceAtFirst;
-
-  if (priceMoveDir < -0.005) {
-    pendingSignals.delete(key);
-    return {
-      promoted: false,
-      pending: { ...entry, confirmCount: 0 },
-    };
-  }
-
   entry.confirmCount++;
   entry.lastConfirmedAt = now;
   entry.lastCompositeScore = candidate.compositeScore;
@@ -106,6 +94,9 @@ export function confirmSignal(
   entry.windowTimestamps.push(windowTs);
 
   if (existingPositionCount > 0) {
+    const priceMoveDir = entry.direction === "buy"
+      ? (currentPrice - entry.priceAtFirst) / entry.priceAtFirst
+      : (entry.priceAtFirst - currentPrice) / entry.priceAtFirst;
     if (priceMoveDir < PYRAMID_PRICE_MOVE_PCT) {
       return { promoted: false, pending: entry };
     }

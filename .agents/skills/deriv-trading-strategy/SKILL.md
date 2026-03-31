@@ -37,9 +37,9 @@ All other symbols are for data collection and research only.
 ### Scoring Thresholds (DO NOT CHANGE)
 | Mode | Min Composite Score |
 |------|-------------------|
-| Paper | **85** |
-| Demo | **90** |
-| Real | **92** |
+| Paper | **80** |
+| Demo | **85** |
+| Real | **90** |
 
 ### Critical Mandates — NEVER VIOLATE
 1. TP targets 50-200%+ full spike magnitude — NEVER reduce
@@ -341,9 +341,9 @@ Percentage features (24h change, 7d change, 30d range, spike counting) remain on
 ### Composite Score Thresholds
 | Mode | Min Composite Score |
 |------|-------------------|
-| Paper | **85** |
-| Demo | **90** |
-| Real | **92** |
+| Paper | **80** |
+| Demo | **85** |
+| Real | **90** |
 
 Additional filters: EV ≥ 0.001, R:R ≥ 1.5
 

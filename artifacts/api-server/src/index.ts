@@ -177,6 +177,10 @@ async function initDb(): Promise<void> {
       sub_strategy       TEXT,
       allocation_pct     DOUBLE PRECISION,
       execution_status   TEXT,
+      expected_move_pct  DOUBLE PRECISION,
+      expected_hold_days DOUBLE PRECISION,
+      capture_rate       DOUBLE PRECISION,
+      empirical_win_rate DOUBLE PRECISION,
       created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_signals_ts ON signal_log (ts DESC);
@@ -205,6 +209,10 @@ async function initDb(): Promise<void> {
     "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS sub_strategy TEXT",
     "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS allocation_pct DOUBLE PRECISION",
     "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS execution_status TEXT",
+    "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS expected_move_pct DOUBLE PRECISION",
+    "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS expected_hold_days DOUBLE PRECISION",
+    "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS capture_rate DOUBLE PRECISION",
+    "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS empirical_win_rate DOUBLE PRECISION",
   ];
   for (const stmt of migrations) {
     try {

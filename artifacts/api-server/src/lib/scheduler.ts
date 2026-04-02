@@ -6,7 +6,7 @@ import { openPosition, manageOpenPositions } from "./tradeEngine.js";
 import { verifySignal } from "./openai.js";
 import { classifyRegime, classifyRegimeFromHTF, classifyInstrument, getCachedRegime, cacheRegime, accumulateHourlyFeatures } from "./regimeEngine.js";
 import { db, platformStateTable, tradesTable, candlesTable, ticksTable, backtestRunsTable, backtestTradesTable } from "@workspace/db";
-import { eq, desc, and, lt, gte, asc } from "drizzle-orm";
+import { eq, desc, and, lt, gte, asc, sql, inArray } from "drizzle-orm";
 import { runBacktestSimulation } from "./backtestEngine.js";
 import { getActiveModes, isAnyModeActive } from "./deriv.js";
 import type { TradingMode } from "./deriv.js";
@@ -744,13 +744,29 @@ async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise
     }
   }
 
+  const [minRow] = await db.select({ minTs: sql<number>`min(${candlesTable.openTs})` })
+    .from(candlesTable)
+    .where(inArray(candlesTable.symbol, enabledSymbols));
+  const twelveMonthsAgo = new Date();
+  twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+  let monthlyStartDate: Date | undefined;
+  if (minRow?.minTs) {
+    const firstCandleDate = new Date(minRow.minTs * 1000);
+    monthlyStartDate = firstCandleDate > twelveMonthsAgo ? firstCandleDate : twelveMonthsAgo;
+    const monthsAvail = Math.round((Date.now() - firstCandleDate.getTime()) / (30 * 24 * 3600 * 1000));
+    console.log(`[Monthly] ${monthsAvail} month(s) of data available — using window from ${monthlyStartDate.toISOString().slice(0, 10)}`);
+  } else {
+    monthlyStartDate = twelveMonthsAgo;
+    console.log(`[Monthly] No candle data found — defaulting to 12-month window from ${monthlyStartDate.toISOString().slice(0, 10)}`);
+  }
+
   let ran = 0;
   const comboResults: { strategy: string; symbol: string; pf: number; hold: number; score: number }[] = [];
 
   for (const { strategy, symbol } of combinations) {
     console.log(`[Monthly] Backtest ${ran + 1}/${combinations.length}: ${strategy} × ${symbol}...`);
     try {
-      const result = await runBacktestSimulation(strategy, symbol, initialCapital, "balanced");
+      const result = await runBacktestSimulation(strategy, symbol, initialCapital, "balanced", monthlyStartDate);
 
       await db.insert(backtestRunsTable).values({
         strategyName: strategy,

@@ -744,17 +744,13 @@ async function runMonthlyOptimisation(stateMap: Record<string, string>): Promise
     }
   }
 
-  const twelveMonthsAgo = new Date();
-  twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
-  console.log(`[Monthly] Using 12-month rolling window from ${twelveMonthsAgo.toISOString().slice(0, 10)}`);
-
   let ran = 0;
   const comboResults: { strategy: string; symbol: string; pf: number; hold: number; score: number }[] = [];
 
   for (const { strategy, symbol } of combinations) {
     console.log(`[Monthly] Backtest ${ran + 1}/${combinations.length}: ${strategy} × ${symbol}...`);
     try {
-      const result = await runBacktestSimulation(strategy, symbol, initialCapital, "balanced", twelveMonthsAgo);
+      const result = await runBacktestSimulation(strategy, symbol, initialCapital, "balanced");
 
       await db.insert(backtestRunsTable).values({
         strategyName: strategy,

@@ -1,5 +1,5 @@
-import { db, candlesTable, platformStateTable } from "@workspace/db";
-import { eq, and, asc, gte, lte } from "drizzle-orm";
+import { db, backgroundDb, candlesTable, platformStateTable } from "@workspace/db";
+import { eq, and, asc, gte, lte, sql } from "drizzle-orm";
 import { runAllStrategies, type SignalCandidate } from "./strategies.js";
 import { calculateAdaptiveTrailingStop, calculateSRFibTP, calculateSRFibSL } from "./tradeEngine.js";
 import { classifyRegime, type RegimeClassification } from "./regimeEngine.js";
@@ -710,7 +710,7 @@ export async function loadCandles(
     conditions.push(lte(candlesTable.openTs, Math.floor(endDate.getTime() / 1000)));
   }
 
-  const rows = await db.select().from(candlesTable)
+  const rows = await backgroundDb.select().from(candlesTable)
     .where(and(...conditions))
     .orderBy(asc(candlesTable.openTs));
 
@@ -1399,6 +1399,20 @@ export async function runBacktestSimulation(
   const basePct = allocationMode === "aggressive" ? 0.25
     : allocationMode === "conservative" ? 0.10 : 0.15;
 
+  if (!startDate) {
+    const [minRow] = await db.select({ minTs: sql<number>`min(${candlesTable.openTs})` })
+      .from(candlesTable)
+      .where(eq(candlesTable.symbol, symbol));
+    if (minRow?.minTs) {
+      const firstCandleDate = new Date(minRow.minTs * 1000);
+      const twelveMonthsAgo = new Date();
+      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+      startDate = firstCandleDate > twelveMonthsAgo ? firstCandleDate : twelveMonthsAgo;
+      const monthsAvail = Math.round((Date.now() - firstCandleDate.getTime()) / (30 * 24 * 3600 * 1000));
+      console.log(`[Backtest] ${symbol}: ${monthsAvail} month(s) of data available — window from ${startDate.toISOString().slice(0, 10)}`);
+    }
+  }
+
   const states = await db.select().from(platformStateTable);
   const stateMap: Record<string, string> = {};
   for (const s of states) stateMap[s.key] = s.value;
@@ -1489,10 +1503,25 @@ export async function runSymbolBacktest(
   initialCapital: number,
   allocationMode: string,
   onProgress?: ProgressCallback,
+  startDate?: Date,
 ): Promise<SymbolBacktestResult> {
   const mode = allocationMode === "aggressive" ? "live" as const : "paper" as const;
   const basePct = allocationMode === "aggressive" ? 0.25
     : allocationMode === "conservative" ? 0.10 : 0.15;
+
+  if (!startDate) {
+    const [minRow] = await db.select({ minTs: sql<number>`min(${candlesTable.openTs})` })
+      .from(candlesTable)
+      .where(eq(candlesTable.symbol, symbol));
+    if (minRow?.minTs) {
+      const firstCandleDate = new Date(minRow.minTs * 1000);
+      const twelveMonthsAgo = new Date();
+      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+      startDate = firstCandleDate > twelveMonthsAgo ? firstCandleDate : twelveMonthsAgo;
+      const monthsAvail = Math.round((Date.now() - firstCandleDate.getTime()) / (30 * 24 * 3600 * 1000));
+      console.log(`[Backtest] ${symbol}: ${monthsAvail} month(s) of data available — window from ${startDate.toISOString().slice(0, 10)}`);
+    }
+  }
 
   const states = await db.select().from(platformStateTable);
   const stateMap: Record<string, string> = {};
@@ -1521,6 +1550,7 @@ export async function runSymbolBacktest(
     initialCapital,
     mode,
     basePct,
+    startDate,
     minCompositeScore: parseFloat(stateMap["min_composite_score"] || "80"),
     minEvThreshold: parseFloat(stateMap["min_ev_threshold"] || "0.001"),
     minRrRatio: parseFloat(stateMap["min_rr_ratio"] || "1.5"),

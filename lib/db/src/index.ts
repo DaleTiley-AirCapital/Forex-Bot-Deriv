@@ -25,4 +25,19 @@ pool.on("error", (err) => {
 
 export const db = drizzle(pool, { schema });
 
+export const backgroundPool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
+  idleTimeoutMillis: 60_000,
+  connectionTimeoutMillis: 60_000,
+  max: 2,
+});
+
+backgroundPool.on("error", (err) => {
+  console.error("[DB:bg] Background pool error:", err.message);
+});
+
+export const backgroundDb = drizzle(backgroundPool, { schema });
+
 export * from "./schema";

@@ -50,15 +50,6 @@ interface StrategyBreakdown {
   backtestId: number;
 }
 
-interface GroupedSymbol {
-  symbol: string;
-  latestBacktestId: number;
-  latestBacktestDate: string;
-  strategies: StrategyBreakdown[];
-  portfolioNetProfit: number;
-  portfolioWinRate: number;
-}
-
 interface BacktestHistoryRun {
   id: number;
   createdAt: string;
@@ -223,7 +214,7 @@ function AIChatPanel({ backtestId, onClose }: { backtestId: number; onClose: () 
   );
 }
 
-function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => void }) {
+function DataStatusSection() {
   const [data, setData] = useState<DataStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
@@ -232,6 +223,11 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
   const [runningSymbol, setRunningSymbol] = useState<string | null>(null);
   const [rerunning, setRerunning] = useState<string | null>(null);
   const [pruning, setPruning] = useState(false);
+
+  const [symbolHistory, setSymbolHistory] = useState<Record<string, BacktestHistoryRun[]>>({});
+  const [selectedRunId, setSelectedRunId] = useState<Record<string, number>>({});
+  const [chatBacktestId, setChatBacktestId] = useState<number | null>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState<Record<string, number>>({});
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
@@ -245,6 +241,24 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
   }, []);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  const fetchHistory = useCallback(async (symbol: string): Promise<BacktestHistoryRun[]> => {
+    try {
+      const res = await fetch(api(`/research/backtest-history?symbol=${symbol}`));
+      const json = await res.json();
+      if (json.runs) {
+        setSymbolHistory(prev => ({ ...prev, [symbol]: json.runs as BacktestHistoryRun[] }));
+        return json.runs as BacktestHistoryRun[];
+      }
+    } catch { /* ignore */ }
+    return [];
+  }, []);
+
+  useEffect(() => {
+    if (expandedSymbol && !symbolHistory[expandedSymbol]) {
+      fetchHistory(expandedSymbol);
+    }
+  }, [expandedSymbol, fetchHistory, symbolHistory]);
 
   const handleDownloadSimulate = useCallback(async (symbol: string) => {
     setRunningSymbol(symbol);
@@ -280,18 +294,17 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
     } finally {
       setRunningSymbol(null);
       fetchStatus();
-      onBacktestComplete?.();
     }
-  }, [fetchStatus, onBacktestComplete]);
+  }, [fetchStatus]);
 
-  const handleRerunBacktest = useCallback(async (symbol: string) => {
+  const handleRerunBacktest = useCallback(async (symbol: string, historicYears: number = 1) => {
     setRerunning(symbol);
     setBacktestLog(prev => ({ ...prev, [symbol]: [] }));
     try {
       const res = await fetch(api("/research/rerun-backtest"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol }),
+        body: JSON.stringify({ symbol, historicYears }),
       });
 
       if (!res.ok || !res.body) {
@@ -353,7 +366,7 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
           [symbol]: {
             phase: "backtest_complete",
             symbol,
-            profitableStrategies: json.profitableStrategies,
+            profitableStrategies: json.profitableStrategies as Array<{ strategyName: string; winRate: number; netProfit: number; tradeCount: number }> | undefined,
             message: String(json.message) || `Re-run complete: ${profitableCount} profitable strategies`,
           },
         }));
@@ -365,9 +378,12 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
     } finally {
       setRerunning(null);
       fetchStatus();
-      onBacktestComplete?.();
+      const newHistory = await fetchHistory(symbol);
+      if (newHistory.length > 0) {
+        setSelectedRunId(prev => ({ ...prev, [symbol]: newHistory[0].id }));
+      }
     }
-  }, [fetchStatus, onBacktestComplete]);
+  }, [fetchStatus, fetchHistory]);
 
   const handlePrune = useCallback(async () => {
     setPruning(true);
@@ -398,6 +414,11 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
     const isRunning = runningSymbol === sym.symbol;
     const isRerunning = rerunning === sym.symbol;
     const isExpanded = expandedSymbol === sym.symbol;
+    const history = symbolHistory[sym.symbol] ?? [];
+    const period = selectedPeriod[sym.symbol] ?? 1;
+    const activeRunId = selectedRunId[sym.symbol] ?? history[0]?.id;
+    const activeRun = history.find(r => r.id === activeRunId);
+    const strategies = activeRun?.metricsJson?.strategyBreakdown ?? [];
 
     return (
       <div
@@ -494,7 +515,8 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
               exit={{ opacity: 0, height: 0 }}
               className="mt-3 pt-3 border-t border-border/30 space-y-2"
             >
-              <div className="flex gap-2">
+              {/* Action buttons row */}
+              <div className="flex gap-2 items-center">
                 {sym.totalCandles === 0 ? (
                   <Button
                     variant="primary"
@@ -507,16 +529,30 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
                     {isRunning ? "Running..." : showBacktest ? "Download & Simulate" : "Download Data"}
                   </Button>
                 ) : showBacktest ? (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => handleRerunBacktest(sym.symbol)}
-                    disabled={isRerunning || !!runningSymbol}
-                    className="flex-1 text-xs h-7"
-                  >
-                    {isRerunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}
-                    {isRerunning ? "Running..." : "Re-run Backtest"}
-                  </Button>
+                  <>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => handleRerunBacktest(sym.symbol, period)}
+                      disabled={isRerunning || !!runningSymbol}
+                      className="flex-1 text-xs h-7"
+                    >
+                      {isRerunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}
+                      {isRerunning ? "Running..." : "Re-run Backtest"}
+                    </Button>
+                    <select
+                      className="bg-muted/30 border border-border/50 rounded px-2 py-1 text-xs text-foreground h-7"
+                      value={period}
+                      onChange={e => setSelectedPeriod(prev => ({ ...prev, [sym.symbol]: parseInt(e.target.value) }))}
+                      disabled={isRerunning || !!runningSymbol}
+                    >
+                      <option value={1}>1 Year</option>
+                      <option value={2}>2 Years</option>
+                      <option value={3}>3 Years</option>
+                      <option value={4}>4 Years</option>
+                      <option value={5}>5 Years</option>
+                    </select>
+                  </>
                 ) : (
                   <Button
                     variant="outline"
@@ -530,6 +566,8 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
                   </Button>
                 )}
               </div>
+
+              {/* Download progress */}
               {isRunning && (
                 <div className="space-y-1.5">
                   <div className="w-full h-1.5 bg-muted/30 rounded-full overflow-hidden">
@@ -538,6 +576,8 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
                   <p className="text-[10px] text-blue-300">{progress?.message || "Starting..."}</p>
                 </div>
               )}
+
+              {/* Rerun progress + log */}
               {isRerunning && (
                 <div className="space-y-1.5">
                   <div className="relative h-1.5 w-full bg-muted/30 rounded-full overflow-hidden">
@@ -570,6 +610,94 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Inline backtest results (only for active symbols with history) */}
+              {showBacktest && history.length > 0 && !isRerunning && (
+                <div className="space-y-3 pt-2 border-t border-border/20">
+                  {/* History header + run dropdown */}
+                  <div className="flex items-center gap-2">
+                    <BarChart2 className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium text-muted-foreground">Backtest Results</span>
+                    <div className="flex-1" />
+                    <select
+                      className="bg-muted/30 border border-border/50 rounded px-2 py-1 text-xs text-foreground"
+                      value={activeRunId ?? ""}
+                      onChange={e => setSelectedRunId(prev => ({ ...prev, [sym.symbol]: parseInt(e.target.value) }))}
+                    >
+                      {history.map((run, idx) => (
+                        <option key={run.id} value={run.id}>
+                          #{idx + 1} — {new Date(run.createdAt).toLocaleDateString()} ({formatCurrency(run.netProfit)}, {run.tradeCount} trades)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Strategy breakdown table */}
+                  {strategies.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-2">No strategy data for this run.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-border/50">
+                            <th className="text-left px-2 py-1.5 text-muted-foreground font-medium">Strategy</th>
+                            <th className="text-right px-2 py-1.5 text-muted-foreground font-medium">Net Profit</th>
+                            <th className="text-right px-2 py-1.5 text-muted-foreground font-medium">Win Rate</th>
+                            <th className="text-right px-2 py-1.5 text-muted-foreground font-medium">PF</th>
+                            <th className="text-right px-2 py-1.5 text-muted-foreground font-medium">Trades</th>
+                            <th className="text-right px-2 py-1.5 text-muted-foreground font-medium">Avg Hold</th>
+                            <th className="px-2 py-1.5"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {strategies.map(strat => (
+                            <tr key={strat.strategyName} className={cn("border-b border-border/10 hover:bg-muted/10", strat.netProfit <= 0 && strat.tradeCount === 0 && "opacity-40")}>
+                              <td className="px-2 py-1.5 font-medium">{STRATEGY_LABELS[strat.strategyName] ?? strat.strategyName}</td>
+                              <td className={cn("px-2 py-1.5 text-right mono-num", strat.netProfit > 0 ? "text-green-400" : strat.netProfit < 0 ? "text-red-400" : "text-muted-foreground")}>{formatCurrency(strat.netProfit)}</td>
+                              <td className="px-2 py-1.5 text-right mono-num">{strat.tradeCount > 0 ? formatPercent(strat.winRate) : "—"}</td>
+                              <td className="px-2 py-1.5 text-right mono-num">{strat.tradeCount === 0 ? "—" : strat.profitFactor == null ? "—" : strat.profitFactor === Infinity ? "∞" : strat.profitFactor.toFixed(2)}</td>
+                              <td className="px-2 py-1.5 text-right mono-num">{strat.tradeCount}</td>
+                              <td className="px-2 py-1.5 text-right mono-num text-muted-foreground">{strat.avgHoldingHours != null && strat.tradeCount > 0 ? `${(strat.avgHoldingHours / 24).toFixed(1)}d` : "—"}</td>
+                              <td className="px-2 py-1.5">
+                                <button
+                                  onClick={() => setChatBacktestId(strat.backtestId ?? activeRunId ?? null)}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-violet-400 hover:bg-violet-500/10 transition-colors"
+                                >
+                                  <Brain className="w-2.5 h-2.5" /> AI
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Equity curve */}
+                  {activeRun && (
+                    <EquityCurveChart metricsJson={activeRun.metricsJson} />
+                  )}
+
+                  {/* AI Chat panel */}
+                  <AnimatePresence>
+                    {chatBacktestId != null && (
+                      <AIChatPanel
+                        backtestId={chatBacktestId}
+                        onClose={() => setChatBacktestId(null)}
+                      />
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+
+              {/* Empty state for active symbols with no history yet */}
+              {showBacktest && history.length === 0 && !isRerunning && (
+                <div className="pt-2 border-t border-border/20">
+                  <p className="text-xs text-muted-foreground text-center py-2">
+                    No backtest history. Run a backtest above to see results.
+                  </p>
                 </div>
               )}
             </motion.div>
@@ -631,245 +759,7 @@ function DataStatusSection({ onBacktestComplete }: { onBacktestComplete?: () => 
   );
 }
 
-function GroupedResultsSection({ refreshTrigger }: { refreshTrigger: number }) {
-  const [data, setData] = useState<{ symbols: GroupedSymbol[] } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
-  const [chatBacktestId, setChatBacktestId] = useState<number | null>(null);
-  const [selectedBacktestRun, setSelectedBacktestRun] = useState<{ id: number; metricsJson: unknown } | null>(null);
-  const [symbolHistory, setSymbolHistory] = useState<Record<string, BacktestHistoryRun[]>>({});
-  const [selectedRunId, setSelectedRunId] = useState<Record<string, number>>({});
-
-  const fetchResults = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(api("/research/grouped-results"));
-      const json = await res.json();
-      setData(json);
-    } catch { /* ignore */ } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { fetchResults(); }, [fetchResults]);
-  useEffect(() => { if (refreshTrigger > 0) fetchResults(); }, [refreshTrigger]);
-
-  const fetchHistory = useCallback(async (symbol: string) => {
-    try {
-      const res = await fetch(api(`/research/backtest-history?symbol=${symbol}`));
-      const json = await res.json();
-      if (json.runs) {
-        setSymbolHistory(prev => ({ ...prev, [symbol]: json.runs }));
-      }
-    } catch { /* ignore */ }
-  }, []);
-
-  const loadBacktestDetail = useCallback(async (backtestId: number) => {
-    try {
-      const res = await fetch(api(`/backtest/results?limit=100&offset=0`));
-      const json = await res.json();
-      const allRuns = json.data as Array<{ id: number; metricsJson: unknown }>;
-      const run = allRuns?.find(r => r.id === backtestId);
-      if (run) setSelectedBacktestRun(run);
-    } catch { /* ignore */ }
-  }, []);
-
-  if (loading && !data) {
-    return (
-      <Card>
-        <CardContent className="py-8 text-center">
-          <Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground" />
-          <p className="text-sm text-muted-foreground mt-2">Loading backtest results...</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!data?.symbols || data.symbols.length === 0) {
-    return (
-      <Card>
-        <CardContent className="py-8 text-center">
-          <BarChart2 className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-          <p className="text-sm text-muted-foreground">No backtest results yet. Run setup or use Download & Simulate above.</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold flex items-center gap-2">
-          <BarChart2 className="w-5 h-5" />
-          Backtest Results by Symbol
-        </h2>
-        <Button variant="outline" size="sm" onClick={fetchResults} disabled={loading} className="text-xs h-7">
-          <RefreshCw className={cn("w-3 h-3 mr-1", loading && "animate-spin")} />
-          Refresh
-        </Button>
-      </div>
-
-      {data.symbols.map(sym => {
-        const isExpanded = expandedSymbol === sym.symbol;
-
-        return (
-          <Card key={sym.symbol}>
-            <div
-              className="p-4 cursor-pointer hover:bg-muted/20 transition-colors"
-              onClick={() => setExpandedSymbol(isExpanded ? null : sym.symbol)}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="font-semibold text-foreground">{sym.symbol}</span>
-                  <Badge variant={(sym.portfolioNetProfit ?? 0) > 0 ? "default" : "destructive"}>
-                    {(sym.portfolioNetProfit ?? 0) > 0 ? "+" : ""}{formatCurrency(sym.portfolioNetProfit)}
-                  </Badge>
-                  <span className="text-xs text-muted-foreground">
-                    {sym.strategies.filter(s => s.netProfit > 0).length}/{sym.strategies.length} strategies profitable
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-muted-foreground">
-                    WR: {formatPercent(sym.portfolioWinRate)}
-                  </span>
-                  <span className="text-xs text-muted-foreground text-right leading-tight">
-                    <span>{new Date(sym.latestBacktestDate).toLocaleDateString()}</span>
-                    <br />
-                    <span className="text-[10px]">{new Date(sym.latestBacktestDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                  </span>
-                  {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
-                </div>
-              </div>
-            </div>
-
-            <AnimatePresence>
-              {isExpanded && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="border-t border-border/50"
-                  onAnimationComplete={() => {
-                    if (!symbolHistory[sym.symbol]) fetchHistory(sym.symbol);
-                  }}
-                >
-                  <div className="p-4 space-y-4">
-                    {(symbolHistory[sym.symbol]?.length ?? 0) > 1 && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">Run:</span>
-                        <select
-                          className="bg-muted/30 border border-border/50 rounded px-2 py-1 text-xs text-foreground"
-                          value={selectedRunId[sym.symbol] ?? sym.latestBacktestId}
-                          onChange={e => {
-                            const runId = parseInt(e.target.value);
-                            setSelectedRunId(prev => ({ ...prev, [sym.symbol]: runId }));
-                          }}
-                        >
-                          {symbolHistory[sym.symbol]!.map((run, idx) => (
-                            <option key={run.id} value={run.id}>
-                              {idx === 0 ? "Latest — " : ""}{new Date(run.createdAt).toLocaleDateString()} {new Date(run.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ({formatCurrency(run.netProfit)}, {run.tradeCount} trades)
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-
-                    {(() => {
-                      const activeRunId = selectedRunId[sym.symbol] ?? sym.latestBacktestId;
-                      const historyRun = symbolHistory[sym.symbol]?.find(r => r.id === activeRunId);
-                      const strategies = historyRun?.metricsJson?.strategyBreakdown ?? sym.strategies;
-
-                      return strategies.length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-4">No strategy results yet. Run a backtest above.</p>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="border-b border-border/50">
-                                <th className="text-left px-3 py-2 text-xs text-muted-foreground font-medium">Strategy</th>
-                                <th className="text-right px-3 py-2 text-xs text-muted-foreground font-medium">Net Profit</th>
-                                <th className="text-right px-3 py-2 text-xs text-muted-foreground font-medium">Win Rate</th>
-                                <th className="text-right px-3 py-2 text-xs text-muted-foreground font-medium">Profit Factor</th>
-                                <th className="text-right px-3 py-2 text-xs text-muted-foreground font-medium">Trades</th>
-                                <th className="text-right px-3 py-2 text-xs text-muted-foreground font-medium">Avg Hold</th>
-                                <th className="px-3 py-2"></th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {strategies.map(strat => (
-                                <tr key={strat.strategyName} className={cn("border-b border-border/20 hover:bg-muted/10", strat.netProfit <= 0 && strat.tradeCount === 0 && "opacity-40")}>
-                                  <td className="px-3 py-2 font-medium">{STRATEGY_LABELS[strat.strategyName] ?? strat.strategyName}</td>
-                                  <td className={cn("px-3 py-2 text-right mono-num", strat.netProfit > 0 ? "text-green-400" : strat.netProfit < 0 ? "text-red-400" : "text-muted-foreground")}>{formatCurrency(strat.netProfit)}</td>
-                                  <td className="px-3 py-2 text-right mono-num">{strat.tradeCount > 0 ? formatPercent(strat.winRate) : "—"}</td>
-                                  <td className="px-3 py-2 text-right mono-num">{strat.tradeCount === 0 ? "—" : strat.profitFactor == null ? "—" : strat.profitFactor === Infinity ? "∞" : strat.profitFactor.toFixed(2)}</td>
-                                  <td className="px-3 py-2 text-right mono-num">{strat.tradeCount}</td>
-                                  <td className="px-3 py-2 text-right mono-num text-muted-foreground">{strat.avgHoldingHours != null && strat.tradeCount > 0 ? `${(strat.avgHoldingHours / 24).toFixed(1)}d` : "—"}</td>
-                                  <td className="px-3 py-2 text-right">
-                                    <button
-                                      onClick={() => setChatBacktestId(strat.backtestId ?? activeRunId)}
-                                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-violet-400 hover:bg-violet-500/10 transition-colors"
-                                    >
-                                      <Brain className="w-3 h-3" /> AI Chat
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      );
-                    })()}
-
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-xs"
-                        onClick={() => {
-                          const runId = selectedRunId[sym.symbol] ?? sym.latestBacktestId;
-                          const histRun = symbolHistory[sym.symbol]?.find(r => r.id === runId);
-                          if (histRun) {
-                            setSelectedBacktestRun({ id: histRun.id, metricsJson: histRun.metricsJson });
-                          } else {
-                            loadBacktestDetail(runId);
-                          }
-                        }}
-                      >
-                        <TrendingUp className="w-3 h-3 mr-1" /> View Equity Curve
-                      </Button>
-                    </div>
-
-                    {selectedBacktestRun && (selectedRunId[sym.symbol] ?? sym.latestBacktestId) === selectedBacktestRun.id && (
-                      <div className="mt-2">
-                        <EquityCurveChart metricsJson={selectedBacktestRun.metricsJson} />
-                      </div>
-                    )}
-
-                    <AnimatePresence>
-                      {chatBacktestId != null && (
-                        <AIChatPanel
-                          backtestId={chatBacktestId}
-                          onClose={() => setChatBacktestId(null)}
-                        />
-                      )}
-                    </AnimatePresence>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </Card>
-        );
-      })}
-    </div>
-  );
-}
-
 export default function Research() {
-  const [resultsRefreshTrigger, setResultsRefreshTrigger] = useState(0);
-  const handleBacktestComplete = useCallback(() => {
-    setResultsRefreshTrigger(prev => prev + 1);
-  }, []);
-
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       <div>
@@ -877,8 +767,7 @@ export default function Research() {
         <p className="page-subtitle">Data health monitoring, per-symbol backtesting, and AI-powered analysis</p>
       </div>
 
-      <DataStatusSection onBacktestComplete={handleBacktestComplete} />
-      <GroupedResultsSection refreshTrigger={resultsRefreshTrigger} />
+      <DataStatusSection />
     </div>
   );
 }

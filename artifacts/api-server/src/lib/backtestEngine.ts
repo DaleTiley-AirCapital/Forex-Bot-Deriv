@@ -1506,6 +1506,7 @@ export async function runSymbolBacktest(
   initialCapital: number,
   allocationMode: string,
   onProgress?: ProgressCallback,
+  startDate?: Date,
 ): Promise<SymbolBacktestResult> {
   const mode = allocationMode === "aggressive" ? "live" as const : "paper" as const;
   const basePct = allocationMode === "aggressive" ? 0.25
@@ -1538,6 +1539,7 @@ export async function runSymbolBacktest(
     initialCapital,
     mode,
     basePct,
+    startDate,
     minCompositeScore: parseFloat(stateMap["min_composite_score"] || "80"),
     minEvThreshold: parseFloat(stateMap["min_ev_threshold"] || "0.001"),
     minRrRatio: parseFloat(stateMap["min_rr_ratio"] || "1.5"),

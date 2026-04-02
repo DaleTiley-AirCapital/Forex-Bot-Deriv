@@ -340,7 +340,7 @@ router.post("/research/download-simulate", async (req, res): Promise<void> => {
 });
 
 router.post("/research/rerun-backtest", async (req, res): Promise<void> => {
-  const { symbol } = req.body ?? {};
+  const { symbol, historicYears } = req.body ?? {};
 
   if (!symbol || !ALL_SYMBOLS.includes(symbol)) {
     res.status(400).json({ error: `Invalid symbol: ${symbol}` });
@@ -354,7 +354,18 @@ router.post("/research/rerun-backtest", async (req, res): Promise<void> => {
   const send = (obj: Record<string, unknown>) => res.write(JSON.stringify(obj) + "\n");
 
   try {
-    send({ phase: "starting", symbol, message: "Loading platform state…" });
+    const years = Number.isInteger(historicYears) && historicYears >= 1 && historicYears <= 5 ? historicYears : 1;
+    const requestedStart = new Date(Date.now() - years * 365 * 24 * 3600 * 1000);
+
+    const [minRow] = await db.select({ minTs: min(candlesTable.openTs) })
+      .from(candlesTable)
+      .where(eq(candlesTable.symbol, symbol));
+
+    const earliestDate = minRow?.minTs != null ? new Date((minRow.minTs as number) * 1000) : null;
+    const startDate = earliestDate && earliestDate > requestedStart ? earliestDate : requestedStart;
+    const monthsInWindow = Math.round((Date.now() - startDate.getTime()) / (30 * 24 * 3600 * 1000));
+
+    send({ phase: "starting", symbol, message: `Running on ~${monthsInWindow} month(s) of data (requested ${years} year${years !== 1 ? "s" : ""})` });
 
     const states = await db.select().from(platformStateTable);
     const stateMap: Record<string, string> = {};
@@ -383,6 +394,7 @@ router.post("/research/rerun-backtest", async (req, res): Promise<void> => {
           dateLabel: evt.dateLabel,
         });
       },
+      startDate,
     );
 
     send({ phase: "saving", symbol, message: "Saving results to database…" });

@@ -3,12 +3,19 @@ import { streamResearchExport } from "../lib/candleExport.js";
 
 const router: IRouter = Router();
 
+const SUPPORTED_TIMEFRAMES = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"]);
+const SYMBOL_RE = /^[A-Z0-9_]{1,20}$/;
+
 router.post("/export/research", async (req, res): Promise<void> => {
   const { symbol, timeframe = "1m", startDate, endDate, maxCandlesPerChunk } = req.body ?? {};
   const includeCsv = req.query.csv === "true";
 
-  if (!symbol || typeof symbol !== "string") {
-    res.status(400).json({ error: "symbol is required" });
+  if (!symbol || typeof symbol !== "string" || !SYMBOL_RE.test(symbol)) {
+    res.status(400).json({ error: "symbol is required and must be uppercase alphanumeric/underscore (max 20 chars)" });
+    return;
+  }
+  if (typeof timeframe !== "string" || !SUPPORTED_TIMEFRAMES.has(timeframe)) {
+    res.status(400).json({ error: `timeframe must be one of: ${[...SUPPORTED_TIMEFRAMES].join(", ")}` });
     return;
   }
   if (!startDate || typeof startDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {

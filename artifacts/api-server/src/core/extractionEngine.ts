@@ -1,7 +1,7 @@
 import { db, platformStateTable, tradesTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import type { TradingMode } from "./deriv.js";
-import { getModeCapitalKey, getModeCapitalDefault } from "./deriv.js";
+import type { TradingMode } from "../infrastructure/deriv.js";
+import { getModeCapitalKey, getModeCapitalDefault } from "../infrastructure/deriv.js";
 
 export interface ExtractionCycle {
   mode: TradingMode;

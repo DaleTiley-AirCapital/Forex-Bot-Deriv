@@ -1,11 +1,11 @@
 import { db, backgroundDb, candlesTable, platformStateTable } from "@workspace/db";
 import { eq, and, asc, gte, lte, sql } from "drizzle-orm";
-import { runAllStrategies, type SignalCandidate } from "./strategies.js";
-import { calculateAdaptiveTrailingStop, calculateSRFibTP, calculateSRFibSL } from "./tradeEngine.js";
-import { classifyRegime, type RegimeClassification } from "./regimeEngine.js";
-import type { FeatureVector, SpikeMagnitudeStats } from "./features.js";
-import { findSwingLevels, findMultiSwingTrendlines, findMajorSwingLevels, getSymbolIndicatorTimeframeMins, aggregateCandles } from "./features.js";
-import { type ScoringWeights, DEFAULT_SCORING_WEIGHTS } from "./scoring.js";
+import { runAllStrategies, type SignalCandidate } from "../core/strategies.js";
+import { calculateAdaptiveTrailingStop, calculateSRFibTP, calculateSRFibSL } from "../core/tradeEngine.js";
+import { classifyRegime, type RegimeClassification } from "../core/regimeEngine.js";
+import type { FeatureVector, SpikeMagnitudeStats } from "../core/features.js";
+import { findSwingLevels, findMultiSwingTrendlines, findMajorSwingLevels, getSymbolIndicatorTimeframeMins, aggregateCandles } from "../core/features.js";
+import { type ScoringWeights, DEFAULT_SCORING_WEIGHTS } from "../core/scoring.js";
 
 const PROFIT_TRAILING_DRAWDOWN_PCT = 0.30;
 const MAX_EQUITY_DEPLOYED_PCT = 0.80;
@@ -1137,7 +1137,7 @@ export async function runFullBacktest(config: BacktestConfig, onProgress?: Progr
     );
   }
 
-  const { getSpikeMagnitudeStats } = await import("./features.js");
+  const { getSpikeMagnitudeStats } = await import("../core/features.js");
   const backtestAnchorTs = config.startDate
     ? new Date(config.startDate).getTime() / 1000
     : undefined;

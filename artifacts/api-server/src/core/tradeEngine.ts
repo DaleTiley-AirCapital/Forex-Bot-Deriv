@@ -1,7 +1,7 @@
 import { db, tradesTable, platformStateTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
-import { getDerivClientForMode, getDerivClientWithDbToken, getModeCapitalKey, getModeCapitalDefault } from "./deriv.js";
-import type { TradingMode } from "./deriv.js";
+import { getDerivClientForMode, getDerivClientWithDbToken, getModeCapitalKey, getModeCapitalDefault } from "../infrastructure/deriv.js";
+import type { TradingMode } from "../infrastructure/deriv.js";
 import type { AllocationDecision } from "./signalRouter.js";
 import { checkAndAutoExtract } from "./extractionEngine.js";
 

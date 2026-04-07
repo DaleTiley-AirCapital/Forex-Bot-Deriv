@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { getAllSymbolStatuses, validateActiveSymbols } from "../lib/symbolValidator.js";
+import { getAllSymbolStatuses, validateActiveSymbols } from "../infrastructure/symbolValidator.js";
 
 const router: IRouter = Router();
 

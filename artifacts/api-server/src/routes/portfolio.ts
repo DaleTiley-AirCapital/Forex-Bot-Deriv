@@ -1,9 +1,9 @@
 import { Router, type IRouter } from "express";
 import { desc, eq, sql, and } from "drizzle-orm";
 import { db, tradesTable, platformStateTable, signalLogTable } from "@workspace/db";
-import { getActiveModes, getModeCapitalKey, getModeCapitalDefault, getDerivClientWithDbToken } from "../lib/deriv.js";
-import type { TradingMode } from "../lib/deriv.js";
-import { getSchedulerStatus } from "../lib/scheduler.js";
+import { getActiveModes, getModeCapitalKey, getModeCapitalDefault, getDerivClientWithDbToken } from "../infrastructure/deriv.js";
+import type { TradingMode } from "../infrastructure/deriv.js";
+import { getSchedulerStatus } from "../infrastructure/scheduler.js";
 
 const router: IRouter = Router();
 

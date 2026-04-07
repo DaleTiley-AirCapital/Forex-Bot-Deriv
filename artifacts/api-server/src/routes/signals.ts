@@ -1,11 +1,11 @@
 import { Router, type IRouter } from "express";
 import { desc, eq, gte, lte, and, sql } from "drizzle-orm";
 import { db, signalLogTable, platformStateTable } from "@workspace/db";
-import { computeFeatures } from "../lib/features.js";
-import { runAllStrategies } from "../lib/strategies.js";
-import { routeSignals, logSignalDecisions } from "../lib/signalRouter.js";
-import { type ScoringWeights, DEFAULT_SCORING_WEIGHTS } from "../lib/scoring.js";
-import { getPendingSignalStatus } from "../lib/pendingSignals.js";
+import { computeFeatures } from "../core/features.js";
+import { runAllStrategies } from "../core/strategies.js";
+import { routeSignals, logSignalDecisions } from "../core/signalRouter.js";
+import { type ScoringWeights, DEFAULT_SCORING_WEIGHTS } from "../core/scoring.js";
+import { getPendingSignalStatus } from "../core/pendingSignals.js";
 
 async function loadScoringWeights(): Promise<ScoringWeights | undefined> {
   const states = await db.select().from(platformStateTable);

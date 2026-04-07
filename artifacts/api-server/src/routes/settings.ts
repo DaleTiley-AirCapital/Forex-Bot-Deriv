@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { db, platformStateTable, candlesTable, tradesTable } from "@workspace/db";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
-import { checkOpenAiHealth } from "../lib/openai.js";
+import { checkOpenAiHealth } from "../infrastructure/openai.js";
 import { desc } from "drizzle-orm";
 
 const router: IRouter = Router();

@@ -1,17 +1,17 @@
 import { Router, type IRouter } from "express";
 import { desc, eq, asc, count } from "drizzle-orm";
 import { db, backtestRunsTable, backtestTradesTable, candlesTable } from "@workspace/db";
-import { analyseBacktest, isOpenAIConfigured } from "../lib/openai.js";
+import { analyseBacktest, isOpenAIConfigured } from "../infrastructure/openai.js";
 import {
   runBacktestSimulation,
   runFullBacktest,
   type BacktestConfig,
   type BacktestResult,
-} from "../lib/backtestEngine.js";
+} from "../runtimes/backtestEngine.js";
 
 const router: IRouter = Router();
 
-export { runBacktestSimulation } from "../lib/backtestEngine.js";
+export { runBacktestSimulation } from "../runtimes/backtestEngine.js";
 
 function buildMetricsJson(result: BacktestResult) {
   const pm = result.portfolioMetrics;

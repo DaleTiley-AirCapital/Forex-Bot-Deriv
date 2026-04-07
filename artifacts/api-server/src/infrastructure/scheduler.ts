@@ -1,17 +1,17 @@
-import { computeFeatures } from "./features.js";
-import { runAllStrategies } from "./strategies.js";
-import { routeSignals, logSignalDecisions } from "./signalRouter.js";
-import { type ScoringWeights, DEFAULT_SCORING_WEIGHTS } from "./scoring.js";
-import { openPosition, manageOpenPositions } from "./tradeEngine.js";
+import { computeFeatures } from "../core/features.js";
+import { runAllStrategies } from "../core/strategies.js";
+import { routeSignals, logSignalDecisions } from "../core/signalRouter.js";
+import { type ScoringWeights, DEFAULT_SCORING_WEIGHTS } from "../core/scoring.js";
+import { openPosition, manageOpenPositions } from "../core/tradeEngine.js";
 import { verifySignal } from "./openai.js";
-import { classifyRegime, classifyRegimeFromHTF, classifyInstrument, getCachedRegime, cacheRegime, accumulateHourlyFeatures } from "./regimeEngine.js";
+import { classifyRegime, classifyRegimeFromHTF, classifyInstrument, getCachedRegime, cacheRegime, accumulateHourlyFeatures } from "../core/regimeEngine.js";
 import { db, platformStateTable, tradesTable, candlesTable, ticksTable, backtestRunsTable, backtestTradesTable } from "@workspace/db";
 import { eq, desc, and, lt, gte, asc, sql, inArray } from "drizzle-orm";
-import { runBacktestSimulation } from "./backtestEngine.js";
+import { runBacktestSimulation } from "../runtimes/backtestEngine.js";
 import { getActiveModes, isAnyModeActive } from "./deriv.js";
 import type { TradingMode } from "./deriv.js";
-import type { AllocationDecision } from "./signalRouter.js";
-import { confirmSignal, removePendingSignal, expireStaleSignals, shouldEvaluateWindow, getWindowTs, invalidateUnconfirmedPending } from "./pendingSignals.js";
+import type { AllocationDecision } from "../core/signalRouter.js";
+import { confirmSignal, removePendingSignal, expireStaleSignals, shouldEvaluateWindow, getWindowTs, invalidateUnconfirmedPending } from "../core/pendingSignals.js";
 
 import { ACTIVE_TRADING_SYMBOLS } from "./deriv.js";
 

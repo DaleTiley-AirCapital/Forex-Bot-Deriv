@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
 import { eq, and } from "drizzle-orm";
 import { db, tradesTable, platformStateTable } from "@workspace/db";
-import { getActiveModes, getModeCapitalKey, getModeCapitalDefault } from "../lib/deriv.js";
-import type { TradingMode } from "../lib/deriv.js";
+import { getActiveModes, getModeCapitalKey, getModeCapitalDefault } from "../infrastructure/deriv.js";
+import type { TradingMode } from "../infrastructure/deriv.js";
 
 const router: IRouter = Router();
 

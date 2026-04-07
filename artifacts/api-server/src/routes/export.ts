@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { streamResearchExport } from "../lib/candleExport.js";
+import { streamResearchExport } from "../infrastructure/candleExport.js";
 
 const router: IRouter = Router();
 

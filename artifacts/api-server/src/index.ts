@@ -2,9 +2,9 @@ import { sql } from "drizzle-orm";
 import { db, platformStateTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import app from "./app.js";
-import { getDerivClientWithDbToken, getEnabledSymbols, ACTIVE_TRADING_SYMBOLS } from "./lib/deriv.js";
-import { startScheduler } from "./lib/scheduler.js";
-import { validateActiveSymbols } from "./lib/symbolValidator.js";
+import { getDerivClientWithDbToken, getEnabledSymbols, ACTIVE_TRADING_SYMBOLS } from "./infrastructure/deriv.js";
+import { startScheduler } from "./infrastructure/scheduler.js";
+import { validateActiveSymbols } from "./infrastructure/symbolValidator.js";
 
 const rawPort = process.env["PORT"];
 

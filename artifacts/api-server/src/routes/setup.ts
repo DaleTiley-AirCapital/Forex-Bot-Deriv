@@ -1,10 +1,10 @@
 import { Router, type IRouter } from "express";
 import { eq, and, inArray, count, sql } from "drizzle-orm";
 import { db, candlesTable, backtestRunsTable, backtestTradesTable, platformStateTable, tradesTable, signalLogTable, ticksTable, spikeEventsTable, featuresTable, modelRunsTable } from "@workspace/db";
-import { getDerivClientWithDbToken, getDbApiToken, getDbApiTokenForMode, ACTIVE_TRADING_SYMBOLS } from "../lib/deriv.js";
-import { checkOpenAiHealth, isOpenAIConfigured, analyseBacktest, type BacktestMetrics } from "../lib/openai.js";
-import { runBacktestSimulation, runSymbolBacktest } from "../lib/backtestEngine.js";
-import { getApiSymbol, validateActiveSymbols } from "../lib/symbolValidator.js";
+import { getDerivClientWithDbToken, getDbApiToken, getDbApiTokenForMode, ACTIVE_TRADING_SYMBOLS } from "../infrastructure/deriv.js";
+import { checkOpenAiHealth, isOpenAIConfigured, analyseBacktest, type BacktestMetrics } from "../infrastructure/openai.js";
+import { runBacktestSimulation, runSymbolBacktest } from "../runtimes/backtestEngine.js";
+import { getApiSymbol, validateActiveSymbols } from "../infrastructure/symbolValidator.js";
 
 const router: IRouter = Router();
 

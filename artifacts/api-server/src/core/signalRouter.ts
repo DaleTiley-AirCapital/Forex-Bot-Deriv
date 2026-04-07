@@ -1,8 +1,8 @@
 import { db, signalLogTable, platformStateTable, tradesTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import type { SignalCandidate } from "./strategies.js";
-import type { TradingMode } from "./deriv.js";
-import { getModeCapitalKey, getModeCapitalDefault } from "./deriv.js";
+import type { TradingMode } from "../infrastructure/deriv.js";
+import { getModeCapitalKey, getModeCapitalDefault } from "../infrastructure/deriv.js";
 import { getCorrelatedInstruments, classifyInstrument } from "./regimeEngine.js";
 
 export interface AllocationDecision {

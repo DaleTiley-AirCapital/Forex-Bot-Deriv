@@ -1,10 +1,10 @@
 import { Router, type IRouter } from "express";
 import { eq, and, count, min, max, desc, lt, asc, gte, sql } from "drizzle-orm";
 import { db, candlesTable, backtestRunsTable, backtestTradesTable, platformStateTable } from "@workspace/db";
-import { getDerivClientWithDbToken, ACTIVE_TRADING_SYMBOLS, V1_DEFAULT_SYMBOLS, ALL_SYMBOLS } from "../lib/deriv.js";
-import { getApiSymbol } from "../lib/symbolValidator.js";
-import { runSymbolBacktest } from "../lib/backtestEngine.js";
-import { isOpenAIConfigured } from "../lib/openai.js";
+import { getDerivClientWithDbToken, ACTIVE_TRADING_SYMBOLS, V1_DEFAULT_SYMBOLS, ALL_SYMBOLS } from "../infrastructure/deriv.js";
+import { getApiSymbol } from "../infrastructure/symbolValidator.js";
+import { runSymbolBacktest } from "../runtimes/backtestEngine.js";
+import { isOpenAIConfigured } from "../infrastructure/openai.js";
 import OpenAI from "openai";
 import { createDecipheriv, scryptSync } from "crypto";
 

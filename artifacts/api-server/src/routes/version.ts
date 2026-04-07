@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { APP_VERSION, APP_NAME, LAST_UPDATED, RELEASES } from "../lib/version.js";
+import { APP_VERSION, APP_NAME, LAST_UPDATED, RELEASES } from "../version.js";
 
 const router = Router();
 

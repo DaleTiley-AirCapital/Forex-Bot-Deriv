@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { desc, eq, sql, and } from "drizzle-orm";
 import { db, ticksTable, candlesTable, spikeEventsTable, platformStateTable } from "@workspace/db";
-import { getDerivClientWithDbToken, ACTIVE_TRADING_SYMBOLS, getEnabledSymbols } from "../lib/deriv.js";
+import { getDerivClientWithDbToken, ACTIVE_TRADING_SYMBOLS, getEnabledSymbols } from "../infrastructure/deriv.js";
 
 const router: IRouter = Router();
 

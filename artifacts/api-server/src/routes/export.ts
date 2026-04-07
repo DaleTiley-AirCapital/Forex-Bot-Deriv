@@ -24,10 +24,14 @@ router.post("/export/research", async (req, res): Promise<void> => {
     return;
   }
 
-  const maxChunk = maxCandlesPerChunk !== undefined ? Number(maxCandlesPerChunk) : undefined;
-  if (maxChunk !== undefined && (isNaN(maxChunk) || maxChunk < 1)) {
-    res.status(400).json({ error: "maxCandlesPerChunk must be a positive integer (max 50000)" });
-    return;
+  let maxChunk: number | undefined;
+  if (maxCandlesPerChunk !== undefined) {
+    const raw = Number(maxCandlesPerChunk);
+    if (!Number.isInteger(raw) || raw < 1 || raw > 50_000) {
+      res.status(400).json({ error: "maxCandlesPerChunk must be an integer between 1 and 50000" });
+      return;
+    }
+    maxChunk = raw;
   }
 
   console.log(`[Export] Research bundle requested: ${symbol}/${timeframe} ${startDate} → ${endDate} (maxChunk=${maxChunk ?? 25000}, csv=${includeCsv})`);

@@ -1,6 +1,6 @@
 /**
  * Research Export Library
- * Generates a streaming ZIP bundle of raw candle data for ChatGPT analysis.
+ * Streams a ZIP bundle of raw candle data with manifest and validation metadata.
  * Export-layer only — no trading, signal, or strategy logic.
  */
 import { backgroundDb, candlesTable } from "@workspace/db";
@@ -10,7 +10,6 @@ import type { Response } from "express";
 
 const DB_BATCH_SIZE = 10_000;
 const DEFAULT_MAX_CHUNK = 25_000;
-const MAX_CHUNK_CAP = 50_000;
 
 export interface ResearchExportRequest {
   symbol: string;
@@ -84,14 +83,13 @@ export async function streamResearchExport(
   res: Response,
 ): Promise<void> {
   const { symbol, timeframe, startDate, endDate, includeCsv = false } = req;
-  const maxChunk = Math.min(req.maxCandlesPerChunk ?? DEFAULT_MAX_CHUNK, MAX_CHUNK_CAP);
+  const maxChunk = req.maxCandlesPerChunk ?? DEFAULT_MAX_CHUNK;
   const tfSecs = tfToSeconds(timeframe);
   const exportDate = new Date().toISOString();
 
   const startTs = new Date(startDate + "T00:00:00.000Z").getTime() / 1000;
   const endTs = new Date(endDate + "T00:00:00.000Z").getTime() / 1000 + 86400;
 
-  // Step 1: Count candles per month to build the chunk plan upfront
   const monthKeys = getMonthKeys(startTs, endTs);
 
   interface MonthInfo {
@@ -127,7 +125,6 @@ export async function streamResearchExport(
     return;
   }
 
-  // Step 2: Build chunk plan
   const chunkPlans: ChunkPlan[] = [];
   let globalIdx = 0;
 
@@ -152,7 +149,6 @@ export async function streamResearchExport(
   for (const p of chunkPlans) p.totalChunks = totalChunks;
   const totalExpected = months.reduce((s, m) => s + m.count, 0);
 
-  // Step 3: Set up streaming ZIP response
   const zipName = `${symbol}_research_pack_${startDate}_to_${endDate}.zip`;
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`);
@@ -166,7 +162,6 @@ export async function streamResearchExport(
 
   archive.pipe(res);
 
-  // Step 4: Stream each chunk file into the ZIP
   const chunkMetas: ChunkMeta[] = [];
   let totalExported = 0;
   let firstTs: number | null = null;
@@ -179,7 +174,6 @@ export async function streamResearchExport(
   for (const plan of chunkPlans) {
     const candles: ExportCandle[] = [];
 
-    // Fetch this chunk's candles in DB_BATCH_SIZE increments using OFFSET within month
     let batchOffset = plan.offsetInMonth;
     let remaining = plan.limit;
 
@@ -210,11 +204,10 @@ export async function streamResearchExport(
       for (const row of batch) {
         const ts = row.openTs;
 
-        // Validation tracking (across all chunks, ordered by timestamp)
         if (prevTs !== null) {
-          if (ts < prevTs) strictlyAscending = false;
-          if (ts === prevTs) {
-            duplicateCount++;
+          if (ts <= prevTs) {
+            strictlyAscending = false;
+            if (ts === prevTs) duplicateCount++;
           } else {
             const gap = ts - prevTs;
             if (gap > tfSecs * 1.5) {
@@ -245,7 +238,6 @@ export async function streamResearchExport(
     const chunkFirst = candles.length > 0 ? candles[0].timestamp : 0;
     const chunkLast = candles.length > 0 ? candles[candles.length - 1].timestamp : 0;
 
-    // Append JSON chunk file
     const chunkJson = JSON.stringify({
       symbol,
       timeframe,
@@ -278,7 +270,6 @@ export async function streamResearchExport(
     });
   }
 
-  // Step 5: Append manifest.json
   const manifest = {
     symbol,
     timeframe,
@@ -293,7 +284,6 @@ export async function streamResearchExport(
     name: "manifest.json",
   });
 
-  // Step 6: Append validation.json
   const notes: string[] = [];
   if (missingCount > 0) {
     notes.push(`${missingCount} missing ${timeframe} interval(s) detected — reported only, not filled.`);
@@ -327,7 +317,6 @@ export async function streamResearchExport(
     name: "validation.json",
   });
 
-  // Step 7: Finalize ZIP and wait for stream to complete
   archive.finalize();
   await finalizePromise;
 }

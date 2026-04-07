@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge, Input } from "@/components/ui-elements";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 import {
   Database, Download, RefreshCw, Play, Brain, Send, X, ChevronDown, ChevronUp,
-  CheckCircle2, AlertTriangle, XCircle, Loader2, BarChart2, TrendingUp, FileDown, Table,
+  CheckCircle2, AlertTriangle, XCircle, Loader2, BarChart2, TrendingUp,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -215,6 +216,7 @@ function AIChatPanel({ backtestId, onClose }: { backtestId: number; onClose: () 
 }
 
 function DataStatusSection() {
+  const { toast } = useToast();
   const [data, setData] = useState<DataStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
@@ -389,14 +391,18 @@ function DataStatusSection() {
   const handleZipExport = useCallback(async (symbol: string) => {
     setZipping(symbol);
     try {
-      const endDate = Math.floor(Date.now() / 1000);
-      const startDate = endDate - 90 * 24 * 3600;
+      const toYMD = (d: Date) => d.toISOString().slice(0, 10);
+      const endDate = toYMD(new Date());
+      const startDate = toYMD(new Date(Date.now() - 90 * 24 * 3600 * 1000));
       const res = await fetch(api("/export/research"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol, timeframe: "1m", startDate, endDate }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -406,7 +412,10 @@ function DataStatusSection() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    } catch { /* ignore download errors */ } finally {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "ZIP export failed";
+      toast({ title: "Export failed", description: msg, variant: "destructive" });
+    } finally {
       setZipping(null);
     }
   }, []);
@@ -487,26 +496,6 @@ function DataStatusSection() {
 
         {sym.totalCandles > 0 && (
           <div className="flex gap-1.5 mb-2">
-            <a
-              href={api(`/research/export-candles?symbol=${encodeURIComponent(sym.symbol)}&format=excel`)}
-              download
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-            >
-              <Table className="w-3 h-3" />
-              Excel
-            </a>
-            <a
-              href={api(`/research/export-candles?symbol=${encodeURIComponent(sym.symbol)}&format=json`)}
-              download
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
-            >
-              <FileDown className="w-3 h-3" />
-              JSON
-            </a>
             <button
               onClick={() => handleZipExport(sym.symbol)}
               disabled={zipping === sym.symbol}

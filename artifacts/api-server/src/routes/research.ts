@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, count, min, max, desc, lt, asc, gte, lte, sql } from "drizzle-orm";
-import * as XLSX from "xlsx";
+import { eq, and, count, min, max, desc, lt, asc, gte, sql } from "drizzle-orm";
 import { db, candlesTable, backtestRunsTable, backtestTradesTable, platformStateTable } from "@workspace/db";
 import { getDerivClientWithDbToken, ACTIVE_TRADING_SYMBOLS, V1_DEFAULT_SYMBOLS, ALL_SYMBOLS } from "../lib/deriv.js";
 import { getApiSymbol } from "../lib/symbolValidator.js";
@@ -585,99 +584,6 @@ router.post("/research/prune-data", async (_req, res): Promise<void> => {
   try {
     const deleted = await pruneOldCandles();
     res.json({ success: true, deletedCandles: deleted });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
-  }
-});
-
-router.get("/research/export-candles", async (req, res): Promise<void> => {
-  const symbol = req.query.symbol as string;
-  const format = req.query.format as string;
-
-  if (!symbol || !ALL_SYMBOLS.includes(symbol)) {
-    res.status(400).json({ error: `Invalid symbol: ${symbol}` });
-    return;
-  }
-
-  if (format !== "json" && format !== "excel") {
-    res.status(400).json({ error: "format must be 'json' or 'excel'" });
-    return;
-  }
-
-  try {
-    const candles1m = await db.select({
-      openTs: candlesTable.openTs,
-      open: candlesTable.open,
-      high: candlesTable.high,
-      low: candlesTable.low,
-      close: candlesTable.close,
-      tickCount: candlesTable.tickCount,
-    }).from(candlesTable)
-      .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m")))
-      .orderBy(asc(candlesTable.openTs));
-
-    const candles5m = await db.select({
-      openTs: candlesTable.openTs,
-      open: candlesTable.open,
-      high: candlesTable.high,
-      low: candlesTable.low,
-      close: candlesTable.close,
-      tickCount: candlesTable.tickCount,
-    }).from(candlesTable)
-      .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "5m")))
-      .orderBy(asc(candlesTable.openTs));
-
-    const today = new Date().toISOString().slice(0, 10);
-    const filename = `${symbol}_candles_${today}`;
-
-    if (format === "json") {
-      const payload = {
-        symbol,
-        exportDate: today,
-        "1m": candles1m.map(c => ({
-          timestamp: new Date(c.openTs * 1000).toISOString(),
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.tickCount ?? 0,
-        })),
-        "5m": candles5m.map(c => ({
-          timestamp: new Date(c.openTs * 1000).toISOString(),
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.tickCount ?? 0,
-        })),
-      };
-
-      res.setHeader("Content-Type", "application/json");
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}.json"`);
-      res.json(payload);
-    } else {
-      const toRows = (candles: typeof candles1m) =>
-        candles.map(c => ({
-          timestamp: new Date(c.openTs * 1000).toISOString(),
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.tickCount ?? 0,
-        }));
-
-      const wb = XLSX.utils.book_new();
-      const ws1m = XLSX.utils.json_to_sheet(toRows(candles1m));
-      const ws5m = XLSX.utils.json_to_sheet(toRows(candles5m));
-      XLSX.utils.book_append_sheet(wb, ws1m, "1m");
-      XLSX.utils.book_append_sheet(wb, ws5m, "5m");
-
-      const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}.xlsx"`);
-      res.send(buf);
-    }
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
   }

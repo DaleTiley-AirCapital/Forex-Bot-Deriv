@@ -6,3 +6,9 @@ id = "AC93u-HbH15MQo3dRPW2L"
 uri = "file://V1_SPECIFICATION.pdf"
 type = "pdf"
 title = "V1 System Specification — Deriv Capital Extraction App"
+
+[[outputs]]
+id = "qCNXutf2NSdqjHLan4Dt0"
+uri = "file://.local/reports/task-88-v3-audit-report.md"
+type = "text"
+title = "V3 Backend Discovery & Audit Report (Task #88)"

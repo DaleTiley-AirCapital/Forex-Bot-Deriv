@@ -131,8 +131,6 @@ router.post("/research/download-simulate", async (req, res): Promise<void> => {
   }
 
   try {
-    await pruneOldCandles();
-
     send({ phase: "download_start", symbol, message: `Checking data for ${symbol}...` });
 
     const client = await getDerivClientWithDbToken();
@@ -586,6 +584,147 @@ router.post("/research/prune-data", async (_req, res): Promise<void> => {
     res.json({ success: true, deletedCandles: deleted });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
+  }
+});
+
+/**
+ * POST /research/ai-analyze
+ * Runs AI research analysis on stored candle data for a symbol.
+ * Synchronous — waits for completion and returns the full report.
+ *
+ * Body: { symbol: string, windowDays?: number }
+ */
+router.post("/research/ai-analyze", async (req, res): Promise<void> => {
+  const { symbol, windowDays } = req.body ?? {};
+
+  if (!symbol || typeof symbol !== "string") {
+    res.status(400).json({ error: "symbol is required" });
+    return;
+  }
+
+  if (!ALL_SYMBOLS.includes(symbol)) {
+    res.status(400).json({ error: `Unknown symbol: ${symbol}` });
+    return;
+  }
+
+  try {
+    const { analyzeSymbol } = await import("../core/aiResearchJob.js");
+    const report = await analyzeSymbol(symbol, typeof windowDays === "number" ? windowDays : 365);
+    res.json({ success: true, report });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "AI analysis failed" });
+  }
+});
+
+/**
+ * POST /research/ai-analyze/background
+ * Fires AI research analysis in background (non-blocking).
+ * Poll /research/ai-analyze/status for results.
+ *
+ * Body: { symbol: string, windowDays?: number }
+ */
+router.post("/research/ai-analyze/background", async (req, res): Promise<void> => {
+  const { symbol, windowDays } = req.body ?? {};
+
+  if (!symbol || typeof symbol !== "string") {
+    res.status(400).json({ error: "symbol is required" });
+    return;
+  }
+
+  if (!ALL_SYMBOLS.includes(symbol)) {
+    res.status(400).json({ error: `Unknown symbol: ${symbol}` });
+    return;
+  }
+
+  try {
+    const { runResearchJobBackground } = await import("../core/aiResearchJob.js");
+    runResearchJobBackground(symbol, typeof windowDays === "number" ? windowDays : 365);
+    res.json({ success: true, message: `AI research job started for ${symbol}` });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to start job" });
+  }
+});
+
+/**
+ * GET /research/ai-analyze/status
+ * Returns the current AI research job status and any completed results.
+ */
+router.get("/research/ai-analyze/status", async (_req, res): Promise<void> => {
+  try {
+    const { getResearchJobStatus } = await import("../core/aiResearchJob.js");
+    const status = getResearchJobStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
+  }
+});
+
+/**
+ * POST /research/data-top-up
+ * Triggers a data integrity top-up for a symbol.
+ * Detects and repairs 1m/5m gaps from the API, then re-runs enrichment for all derived TFs.
+ * Background-capable via query param: ?background=true
+ *
+ * Body: { symbol: string }
+ */
+router.post("/research/data-top-up", async (req, res): Promise<void> => {
+  const { symbol } = req.body ?? {};
+  const background = req.query.background === "true";
+
+  if (!symbol || typeof symbol !== "string") {
+    res.status(400).json({ error: "symbol is required" });
+    return;
+  }
+
+  if (!ALL_SYMBOLS.includes(symbol)) {
+    res.status(400).json({ error: `Unknown symbol: ${symbol}` });
+    return;
+  }
+
+  try {
+    const derivClient = await getDerivClientWithDbToken();
+    const { runDataTopUp } = await import("../core/dataIntegrity.js");
+
+    if (background) {
+      runDataTopUp(symbol, derivClient).catch(err =>
+        console.error(`[DataTopUp] background run failed for ${symbol}:`, err),
+      );
+      res.json({ success: true, message: `Data top-up started in background for ${symbol}` });
+    } else {
+      const result = await runDataTopUp(symbol, derivClient);
+      res.json({ success: true, result });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Data top-up failed" });
+  }
+});
+
+/**
+ * POST /research/enrich
+ * Derives all multi-timeframe candles for a symbol from stored 1m data.
+ * Idempotent — safe to re-run.
+ *
+ * Body: { symbol: string }
+ */
+router.post("/research/enrich", async (req, res): Promise<void> => {
+  const { symbol } = req.body ?? {};
+
+  if (!symbol || typeof symbol !== "string") {
+    res.status(400).json({ error: "symbol is required" });
+    return;
+  }
+
+  if (!ALL_SYMBOLS.includes(symbol)) {
+    res.status(400).json({ error: `Unknown symbol: ${symbol}` });
+    return;
+  }
+
+  try {
+    const { enrichTimeframes } = await import("../core/candleEnrichment.js");
+    const result = await enrichTimeframes(symbol);
+    res.json({ success: true, result });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Enrichment failed" });
   }
 });
 

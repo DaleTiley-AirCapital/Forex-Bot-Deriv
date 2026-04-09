@@ -482,7 +482,7 @@ export async function openPosition(decision: AllocationDecision, atrPct: number,
       peakPrice: result.entrySpot,
       maxExitTs: null,
       currentPrice: result.entrySpot,
-      notes: `V2 FullMove 1:5RR | Strategy: ${signal.strategyName} | Reason: ${signal.reason}`,
+      notes: `V3 SRFib 1:5RR | Strategy: ${signal.strategyName} | Reason: ${signal.reason}`,
     }).returning();
 
     const tpDistPct = Math.abs(tp - result.entrySpot) / result.entrySpot * 100;
@@ -505,7 +505,7 @@ export async function openPosition(decision: AllocationDecision, atrPct: number,
       peakPrice: spotPrice,
       maxExitTs: null,
       currentPrice: spotPrice,
-      notes: `V2 FullMove 1:5RR | Strategy: ${signal.strategyName} | Reason: ${signal.reason}`,
+      notes: `V3 SRFib 1:5RR | Strategy: ${signal.strategyName} | Reason: ${signal.reason}`,
     }).returning();
 
     const tpDistPctPaper = Math.abs(tp - spotPrice) / spotPrice * 100;

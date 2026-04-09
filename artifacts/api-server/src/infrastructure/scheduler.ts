@@ -58,6 +58,18 @@ export function getSchedulerStatus() {
 }
 
 /**
+ * Maps V3 engine entry type + symbol to the correct AI strategy family string.
+ * Replaces the former hardcoded "trend_continuation" that was applied to every engine.
+ */
+function resolveAiStrategyFamily(entryType: string, symbol: string): string {
+  const isBoomCrash = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
+  if (isBoomCrash) return "spike_cluster_recovery";
+  if (entryType === "breakout") return "trendline_breakout";
+  if (entryType === "reversal") return "mean_reversion";
+  return "trend_continuation";
+}
+
+/**
  * V3 live scanner — replaces the V2 family-based scanSingleSymbol.
  *
  * Flow: scanSymbolV3 → coordinatorOutput → allocateV3Signal → [AI verify] → openPositionV3
@@ -139,7 +151,7 @@ async function scanSingleSymbolV3(symbol: string, stateMap: Record<string, strin
           confidence: coordinatorOutput.coordinatorConfidence,
           score: coordinatorOutput.coordinatorConfidence,
           strategyName: winner.engineName,
-          strategyFamily: "trend_continuation",
+          strategyFamily: resolveAiStrategyFamily(winner.entryType, symbol),
           reason: winner.reason,
           rsi14: features.rsi14 ?? 50,
           atr14: features.atr14 ?? 0.01,

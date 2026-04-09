@@ -2,11 +2,15 @@
  * Research Export Library
  * Streams a ZIP bundle of raw candle data with manifest and validation metadata.
  * Export-layer only — no trading, signal, or strategy logic.
+ *
+ * Supported timeframes align exactly with candleEnrichment.ts DERIVED_TIMEFRAMES
+ * plus the 1m base. Any unsupported TF throws immediately — no silent 60s fallback.
  */
 import { backgroundDb, candlesTable } from "@workspace/db";
 import { eq, and, gte, lt, asc, sql } from "drizzle-orm";
 import archiver from "archiver";
 import type { Response } from "express";
+import { ENRICHMENT_TIMEFRAMES } from "../core/dataIntegrity.js";
 
 const DB_BATCH_SIZE = 10_000;
 const DEFAULT_MAX_CHUNK = 25_000;
@@ -47,12 +51,19 @@ interface ChunkPlan {
   totalChunks: number;
 }
 
+/**
+ * Converts a timeframe key to its duration in seconds.
+ * Covers all 12 enrichment timeframes (1m → 4d).
+ * Throws for any unsupported timeframe — no silent 60s fallback.
+ */
 function tfToSeconds(tf: string): number {
-  const map: Record<string, number> = {
-    "1m": 60, "3m": 180, "5m": 300, "15m": 900,
-    "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400,
-  };
-  return map[tf] ?? 60;
+  const secs = ENRICHMENT_TIMEFRAMES[tf];
+  if (!secs) {
+    throw new Error(
+      `Unsupported timeframe "${tf}". Supported: ${Object.keys(ENRICHMENT_TIMEFRAMES).join(", ")}`,
+    );
+  }
+  return secs;
 }
 
 function monthKeyToStartTs(mk: string): number {

@@ -31,7 +31,7 @@ async function getOpenAIKey(): Promise<string | null> {
   }
 }
 
-async function getOpenAIClient(): Promise<OpenAI> {
+export async function getOpenAIClient(): Promise<OpenAI> {
   const key = await getOpenAIKey();
   if (!key) throw new Error("OpenAI API key not configured — set it in Settings");
   return new OpenAI({ apiKey: key });

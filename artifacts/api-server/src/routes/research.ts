@@ -778,4 +778,38 @@ router.post("/research/reconcile", async (req, res): Promise<void> => {
   }
 });
 
+// ─── POST /research/strategy-ranking ─────────────────────────────────────────
+//
+// Runs the deterministic strategy extractor for a symbol and returns
+// data-derived strategy candidates ranked by expected monthly return.
+//
+// The extractor reads real candle data from `candles` (excluding isInterpolated=true)
+// and computes actual move statistics at multiple thresholds.
+// The AI layer is NOT invoked here — this is pure quantitative truth.
+//
+// Body: { symbol, windowDays?, timeframe? }
+
+router.post("/research/strategy-ranking", async (req, res): Promise<void> => {
+  const { symbol, windowDays = 365, timeframe = "1m" } = req.body ?? {};
+
+  if (!symbol || typeof symbol !== "string") {
+    res.status(400).json({ error: "symbol is required" });
+    return;
+  }
+
+  const days = Number(windowDays);
+  if (!Number.isFinite(days) || days < 30 || days > 730) {
+    res.status(400).json({ error: "windowDays must be between 30 and 730" });
+    return;
+  }
+
+  try {
+    const { extractStrategies } = await import("../core/strategyExtractor.js");
+    const report = await extractStrategies(symbol, days, timeframe);
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Strategy extraction failed" });
+  }
+});
+
 export default router;

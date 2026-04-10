@@ -27,6 +27,7 @@ import { candlesTable } from "@workspace/db";
 import { eq, and, gte, asc, desc, min, max, count } from "drizzle-orm";
 import { getOpenAIClient } from "../infrastructure/openai.js";
 import { ACTIVE_TRADING_SYMBOLS } from "../infrastructure/deriv.js";
+import { extractStrategies } from "./strategyExtractor.js";
 
 const DEFAULT_WINDOW_DAYS = 365;
 const MAX_CANDLES_FOR_ANALYSIS = 15_000;
@@ -212,17 +213,26 @@ export async function analyzeSymbol(
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - windowDays * 86400;
 
+  // Exclude interpolated (carry-forward) candles from all research analysis.
+  // Interpolated rows are synthetic fills — not real market truth.
+  const baseWhere = and(
+    eq(candlesTable.symbol, symbol),
+    eq(candlesTable.timeframe, "1m"),
+    gte(candlesTable.openTs, cutoff),
+    eq(candlesTable.isInterpolated, false),
+  );
+
   const [summary] = await backgroundDb
     .select({ cnt: count(), first: min(candlesTable.openTs), last: max(candlesTable.openTs) })
     .from(candlesTable)
-    .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m"), gte(candlesTable.openTs, cutoff)));
+    .where(baseWhere);
 
   const totalCandles = Number(summary?.cnt ?? 0);
   const firstTs = summary?.first ?? cutoff;
   const lastTs  = summary?.last  ?? now;
 
   if (totalCandles < 100) {
-    throw new Error(`[AIResearch] Insufficient data for ${symbol}: only ${totalCandles} 1m candles in window`);
+    throw new Error(`[AIResearch] Insufficient data for ${symbol}: only ${totalCandles} real (non-interpolated) 1m candles in window`);
   }
 
   const actualWindowDays = Math.ceil((lastTs - firstTs) / 86400);
@@ -234,14 +244,14 @@ export async function analyzeSymbol(
     candles = await backgroundDb
       .select({ openTs: candlesTable.openTs, open: candlesTable.open, close: candlesTable.close })
       .from(candlesTable)
-      .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m"), gte(candlesTable.openTs, cutoff)))
+      .where(baseWhere)
       .orderBy(asc(candlesTable.openTs));
   } else {
     const step = Math.ceil(totalCandles / MAX_CANDLES_FOR_ANALYSIS);
     const all = await backgroundDb
       .select({ openTs: candlesTable.openTs, open: candlesTable.open, close: candlesTable.close })
       .from(candlesTable)
-      .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m"), gte(candlesTable.openTs, cutoff)))
+      .where(baseWhere)
       .orderBy(asc(candlesTable.openTs));
     candles = all.filter((_, i) => i % step === 0);
   }
@@ -293,6 +303,40 @@ export async function analyzeSymbol(
   const medHours = medSwings.map(s => s.holdingMinutes / 60);
   const medAvgPct   = medPcts.length  ? medPcts.reduce((a, b) => a + b, 0) / medPcts.length : 0;
   const medAvgHours = medHours.length ? medHours.reduce((a, b) => a + b, 0) / medHours.length : 0;
+
+  // Run deterministic strategy extractor — quantitative truth BEFORE AI interpretation.
+  // The AI will explain and validate this ranking, not invent its own from scratch.
+  let deterministicRanking: Awaited<ReturnType<typeof extractStrategies>> | null = null;
+  try {
+    deterministicRanking = await extractStrategies(symbol, windowDays);
+  } catch {
+    // Non-fatal: AI proceeds without deterministic context if extractor fails
+  }
+
+  const topCandidates = deterministicRanking?.candidates.slice(0, 5) ?? [];
+  const rankingContext = topCandidates.length > 0
+    ? `
+=== DETERMINISTIC STRATEGY RANKING (from real data — EXCLUDES interpolated candles) ===
+Data: ${deterministicRanking!.dataFrom} → ${deterministicRanking!.dataTo} (${deterministicRanking!.monthsOfData} months)
+Real candles used: ${deterministicRanking!.totalRealCandles.toLocaleString()} (interpolated excluded: ${deterministicRanking!.interpolatedCount})
+
+Top-ranked strategies by expected monthly return (data-derived, not assumed):
+${topCandidates.map((c, i) => `
+Rank ${i + 1}: ${c.id} (${c.direction} | ≥${c.thresholdPct.toFixed(0)}% threshold | ${c.holdClass}-hold)
+  Trades detected: ${c.tradeCount} | Trades/month: ${c.tradesPerMonth}
+  Avg move: ${c.avgMovePct}% | Median: ${c.medianMovePct}% | P25: ${c.p25MovePct}% | P75: ${c.p75MovePct}%
+  Avg hold: ${c.avgHoldHours}h | Win rate: ${(c.winRate * 100).toFixed(0)}%
+  Expected monthly return: ${c.expectedMonthlyReturnPct}% | Consistency: ${(c.consistency * 100).toFixed(0)}%
+  Description: ${c.description}
+`).join("")}
+
+CRITICAL TASK: Compare this data-derived ranking against your narrative analysis.
+- If the top-ranked strategy is a SMALLER move than the 50-200% system mandate, explain WHY the data shows that.
+- Do not dismiss smaller-but-repeatable opportunities — compute their monthly return vs large-but-rare ones.
+- Identify whether the 30%+ long-hold strategy is optimal from a monthly return standpoint, or if medium holds are more capital efficient.
+- Be explicit about any divergence between system philosophy and what the data shows.
+`
+    : "=== DETERMINISTIC RANKING: insufficient data for ranking ===\n";
 
   const isBoomCrash = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
   const isVolatility = symbol.startsWith("R_");
@@ -391,7 +435,7 @@ Recent half (${new Date(midpoint * 1000).toISOString().slice(0, 10)} → ${new D
 Move drift: ${((recentAvgMove - olderAvgMove) * 100).toFixed(1)}% change in avg move size
 Frequency drift: ${(recentSwings.length - olderSwings.length > 0 ? "+" : "")}${recentSwings.length - olderSwings.length} swings in recent period
 ${strategicContext}
-
+${rankingContext}
 === REQUIRED OUTPUT FORMAT ===
 Respond ONLY with valid JSON (no markdown, no preamble). All string values must be non-empty.
 

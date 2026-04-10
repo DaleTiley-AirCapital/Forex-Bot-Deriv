@@ -906,29 +906,45 @@ function ExportTab() {
   const [precheck, setPrecheck] = useState<any | null>(null);
   const [precheckErr, setPrecheckErr] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [downloadErr, setDownloadErr] = useState<string | null>(null);
+
+  const [rangeBounds, setRangeBounds] = useState<any | null>(null);
+  const [rangeLoading, setRangeLoading] = useState(false);
 
   const TFS = ["1m","5m","10m","20m","40m","1h","2h","4h","8h","1d","2d","4d"];
+
+  // Load actual available bounds whenever symbol or timeframe changes,
+  // so the date inputs can show the valid range.
+  useEffect(() => {
+    let cancelled = false;
+    setRangeBounds(null);
+    setRangeLoading(true);
+    setPrecheck(null);
+    setPrecheckErr(null);
+    apiFetch(`export/range?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`)
+      .then(d => { if (!cancelled) setRangeBounds(d); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setRangeLoading(false); });
+    return () => { cancelled = true; };
+  }, [symbol, timeframe]);
+
+  // When range bounds load, clamp the selected dates to actual available range.
+  useEffect(() => {
+    if (!rangeBounds?.firstAvailableDate || !rangeBounds?.lastAvailableDate) return;
+    const first = rangeBounds.firstAvailableDate as string;
+    const last  = rangeBounds.lastAvailableDate  as string;
+    setStartDate(d => d < first ? first : d > last ? first : d);
+    setEndDate(d   => d > last  ? last  : d < first ? last  : d);
+  }, [rangeBounds]);
 
   const runPrecheck = async () => {
     setChecking(true);
     setPrecheckErr(null);
     setPrecheck(null);
     try {
-      const d = await apiFetch(`diagnostics/data-integrity/${symbol}`);
-
-      // The enrichment status endpoint only returns derived TFs (5m+).
-      // For 1m, use base1mCount directly from the response.
-      let tfEntry: any;
-      if (timeframe === "1m") {
-        const cnt = d.base1mCount ?? 0;
-        tfEntry = cnt > 0
-          ? { timeframe: "1m", count: cnt, status: "ready", firstDate: null, lastDate: null }
-          : null;
-      } else {
-        tfEntry = (d.timeframes ?? []).find((t: any) => t.timeframe === timeframe) ?? null;
-      }
-
-      setPrecheck({ symbol, timeframe, symbolDetail: d, tfEntry });
+      const params = new URLSearchParams({ symbol, timeframe, startDate, endDate });
+      const d = await apiFetch(`export/precheck?${params}`);
+      setPrecheck(d);
     } catch (e: any) {
       setPrecheckErr(e.message);
     } finally {
@@ -936,9 +952,11 @@ function ExportTab() {
     }
   };
 
-  const [downloadErr, setDownloadErr] = useState<string | null>(null);
-
   const triggerDownload = async () => {
+    if (precheck && precheck.outOfRange) {
+      setPrecheckErr(precheck.outOfRangeMsg ?? "Selected date range has no data");
+      return;
+    }
     setDownloading(true);
     setDownloadErr(null);
     try {
@@ -966,21 +984,25 @@ function ExportTab() {
     }
   };
 
+  const sr = precheck?.selectedRange;
+  const ta = precheck?.totalAvailable;
+
   return (
     <div className="space-y-4">
       <Section title="Export Readiness Check" icon={Download}>
         <div className="space-y-4">
           <div className="text-xs text-muted-foreground bg-muted/20 rounded p-3 leading-relaxed">
-            Before exporting data, verify that the selected symbol/timeframe combination has sufficient data and no blocking integrity issues.
-            The export endpoint streams a ZIP with JSON data chunks + manifest + validation report.
-            Unsupported timeframes will return an error immediately (no silent fallbacks).
+            Verify that the selected symbol/timeframe/date range has data before exporting.
+            Row count reflects the <strong className="text-foreground">selected range only</strong> — not the full dataset.
+            Date inputs are clamped to the actual available range.
+            The ZIP export contains: JSON data chunks + manifest + validation report.
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
-            <SymbolSelect value={symbol} onChange={setSymbol} />
+            <SymbolSelect value={symbol} onChange={s => { setSymbol(s); setPrecheck(null); }} />
             <select
               value={timeframe}
-              onChange={e => setTimeframe(e.target.value)}
+              onChange={e => { setTimeframe(e.target.value); setPrecheck(null); }}
               className="text-xs bg-background border border-border/50 rounded px-2 py-1 text-foreground"
             >
               {TFS.map(tf => <option key={tf} value={tf}>{tf}</option>)}
@@ -989,55 +1011,127 @@ function ExportTab() {
               <input
                 type="date"
                 value={startDate}
-                onChange={e => setStartDate(e.target.value)}
+                min={rangeBounds?.firstAvailableDate ?? undefined}
+                max={rangeBounds?.lastAvailableDate  ?? undefined}
+                onChange={e => { setStartDate(e.target.value); setPrecheck(null); }}
                 className="bg-background border border-border/50 rounded px-2 py-1 text-foreground text-xs"
               />
               <span className="text-muted-foreground">→</span>
               <input
                 type="date"
                 value={endDate}
-                onChange={e => setEndDate(e.target.value)}
+                min={rangeBounds?.firstAvailableDate ?? undefined}
+                max={rangeBounds?.lastAvailableDate  ?? undefined}
+                onChange={e => { setEndDate(e.target.value); setPrecheck(null); }}
                 className="bg-background border border-border/50 rounded px-2 py-1 text-foreground text-xs"
               />
             </div>
+            {rangeLoading && <span className="text-[10px] text-muted-foreground">Loading bounds…</span>}
+            {rangeBounds && !rangeLoading && rangeBounds.totalRows === 0 && (
+              <span className="text-[10px] text-red-400">No data for {symbol}/{timeframe}</span>
+            )}
+            {rangeBounds && !rangeLoading && rangeBounds.totalRows > 0 && (
+              <span className="text-[10px] text-muted-foreground">
+                Available: {rangeBounds.firstAvailableDate} → {rangeBounds.lastAvailableDate} ({(rangeBounds.totalRows).toLocaleString()} rows)
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
-            <Btn label={checking ? "Checking…" : "Check Readiness"} icon={Shield} onClick={runPrecheck} loading={checking} variant="default" />
-            <Btn label={downloading ? "Downloading…" : "Download Export"} icon={Download} onClick={triggerDownload} loading={downloading} variant="primary" />
+            <Btn label={checking ? "Checking…" : "Check Selected Range"} icon={Shield} onClick={runPrecheck} loading={checking} variant="default" />
+            <Btn
+              label={downloading ? "Downloading…" : "Download Export"}
+              icon={Download}
+              onClick={triggerDownload}
+              loading={downloading}
+              variant={precheck?.ready ? "primary" : "default"}
+            />
           </div>
 
           {precheckErr && <ErrorBox msg={precheckErr} />}
           {downloadErr && <ErrorBox msg={downloadErr} />}
 
           {precheck && (
-            <div className="space-y-3">
-              {precheck.tfEntry ? (
-                <>
-                  <div className={cn(
-                    "flex items-center gap-2 p-3 rounded-lg border text-xs font-semibold",
-                    precheck.tfEntry.count > 0
-                      ? "bg-green-500/10 border-green-500/20 text-green-400"
-                      : "bg-red-500/10 border-red-500/20 text-red-400"
-                  )}>
-                    {precheck.tfEntry.count > 0 ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-                    {precheck.tfEntry.count > 0
-                      ? `Export ready: ${precheck.tfEntry.count.toLocaleString()} candles available for ${symbol}/${timeframe}`
-                      : `No data — export will fail for ${symbol}/${timeframe}`}
+            <div className="space-y-4">
+              {/* Status banner */}
+              <div className={cn(
+                "flex items-center gap-2 p-3 rounded-lg border text-xs font-semibold",
+                precheck.ready
+                  ? "bg-green-500/10 border-green-500/20 text-green-400"
+                  : precheck.outOfRange
+                  ? "bg-orange-500/10 border-orange-500/20 text-orange-400"
+                  : "bg-red-500/10 border-red-500/20 text-red-400"
+              )}>
+                {precheck.ready ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                {precheck.ready
+                  ? `Ready: ${(sr?.rowCount ?? 0).toLocaleString()} candles in selected range`
+                  : precheck.outOfRange
+                  ? (precheck.outOfRangeMsg ?? "No data in selected range")
+                  : "No data found for this symbol/timeframe"}
+              </div>
+
+              {/* Selected range stats */}
+              {sr && (
+                <div>
+                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Selected Range ({startDate} → {endDate})</div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div className="bg-muted/20 rounded p-2">
+                      <div className="text-[10px] text-muted-foreground mb-0.5">Row Count</div>
+                      <div className={cn("text-sm font-mono font-bold", sr.rowCount > 0 ? "text-green-400" : "text-red-400")}>
+                        {(sr.rowCount ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="bg-muted/20 rounded p-2">
+                      <div className="text-[10px] text-muted-foreground mb-0.5">Real Candles</div>
+                      <div className="text-sm font-mono font-bold text-foreground">{(sr.realCount ?? 0).toLocaleString()}</div>
+                    </div>
+                    <div className="bg-muted/20 rounded p-2">
+                      <div className="text-[10px] text-muted-foreground mb-0.5">First Date</div>
+                      <div className="text-sm font-mono font-bold text-foreground">{sr.firstDate ?? "—"}</div>
+                    </div>
+                    <div className="bg-muted/20 rounded p-2">
+                      <div className="text-[10px] text-muted-foreground mb-0.5">Last Date</div>
+                      <div className="text-sm font-mono font-bold text-foreground">{sr.lastDate ?? "—"}</div>
+                    </div>
+                    {(sr.interpolatedCount ?? 0) > 0 && (
+                      <div className="bg-orange-500/10 rounded p-2 col-span-2">
+                        <div className="text-[10px] text-orange-400 mb-0.5">Interpolated (carry-forward)</div>
+                        <div className="text-sm font-mono font-bold text-orange-400">{(sr.interpolatedCount ?? 0).toLocaleString()}</div>
+                        <div className="text-[9px] text-muted-foreground mt-0.5">Included in export but flagged isInterpolated=true</div>
+                      </div>
+                    )}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <KV k="Row count" v={precheck.tfEntry.count.toLocaleString()} mono />
-                    <KV k="Status" v={<Badge label={precheck.tfEntry.status} variant={precheck.tfEntry.status === "ready" ? "ok" : "warn"} />} />
-                    <KV k="First" v={precheck.tfEntry.firstDate ?? "—"} mono />
-                    <KV k="Last" v={precheck.tfEntry.lastDate ?? "—"} mono />
-                  </div>
-                </>
-              ) : (
-                <ErrorBox msg={`No ${timeframe} data found for ${symbol} — either timeframe is not enriched or no data exists`} />
+                </div>
               )}
+
+              {/* Total available stats */}
+              {ta && ta.rowCount > 0 && (
+                <div>
+                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Total Available Dataset</div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div className="bg-muted/10 rounded p-2">
+                      <div className="text-[10px] text-muted-foreground mb-0.5">Total Rows</div>
+                      <div className="text-sm font-mono font-bold text-muted-foreground">{(ta.rowCount ?? 0).toLocaleString()}</div>
+                    </div>
+                    <div className="bg-muted/10 rounded p-2">
+                      <div className="text-[10px] text-muted-foreground mb-0.5">Real Rows</div>
+                      <div className="text-sm font-mono font-bold text-muted-foreground">{(ta.realCount ?? 0).toLocaleString()}</div>
+                    </div>
+                    <div className="bg-muted/10 rounded p-2">
+                      <div className="text-[10px] text-muted-foreground mb-0.5">First Available</div>
+                      <div className="text-sm font-mono font-bold text-muted-foreground">{ta.firstDate ?? "—"}</div>
+                    </div>
+                    <div className="bg-muted/10 rounded p-2">
+                      <div className="text-[10px] text-muted-foreground mb-0.5">Last Available</div>
+                      <div className="text-sm font-mono font-bold text-muted-foreground">{ta.lastDate ?? "—"}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="text-[10px] text-muted-foreground">
-                Note: Export validation (duplicate detection, gap reporting) runs live inside the export stream.
-                Check the validation.json in the downloaded ZIP for per-export integrity details.
+                Row count reflects the selected date range only. Export validation (gap / duplicate detection) runs inside the stream.
+                Check validation.json in the downloaded ZIP for per-export integrity details.
               </div>
             </div>
           )}

@@ -728,4 +728,54 @@ router.post("/research/enrich", async (req, res): Promise<void> => {
   }
 });
 
+/**
+ * POST /research/reconcile
+ *
+ * Integrity-first reconcile pipeline: inspect → repair gaps → enrich.
+ *
+ * This is the correct operational flow. Unlike calling top-up and enrich
+ * separately, reconcile:
+ * 1. Checks if base 1m data is sufficient for enrichment
+ * 2. Fails loudly if not (does not silently enrich on thin data)
+ * 3. Repairs 1m/5m gaps from the API
+ * 4. Re-checks base after repair
+ * 5. Enriches derived TFs only from clean, sufficient base
+ *
+ * Background-capable via query param: ?background=true
+ *
+ * Body: { symbol: string }
+ */
+router.post("/research/reconcile", async (req, res): Promise<void> => {
+  const { symbol } = req.body ?? {};
+  const background = req.query.background === "true";
+
+  if (!symbol || typeof symbol !== "string") {
+    res.status(400).json({ error: "symbol is required" });
+    return;
+  }
+
+  if (!ALL_SYMBOLS.includes(symbol)) {
+    res.status(400).json({ error: `Unknown symbol: ${symbol}` });
+    return;
+  }
+
+  try {
+    const derivClient = await getDerivClientWithDbToken();
+    const { reconcileSymbolData } = await import("../core/dataIntegrity.js");
+
+    if (background) {
+      reconcileSymbolData(symbol, derivClient).catch(err =>
+        console.error(`[Reconcile] Background run failed for ${symbol}:`, err),
+      );
+      res.json({ success: true, message: `Reconcile started in background for ${symbol}` });
+    } else {
+      const result = await reconcileSymbolData(symbol, derivClient);
+      const overallSuccess = result.errors.length === 0 && result.enrichment.ran;
+      res.json({ success: overallSuccess, result });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Reconcile failed" });
+  }
+});
+
 export default router;

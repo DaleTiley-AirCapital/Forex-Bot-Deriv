@@ -1,5 +1,12 @@
 import { Router, type IRouter } from "express";
-import { getAllSymbolStatuses, validateActiveSymbols } from "../infrastructure/symbolValidator.js";
+import {
+  getAllSymbolStatuses,
+  validateActiveSymbols,
+  enableSymbolStreaming,
+  disableSymbolStreaming,
+  isSymbolStreamingDisabled,
+  getDisabledSymbols,
+} from "../infrastructure/symbolValidator.js";
 import {
   getIntegrityReport,
   getSymbolDataSummary,
@@ -44,6 +51,64 @@ router.post("/diagnostics/symbols/revalidate", async (_req, res) => {
       revalidated: true,
       validCount: validated.size,
       symbols: statuses,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
+  }
+});
+
+/**
+ * POST /diagnostics/symbols/:symbol/streaming
+ *
+ * Enable or disable live streaming for a specific symbol.
+ * Body: { enabled: boolean }
+ *
+ * This does NOT disconnect an already-open WebSocket subscription immediately.
+ * It marks the symbol as disabled so the watchdog skips it and future
+ * subscription cycles omit it. For active trading symbols this prevents
+ * live tick ingestion without a full server restart.
+ */
+router.post("/diagnostics/symbols/:symbol/streaming", (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const { enabled } = req.body ?? {};
+
+    if (typeof enabled !== "boolean") {
+      res.status(400).json({ error: "Body must include { enabled: boolean }" });
+      return;
+    }
+
+    if (enabled) {
+      enableSymbolStreaming(symbol);
+    } else {
+      disableSymbolStreaming(symbol);
+    }
+
+    const disabled = isSymbolStreamingDisabled(symbol);
+    res.json({
+      symbol,
+      streamingEnabled: !disabled,
+      streamingState: disabled ? "disabled" : "available",
+      message: `Streaming ${enabled ? "enabled" : "disabled"} for ${symbol}`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
+  }
+});
+
+/**
+ * GET /diagnostics/symbols/streaming-config
+ *
+ * Returns the current per-symbol streaming configuration:
+ * which symbols have been explicitly disabled.
+ */
+router.get("/diagnostics/symbols/streaming-config", (_req, res) => {
+  try {
+    const disabled = getDisabledSymbols();
+    res.json({
+      disabledSymbols: disabled,
+      totalDisabled: disabled.length,
+      note: "Disabled state is in-memory and resets on server restart.",
     });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });

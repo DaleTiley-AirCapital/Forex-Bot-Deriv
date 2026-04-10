@@ -1,25 +1,35 @@
 /**
- * AI Research Job Foundation — V3 Backend
+ * AI Research Job — V3 Backend, Strategy-Aligned
  *
  * Provides structured AI analysis of stored market data per symbol.
- * This is NOT a live trade gate — it is a backend research capability.
+ * NOT a live trade gate — research capability only.
  *
- * Default window: rolling 1 year of stored data (or all available if less).
- * Output is a structured AiResearchReport suitable for:
- * - storage in DB
- * - consumption by future UI research views
- * - consumption by external AI tools (ChatGPT upload, etc.)
+ * Governing philosophy (from .agents/skills/deriv-trading-strategy/SKILL.md):
+ *   - Large capital, long hold, max profit
+ *   - TP targets full spike magnitude: 50–200%+ moves
+ *   - NEVER scalp; NEVER reduce TP targets
+ *   - Only 4 active trading symbols: CRASH300, BOOM300, R_75, R_100
+ *   - Strategy families: Trend Continuation, Mean Reversion,
+ *     Spike Cluster Recovery, Swing Exhaustion, Trendline Breakout
+ *   - Scoring thresholds: Paper≥80, Demo≥85, Real≥90
+ *   - Trade frequency: ~8-9 swing trades/month across all 4 symbols
+ *   - Average hold: 3–44 days; no time-based forced exits
  *
- * The job is async-capable: runs on backgroundDb to avoid blocking main pool.
- * Does NOT modify live engine logic, strategies, or trade decisions.
+ * All AI output is framed by the above philosophy.
+ * The AI may discover new opportunities but must classify them clearly
+ * and never default into scalp-first recommendations unless explicitly
+ * classified as a separate short-hold family.
+ *
+ * Output is raw OHLC analysis. No AI labels are added to candle export.
  */
 import { backgroundDb } from "@workspace/db";
 import { candlesTable } from "@workspace/db";
 import { eq, and, gte, asc, desc, min, max, count } from "drizzle-orm";
 import { getOpenAIClient } from "../infrastructure/openai.js";
+import { ACTIVE_TRADING_SYMBOLS } from "../infrastructure/deriv.js";
 
 const DEFAULT_WINDOW_DAYS = 365;
-const MAX_CANDLES_FOR_ANALYSIS = 10_000;
+const MAX_CANDLES_FOR_ANALYSIS = 15_000;
 
 export interface PriceSwing {
   direction: "up" | "down";
@@ -31,12 +41,34 @@ export interface PriceSwing {
   holdingMinutes: number;
 }
 
+export interface StrategyOpportunity {
+  name: string;
+  family: string;
+  direction: string;
+  holdClass: "long" | "medium" | "short";
+  avgMovePct: number;
+  medianMovePct: number;
+  avgHoldHours: number;
+  tradesPerMonth: number;
+  roughMonthlyProfitPct: number;
+  winLossEstimate: string;
+  walkForwardRuleSketch: string;
+  precursors: string;
+  earliestEntry: string;
+  bestExitLogic: string;
+  engineFit: "compatible" | "new_opportunity" | "contradicts_system";
+  confidence: "high" | "medium" | "low";
+  recentDrift: string;
+}
+
 export interface AiResearchReport {
   symbol: string;
   analysisWindowDays: number;
   dataFrom: string;
   dataTo: string;
   totalCandles1m: number;
+  isActiveTradingSymbol: boolean;
+  instrumentFamily: "BoomCrash" | "Volatility" | "Other";
   swingStats: {
     count: number;
     avgMovePct: number;
@@ -45,8 +77,18 @@ export interface AiResearchReport {
     upMoves: number;
     downMoves: number;
     swingsPerMonth: number;
+    largeMoves: number;
+    largeMoveThresholdPct: number;
   };
+  longHoldOpportunities: StrategyOpportunity[];
+  mediumHoldOpportunities: StrategyOpportunity[];
+  shortHoldOpportunities: StrategyOpportunity[];
+  engineAlignedOpportunities: StrategyOpportunity[];
   aiSummary: string;
+  aiSystemAlignment: string;
+  aiLongHoldAnalysis: string;
+  aiMediumHoldAnalysis: string;
+  aiSpikeClusterAnalysis: string;
   aiMoveFrequency: string;
   aiMoveSize: string;
   aiHoldDuration: string;
@@ -56,6 +98,8 @@ export interface AiResearchReport {
   aiBehaviorDrift: string;
   aiPromisingAreas: string;
   aiDegradingAreas: string;
+  aiNewOpportunities: string;
+  aiRiskWarnings: string;
   aiRawText: string;
   generatedAt: string;
   windowDays: number;
@@ -78,15 +122,17 @@ export function getResearchJobStatus(): ResearchJobStatus {
 }
 
 /**
- * Extracts price swings from 1m candle data using a simple swing detection.
- * A swing is defined as a sustained directional move > 2%.
+ * Extracts price swings from 1m candle data.
+ * A swing is a sustained directional move above the minimum threshold.
  */
-function extractSwings(candles: { openTs: number; open: number; close: number }[]): PriceSwing[] {
+function extractSwings(
+  candles: { openTs: number; open: number; close: number }[],
+  minSwingPct = 0.02,
+  minSwingCandles = 5,
+): PriceSwing[] {
   if (candles.length < 10) return [];
 
   const swings: PriceSwing[] = [];
-  const MIN_SWING_PCT = 0.02;
-  const MIN_SWING_CANDLES = 5;
 
   let swingStart = 0;
   let swingDirection: "up" | "down" | null = null;
@@ -95,7 +141,6 @@ function extractSwings(candles: { openTs: number; open: number; close: number }[
   for (let i = 1; i < candles.length; i++) {
     const prev = candles[i - 1].close;
     const curr = candles[i].close;
-    const movePct = (curr - candles[swingStart].close) / candles[swingStart].close;
 
     const dir: "up" | "down" = curr > prev ? "up" : "down";
 
@@ -111,23 +156,21 @@ function extractSwings(candles: { openTs: number; open: number; close: number }[
       continue;
     }
 
-    // Direction reversed — check if previous swing was significant
     const swingPct = Math.abs((peakPrice - candles[swingStart].close) / candles[swingStart].close);
     const swingLen = i - swingStart;
 
-    if (swingPct >= MIN_SWING_PCT && swingLen >= MIN_SWING_CANDLES) {
+    if (swingPct >= minSwingPct && swingLen >= minSwingCandles) {
       swings.push({
         direction: swingDirection,
-        startTs:   candles[swingStart].openTs,
-        endTs:     candles[i - 1].openTs,
+        startTs:    candles[swingStart].openTs,
+        endTs:      candles[i - 1].openTs,
         startPrice: candles[swingStart].close,
-        endPrice:  peakPrice,
-        movePct:   swingPct,
+        endPrice:   peakPrice,
+        movePct:    swingPct,
         holdingMinutes: (candles[i - 1].openTs - candles[swingStart].openTs) / 60,
       });
     }
 
-    // Start new swing
     swingStart = i - 1;
     swingDirection = dir;
     peakPrice = curr;
@@ -144,11 +187,23 @@ function median(arr: number[]): number {
 }
 
 /**
+ * Classify hold duration.
+ *   long   = > 24 hours average
+ *   medium = 4–24 hours
+ *   short  = < 4 hours
+ */
+function classifyHold(avgHoldHours: number): "long" | "medium" | "short" {
+  if (avgHoldHours > 24) return "long";
+  if (avgHoldHours >= 4) return "medium";
+  return "short";
+}
+
+/**
  * Runs AI research analysis on stored candle data for a symbol.
  *
- * @param symbol       Trading symbol (e.g. "CRASH300")
- * @param windowDays   Analysis window in days (default: 365)
- * @returns            Structured research report
+ * @param symbol     Trading symbol (e.g. "CRASH300")
+ * @param windowDays Analysis window in days (default: 365)
+ * @returns          Structured research report aligned to strategy philosophy
  */
 export async function analyzeSymbol(
   symbol: string,
@@ -157,7 +212,6 @@ export async function analyzeSymbol(
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - windowDays * 86400;
 
-  // Get data availability
   const [summary] = await backgroundDb
     .select({ cnt: count(), first: min(candlesTable.openTs), last: max(candlesTable.openTs) })
     .from(candlesTable)
@@ -173,7 +227,7 @@ export async function analyzeSymbol(
 
   const actualWindowDays = Math.ceil((lastTs - firstTs) / 86400);
 
-  // Sample candles for swing analysis (evenly spaced if too many)
+  // Sample candles for swing analysis
   let candles: { openTs: number; open: number; close: number }[];
 
   if (totalCandles <= MAX_CANDLES_FOR_ANALYSIS) {
@@ -183,7 +237,6 @@ export async function analyzeSymbol(
       .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m"), gte(candlesTable.openTs, cutoff)))
       .orderBy(asc(candlesTable.openTs));
   } else {
-    // Sample every Nth candle to stay under limit
     const step = Math.ceil(totalCandles / MAX_CANDLES_FOR_ANALYSIS);
     const all = await backgroundDb
       .select({ openTs: candlesTable.openTs, open: candlesTable.open, close: candlesTable.close })
@@ -193,78 +246,224 @@ export async function analyzeSymbol(
     candles = all.filter((_, i) => i % step === 0);
   }
 
-  const swings = extractSwings(candles);
-  const upSwings   = swings.filter(s => s.direction === "up");
-  const downSwings = swings.filter(s => s.direction === "down");
+  // Extract swings at different thresholds for multi-scale analysis
+  const allSwings    = extractSwings(candles, 0.02, 5);   // 2%+ swings
+  const medSwings    = extractSwings(candles, 0.10, 30);  // 10%+ medium swings
+  const largeSwings  = extractSwings(candles, 0.30, 100); // 30%+ large swings (system targets)
 
-  const allMovePcts = swings.map(s => s.movePct * 100);
-  const allHoldHours = swings.map(s => s.holdingMinutes / 60);
+  const upSwings    = allSwings.filter(s => s.direction === "up");
+  const downSwings  = allSwings.filter(s => s.direction === "down");
+
+  const allMovePcts  = allSwings.map(s => s.movePct * 100);
+  const allHoldHours = allSwings.map(s => s.holdingMinutes / 60);
   const monthsInWindow = actualWindowDays / 30;
-  const swingsPerMonth = monthsInWindow > 0 ? swings.length / monthsInWindow : 0;
+  const swingsPerMonth = monthsInWindow > 0 ? allSwings.length / monthsInWindow : 0;
 
   const swingStats = {
-    count:           swings.length,
-    avgMovePct:      allMovePcts.length ? allMovePcts.reduce((a, b) => a + b, 0) / allMovePcts.length : 0,
-    medianMovePct:   median(allMovePcts),
-    avgHoldingHours: allHoldHours.length ? allHoldHours.reduce((a, b) => a + b, 0) / allHoldHours.length : 0,
-    upMoves:   upSwings.length,
-    downMoves: downSwings.length,
-    swingsPerMonth: Math.round(swingsPerMonth * 10) / 10,
+    count:               allSwings.length,
+    avgMovePct:          allMovePcts.length ? allMovePcts.reduce((a, b) => a + b, 0) / allMovePcts.length : 0,
+    medianMovePct:       median(allMovePcts),
+    avgHoldingHours:     allHoldHours.length ? allHoldHours.reduce((a, b) => a + b, 0) / allHoldHours.length : 0,
+    upMoves:             upSwings.length,
+    downMoves:           downSwings.length,
+    swingsPerMonth:      Math.round(swingsPerMonth * 10) / 10,
+    largeMoves:          largeSwings.length,
+    largeMoveThresholdPct: 30,
   };
 
-  // Recent vs older behavior
+  // Drift analysis: compare older vs recent
   const midpoint = firstTs + (lastTs - firstTs) / 2;
-  const recentSwings = swings.filter(s => s.startTs >= midpoint);
-  const olderSwings  = swings.filter(s => s.startTs < midpoint);
+  const recentSwings = allSwings.filter(s => s.startTs >= midpoint);
+  const olderSwings  = allSwings.filter(s => s.startTs < midpoint);
   const recentAvgMove = recentSwings.length ? recentSwings.reduce((s, x) => s + x.movePct, 0) / recentSwings.length : 0;
   const olderAvgMove  = olderSwings.length  ? olderSwings.reduce( (s, x) => s + x.movePct, 0) / olderSwings.length  : 0;
+  const recentAvgHold = recentSwings.length ? recentSwings.reduce((s, x) => s + x.holdingMinutes / 60, 0) / recentSwings.length : 0;
+  const olderAvgHold  = olderSwings.length  ? olderSwings.reduce( (s, x) => s + x.holdingMinutes / 60, 0) / olderSwings.length  : 0;
 
-  // Prepare the AI prompt
+  // Large-swing (≥30%) analysis for system compatibility
+  const largePcts  = largeSwings.map(s => s.movePct * 100);
+  const largeHours = largeSwings.map(s => s.holdingMinutes / 60);
+  const largeAvgPct  = largePcts.length  ? largePcts.reduce((a, b) => a + b, 0) / largePcts.length : 0;
+  const largeAvgHours = largeHours.length ? largeHours.reduce((a, b) => a + b, 0) / largeHours.length : 0;
+  const largeMedPct  = median(largePcts);
+  const largePerMonth = monthsInWindow > 0 ? largeSwings.length / monthsInWindow : 0;
+
+  // Medium swing (10–30%) analysis
+  const medPcts  = medSwings.map(s => s.movePct * 100);
+  const medHours = medSwings.map(s => s.holdingMinutes / 60);
+  const medAvgPct   = medPcts.length  ? medPcts.reduce((a, b) => a + b, 0) / medPcts.length : 0;
+  const medAvgHours = medHours.length ? medHours.reduce((a, b) => a + b, 0) / medHours.length : 0;
+
   const isBoomCrash = symbol.startsWith("BOOM") || symbol.startsWith("CRASH");
-  const instrumentType = isBoomCrash ? "Boom/Crash synthetic index (spike-driven, mean-reverting)" : "Volatility synthetic index (random-walk, trend-following)";
+  const isVolatility = symbol.startsWith("R_");
+  const isActiveTradingSymbol = ACTIVE_TRADING_SYMBOLS.includes(symbol);
 
-  const prompt = `You are a quantitative analyst reviewing stored historical market data for a trading research report.
+  const instrumentType = isBoomCrash
+    ? "Boom/Crash synthetic index (spike-driven, mean-reverting between spikes)"
+    : isVolatility
+    ? "Volatility synthetic index (continuous random walk, mean-reverting over multi-day periods)"
+    : "Research-only synthetic index";
 
-INSTRUMENT: ${symbol} — ${instrumentType}
+  const instrumentFamily: "BoomCrash" | "Volatility" | "Other" = isBoomCrash ? "BoomCrash" : isVolatility ? "Volatility" : "Other";
+
+  const spikeDirection = symbol.startsWith("CRASH") ? "DOWN" : symbol.startsWith("BOOM") ? "UP" : "N/A";
+  const driftDirection = symbol.startsWith("CRASH") ? "UP (price drifts up between crash spikes)" : symbol.startsWith("BOOM") ? "DOWN (price drifts down between boom spikes)" : "random walk";
+  const primaryTrade   = symbol.startsWith("CRASH") ? "BUY after spike cluster exhaustion at swing lows" : symbol.startsWith("BOOM") ? "SELL after spike cluster exhaustion at swing highs" : "BUY or SELL at range extremes with reversal confirmation";
+
+  const strategicContext = isBoomCrash
+    ? `
+INSTRUMENT-SPECIFIC BEHAVIOR (Boom/Crash):
+- Spike direction: ${spikeDirection} (1-in-300 chance per tick)
+- Drift direction: ${driftDirection}
+- Primary trade: ${primaryTrade}
+- Key setup — Spike Cluster Recovery (HIGHEST CONVICTION):
+    * CRASH: 3+ crash spikes in 4h OR 5+ in 24h → price exhausted downward → reversal candle (green) → BUY for 25–176% move lasting 4–44 days
+    * BOOM: 3+ boom spikes in 4h OR 5+ in 24h → price exhausted upward → reversal candle (red) → SELL for 23–62% move lasting 2–24 days
+    * This pattern appears at EVERY major swing low/high in 6 months of CRASH300/BOOM300 data
+- Secondary setup — Swing Exhaustion:
+    * CRASH SELL signal: 14+ crash spikes in 7d + price up 8%+ in 7d + near 30d high + momentum fade → price exhausted upward → cascade DOWN
+    * BOOM BUY signal: 14+ boom spikes in 7d + price down 8%+ in 7d + near 30d low + momentum fade → price exhausted downward → rally UP
+`
+    : `
+INSTRUMENT-SPECIFIC BEHAVIOR (Volatility):
+- Behavior: Continuous random walk, mean-reverting over multi-day periods
+- No spike-specific behavior — pure price action and technicals
+- Primary trade: BUY or SELL based on trend/reversal signals at range extremes
+- Key setup — Mean Reversion at Extremes:
+    * Price at 30d range extreme (< 3% from low or > -3% from high) + directional reversal confirmation
+    * R_75 average swing: ~22% over 8 days (~3 swings/month)
+    * R_100 bigger moves but less frequent: 18–92% over 3–27 days (~2 swings/month)
+- Secondary setup — Trend Continuation:
+    * Confirmed reversal with EMA slope alignment (>0.0003 or <-0.0003)
+    * Pullback to EMA (|emaDist| < 0.01), RSI 35–65
+`;
+
+  const prompt = `You are a quantitative trading analyst for a long-hold, large-capital trading system focused on Deriv synthetic indices.
+
+=== GOVERNING STRATEGY PHILOSOPHY (NON-NEGOTIABLE) ===
+- MANDATE: Large capital, long hold, max profit — swing trades on highest-probability signals ONLY
+- TP targets: 50–200%+ full spike magnitude moves. NEVER scalp. NEVER suggest 1–10% micro-trades.
+- Exit hierarchy: TP (primary) → SL (1:5 R:R from TP) → ATR trailing stop (activates at 30% of TP target)
+- Active trading symbols: CRASH300, BOOM300, R_75, R_100 ONLY
+- Expected trade frequency: ~8–9 swing trades/month across all 4 active symbols
+- Average hold duration: 3–44 days. NO time-based forced exits.
+- Scoring thresholds: Paper≥80, Demo≥85, Real≥90 composite score
+
+STRATEGY FAMILIES IN USE:
+1. Trend Continuation — ride the new trend after confirmed swing reversal
+2. Mean Reversion — trade at multi-day/week extremes showing exhaustion
+3. Spike Cluster Recovery — highest-conviction Boom/Crash setup: reversal after spike cluster exhausts the move
+4. Swing Exhaustion — fade a sustained multi-day move where momentum is fading
+5. Trendline Breakout — breaking multi-touch S/R with momentum
+
+AI RESEARCH MUST:
+- Frame all analysis in long-hold context first
+- Classify any short-hold opportunities explicitly as separate, lower-priority discoveries
+- Never recommend reducing TP targets or shortening the hold philosophy
+- Acknowledge when the data confirms or contradicts the system's established findings
+
+=== INSTRUMENT DATA ===
+SYMBOL: ${symbol} — ${instrumentType}
+IS ACTIVE TRADING SYMBOL: ${isActiveTradingSymbol ? "YES (currently traded live)" : "NO (research/data collection only)"}
 ANALYSIS WINDOW: ${actualWindowDays} days (${new Date(firstTs * 1000).toISOString().slice(0, 10)} → ${new Date(lastTs * 1000).toISOString().slice(0, 10)})
-TOTAL 1-MINUTE CANDLES AVAILABLE: ${totalCandles.toLocaleString()}
+TOTAL 1-MINUTE CANDLES: ${totalCandles.toLocaleString()}
 
-SWING ANALYSIS (≥2% moves, ≥5 candles):
-- Total swings detected: ${swings.length}
-- Up moves: ${upSwings.length}, Down moves: ${downSwings.length}
-- Average move size: ${swingStats.avgMovePct.toFixed(1)}%
-- Median move size: ${swingStats.medianMovePct.toFixed(1)}%
-- Average holding time: ${swingStats.avgHoldingHours.toFixed(1)} hours
-- Swings per month: ${swingStats.swingsPerMonth}
+=== MULTI-SCALE SWING ANALYSIS ===
+All swings (≥2% / ≥5 candles):
+  Total: ${allSwings.length} swings | Up: ${upSwings.length} | Down: ${downSwings.length}
+  Avg move: ${swingStats.avgMovePct.toFixed(1)}% | Median: ${swingStats.medianMovePct.toFixed(1)}%
+  Avg hold: ${swingStats.avgHoldingHours.toFixed(1)} hours | Frequency: ${swingStats.swingsPerMonth}/month
 
-DRIFT ANALYSIS:
-- Older half (${new Date(firstTs * 1000).toISOString().slice(0, 10)}–${new Date(midpoint * 1000).toISOString().slice(0, 10)}): avg move = ${(olderAvgMove * 100).toFixed(1)}%, count = ${olderSwings.length}
-- Recent half (${new Date(midpoint * 1000).toISOString().slice(0, 10)}–${new Date(lastTs * 1000).toISOString().slice(0, 10)}): avg move = ${(recentAvgMove * 100).toFixed(1)}%, count = ${recentSwings.length}
+Medium swings (≥10%):
+  Count: ${medSwings.length} | Avg move: ${medAvgPct.toFixed(1)}% | Avg hold: ${medAvgHours.toFixed(1)} hours
 
-SYSTEM CONTEXT:
-- This system targets 50–200%+ return moves (large capital, long hold)
-- TP = 50% of 90-day range for Boom/Crash; 70% of major swing range for Volatility
-- Expected trade count: 5–30 per quarter
-- The system holds trades for hours to weeks (never scalps)
+Large swings (≥30% — SYSTEM TARGET RANGE):
+  Count: ${largeSwings.length} | Avg move: ${largeAvgPct.toFixed(1)}% | Median: ${largeMedPct.toFixed(1)}%
+  Avg hold: ${largeAvgHours.toFixed(1)} hours | Frequency: ${largePerMonth.toFixed(1)}/month
+  
+=== BEHAVIORAL DRIFT ===
+Older half (${new Date(firstTs * 1000).toISOString().slice(0, 10)} → ${new Date(midpoint * 1000).toISOString().slice(0, 10)}):
+  Swings: ${olderSwings.length} | Avg move: ${(olderAvgMove * 100).toFixed(1)}% | Avg hold: ${olderAvgHold.toFixed(1)}h
 
-Based on the data above, provide a structured research report:
+Recent half (${new Date(midpoint * 1000).toISOString().slice(0, 10)} → ${new Date(lastTs * 1000).toISOString().slice(0, 10)}):
+  Swings: ${recentSwings.length} | Avg move: ${(recentAvgMove * 100).toFixed(1)}% | Avg hold: ${recentAvgHold.toFixed(1)}h
 
-Respond with ONLY valid JSON (no markdown, no preamble):
+Move drift: ${((recentAvgMove - olderAvgMove) * 100).toFixed(1)}% change in avg move size
+Frequency drift: ${(recentSwings.length - olderSwings.length > 0 ? "+" : "")}${recentSwings.length - olderSwings.length} swings in recent period
+${strategicContext}
+
+=== REQUIRED OUTPUT FORMAT ===
+Respond ONLY with valid JSON (no markdown, no preamble). All string values must be non-empty.
+
 {
-  "summary": "<2-3 sentence overall assessment of this instrument's suitability for the system>",
-  "moveFrequency": "<assessment of how often significant tradeable moves occur>",
-  "moveSize": "<assessment of typical move size vs the system's TP targets>",
-  "holdDuration": "<assessment of how long moves last vs the system's hold philosophy>",
-  "usefulTimeframes": "<which timeframes appear most meaningful for this instrument based on swing data>",
-  "repeatableSetups": "<what appears repeatable or structural based on the data patterns>",
+  "summary": "<2-3 sentence overall assessment — start with whether this instrument is suitable for the long-hold system>",
+  "systemAlignment": "<how well this instrument aligns with the long-hold 50-200%+ philosophy and current active engine set>",
+  "longHoldAnalysis": "<analysis of 30%+ moves: frequency, average size, hold duration, predictability, entry patterns — are they exploitable with the system?>",
+  "mediumHoldAnalysis": "<analysis of 10-30% moves: are they useful as medium-hold opportunities or should they be filtered out as too small?>",
+  "spikeClusterAnalysis": "${isBoomCrash ? "analysis of spike cluster exhaustion patterns: how many detected in the window, typical cluster size before reversal, expected move after cluster, match to CRASH/BOOM primary setup" : "not applicable — volatility index; note mean reversion at range extremes instead"}",
+  "opportunities": [
+    {
+      "name": "<descriptive strategy name>",
+      "family": "<trend_continuation | mean_reversion | spike_cluster_recovery | swing_exhaustion | trendline_breakout | new_discovery>",
+      "direction": "<BUY | SELL | BOTH>",
+      "holdClass": "<long | medium | short>",
+      "avgMovePct": <number>,
+      "medianMovePct": <number>,
+      "avgHoldHours": <number>,
+      "tradesPerMonth": <number>,
+      "roughMonthlyProfitPct": <number — estimated % gain on capital per month if strategy fires>,
+      "winLossEstimate": "<estimated win rate and context>",
+      "walkForwardRuleSketch": "<if-then entry rule sketch based on observed patterns>",
+      "precursors": "<what conditions must exist before entry>",
+      "earliestEntry": "<earliest safe entry signal>",
+      "bestExitLogic": "<TP target range and trailing stop approach for this opportunity>",
+      "engineFit": "<compatible | new_opportunity | contradicts_system>",
+      "confidence": "<high | medium | low>",
+      "recentDrift": "<has this pattern improved, degraded, or stayed stable recently?>"
+    }
+  ],
+  "moveFrequency": "<how often significant tradeable moves occur>",
+  "moveSize": "<typical move size vs the system TP targets of 50-200%+>",
+  "holdDuration": "<how long moves last vs the 3-44 day system hold philosophy>",
+  "usefulTimeframes": "<which timeframes appear most meaningful for this instrument>",
+  "repeatableSetups": "<what appears repeatable or structural based on the data>",
   "firingFrequency": "<expected signal frequency — how often the system should fire on this instrument>",
-  "behaviorDrift": "<whether recent behavior differs significantly from older behavior>",
-  "promisingAreas": "<what looks promising or improving in the data>",
-  "degradingAreas": "<what looks degrading, less reliable, or risky in the recent data>"
+  "behaviorDrift": "<whether recent behavior differs significantly from older — improving, degrading, or stable>",
+  "promisingAreas": "<what looks promising or improving>",
+  "degradingAreas": "<what looks degrading, less reliable, or risky>",
+  "newOpportunities": "<any patterns discovered outside the current 5 strategy families — classify clearly and note whether they require system changes>",
+  "riskWarnings": "<data quality issues, thinning move frequency, regime changes, or other risks the system operator should know>"
 }`;
 
-  let aiResult: {
+  let rawText = "";
+
+  type ParsedOpportunity = {
+    name: string;
+    family: string;
+    direction: string;
+    holdClass: "long" | "medium" | "short";
+    avgMovePct: number;
+    medianMovePct: number;
+    avgHoldHours: number;
+    tradesPerMonth: number;
+    roughMonthlyProfitPct: number;
+    winLossEstimate: string;
+    walkForwardRuleSketch: string;
+    precursors: string;
+    earliestEntry: string;
+    bestExitLogic: string;
+    engineFit: "compatible" | "new_opportunity" | "contradicts_system";
+    confidence: "high" | "medium" | "low";
+    recentDrift: string;
+  };
+
+  type ParsedResult = {
     summary: string;
+    systemAlignment: string;
+    longHoldAnalysis: string;
+    mediumHoldAnalysis: string;
+    spikeClusterAnalysis: string;
+    opportunities: ParsedOpportunity[];
     moveFrequency: string;
     moveSize: string;
     holdDuration: string;
@@ -274,60 +473,109 @@ Respond with ONLY valid JSON (no markdown, no preamble):
     behaviorDrift: string;
     promisingAreas: string;
     degradingAreas: string;
+    newOpportunities: string;
+    riskWarnings: string;
   };
 
-  let rawText = "";
+  let parsed: ParsedResult;
 
   try {
     const client = await getOpenAIClient();
     const response = await client.chat.completions.create({
       model: "gpt-4o",
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 800,
-      temperature: 0.3,
+      max_tokens: 3000,
+      temperature: 0.25,
     });
 
     rawText = response.choices[0]?.message?.content?.trim() ?? "";
     const match = rawText.match(/\{[\s\S]*\}/);
     if (!match) throw new Error("No JSON found in OpenAI response");
 
-    const parsed = JSON.parse(match[0]);
-    aiResult = {
-      summary:           String(parsed.summary ?? ""),
-      moveFrequency:     String(parsed.moveFrequency ?? ""),
-      moveSize:          String(parsed.moveSize ?? ""),
-      holdDuration:      String(parsed.holdDuration ?? ""),
-      usefulTimeframes:  String(parsed.usefulTimeframes ?? ""),
-      repeatableSetups:  String(parsed.repeatableSetups ?? ""),
-      firingFrequency:   String(parsed.firingFrequency ?? ""),
-      behaviorDrift:     String(parsed.behaviorDrift ?? ""),
-      promisingAreas:    String(parsed.promisingAreas ?? ""),
-      degradingAreas:    String(parsed.degradingAreas ?? ""),
+    const p = JSON.parse(match[0]) as Partial<ParsedResult>;
+
+    parsed = {
+      summary:              String(p.summary             ?? ""),
+      systemAlignment:      String(p.systemAlignment     ?? ""),
+      longHoldAnalysis:     String(p.longHoldAnalysis    ?? ""),
+      mediumHoldAnalysis:   String(p.mediumHoldAnalysis  ?? ""),
+      spikeClusterAnalysis: String(p.spikeClusterAnalysis ?? ""),
+      opportunities:        Array.isArray(p.opportunities) ? p.opportunities : [],
+      moveFrequency:        String(p.moveFrequency       ?? ""),
+      moveSize:             String(p.moveSize            ?? ""),
+      holdDuration:         String(p.holdDuration        ?? ""),
+      usefulTimeframes:     String(p.usefulTimeframes    ?? ""),
+      repeatableSetups:     String(p.repeatableSetups    ?? ""),
+      firingFrequency:      String(p.firingFrequency     ?? ""),
+      behaviorDrift:        String(p.behaviorDrift       ?? ""),
+      promisingAreas:       String(p.promisingAreas      ?? ""),
+      degradingAreas:       String(p.degradingAreas      ?? ""),
+      newOpportunities:     String(p.newOpportunities    ?? ""),
+      riskWarnings:         String(p.riskWarnings        ?? ""),
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`[AIResearch] OpenAI analysis failed for ${symbol}: ${msg}`);
   }
 
+  // Classify opportunities by hold class
+  const toStratOpp = (o: ParsedOpportunity): StrategyOpportunity => ({
+    name:                 String(o.name ?? ""),
+    family:               String(o.family ?? ""),
+    direction:            String(o.direction ?? ""),
+    holdClass:            (["long","medium","short"].includes(o.holdClass) ? o.holdClass : classifyHold(Number(o.avgHoldHours ?? 0))) as "long" | "medium" | "short",
+    avgMovePct:           Number(o.avgMovePct ?? 0),
+    medianMovePct:        Number(o.medianMovePct ?? 0),
+    avgHoldHours:         Number(o.avgHoldHours ?? 0),
+    tradesPerMonth:       Number(o.tradesPerMonth ?? 0),
+    roughMonthlyProfitPct: Number(o.roughMonthlyProfitPct ?? 0),
+    winLossEstimate:      String(o.winLossEstimate ?? ""),
+    walkForwardRuleSketch: String(o.walkForwardRuleSketch ?? ""),
+    precursors:           String(o.precursors ?? ""),
+    earliestEntry:        String(o.earliestEntry ?? ""),
+    bestExitLogic:        String(o.bestExitLogic ?? ""),
+    engineFit:            (["compatible","new_opportunity","contradicts_system"].includes(o.engineFit) ? o.engineFit : "new_opportunity") as "compatible" | "new_opportunity" | "contradicts_system",
+    confidence:           (["high","medium","low"].includes(o.confidence) ? o.confidence : "medium") as "high" | "medium" | "low",
+    recentDrift:          String(o.recentDrift ?? ""),
+  });
+
+  const opps = parsed.opportunities.map(toStratOpp);
+  const longHoldOpps   = opps.filter(o => o.holdClass === "long");
+  const mediumHoldOpps = opps.filter(o => o.holdClass === "medium");
+  const shortHoldOpps  = opps.filter(o => o.holdClass === "short");
+  const engineAligned  = opps.filter(o => o.engineFit === "compatible");
+
   return {
     symbol,
-    analysisWindowDays: actualWindowDays,
-    dataFrom:   new Date(firstTs * 1000).toISOString(),
-    dataTo:     new Date(lastTs  * 1000).toISOString(),
-    totalCandles1m: totalCandles,
+    analysisWindowDays:   actualWindowDays,
+    dataFrom:             new Date(firstTs * 1000).toISOString(),
+    dataTo:               new Date(lastTs  * 1000).toISOString(),
+    totalCandles1m:       totalCandles,
+    isActiveTradingSymbol,
+    instrumentFamily,
     swingStats,
-    aiSummary:          aiResult.summary,
-    aiMoveFrequency:    aiResult.moveFrequency,
-    aiMoveSize:         aiResult.moveSize,
-    aiHoldDuration:     aiResult.holdDuration,
-    aiUsefulTimeframes: aiResult.usefulTimeframes,
-    aiRepeatableSetups: aiResult.repeatableSetups,
-    aiFiringFrequency:  aiResult.firingFrequency,
-    aiBehaviorDrift:    aiResult.behaviorDrift,
-    aiPromisingAreas:   aiResult.promisingAreas,
-    aiDegradingAreas:   aiResult.degradingAreas,
-    aiRawText:   rawText,
-    generatedAt: new Date().toISOString(),
+    longHoldOpportunities:   longHoldOpps,
+    mediumHoldOpportunities: mediumHoldOpps,
+    shortHoldOpportunities:  shortHoldOpps,
+    engineAlignedOpportunities: engineAligned,
+    aiSummary:            parsed.summary,
+    aiSystemAlignment:    parsed.systemAlignment,
+    aiLongHoldAnalysis:   parsed.longHoldAnalysis,
+    aiMediumHoldAnalysis: parsed.mediumHoldAnalysis,
+    aiSpikeClusterAnalysis: parsed.spikeClusterAnalysis,
+    aiMoveFrequency:      parsed.moveFrequency,
+    aiMoveSize:           parsed.moveSize,
+    aiHoldDuration:       parsed.holdDuration,
+    aiUsefulTimeframes:   parsed.usefulTimeframes,
+    aiRepeatableSetups:   parsed.repeatableSetups,
+    aiFiringFrequency:    parsed.firingFrequency,
+    aiBehaviorDrift:      parsed.behaviorDrift,
+    aiPromisingAreas:     parsed.promisingAreas,
+    aiDegradingAreas:     parsed.degradingAreas,
+    aiNewOpportunities:   parsed.newOpportunities,
+    aiRiskWarnings:       parsed.riskWarnings,
+    aiRawText:            rawText,
+    generatedAt:          new Date().toISOString(),
     windowDays,
   };
 }
@@ -335,7 +583,7 @@ Respond with ONLY valid JSON (no markdown, no preamble):
 /**
  * Background-compatible wrapper for analyzeSymbol.
  * Updates jobStatus so callers can poll for completion.
- * Non-blocking — fires and forgets, result is stored in jobStatus.lastResult.
+ * Non-blocking — fires and forgets.
  */
 export function runResearchJobBackground(symbol: string, windowDays = DEFAULT_WINDOW_DAYS): void {
   if (jobStatus.running) {

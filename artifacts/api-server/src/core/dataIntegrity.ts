@@ -394,6 +394,176 @@ export async function runDataTopUp(
 }
 
 /**
+ * Reconcile result from the integrity-first top-up + enrichment pipeline.
+ */
+export interface ReconcileResult {
+  symbol: string;
+  baseCheck: {
+    base1mCount: number;
+    base5mCount: number;
+    sufficientForEnrichment: boolean;
+    insufficiencyReason: string | null;
+  };
+  repair: {
+    gapsFound: number;
+    gapsRepaired: number;
+    candlesInserted: number;
+    errors: string[];
+  };
+  enrichment: {
+    inserted: number;
+    skipped: number;
+    errors: string[];
+    ran: boolean;
+  };
+  postCheck: {
+    base1mCount: number;
+    improvementDelta: number;
+  };
+  errors: string[];
+  durationMs: number;
+}
+
+const MIN_BASE_1M_FOR_ENRICHMENT = 1000;
+
+/**
+ * Integrity-first reconcile pipeline for a symbol.
+ *
+ * Order of operations (mandatory):
+ * 1. Inspect canonical 1m base data count
+ * 2. Fail loudly if insufficient for enrichment
+ * 3. Repair 1m and 5m gaps from API
+ * 4. Validate that base data is now sufficient
+ * 5. Enrich derived timeframes from clean 1m base
+ * 6. Final post-check and return
+ *
+ * This replaces the old "run top-up and enrichment separately" pattern.
+ * Enrichment never runs on dirty or insufficient base data.
+ */
+export async function reconcileSymbolData(
+  symbol: string,
+  client: DerivClientPublic,
+): Promise<ReconcileResult> {
+  const start = Date.now();
+  const errors: string[] = [];
+
+  // ── Step 1: Inspect base data before repair ──────────────────────────
+  const [pre1m] = await db
+    .select({ cnt: count() })
+    .from(candlesTable)
+    .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m")));
+  const [pre5m] = await db
+    .select({ cnt: count() })
+    .from(candlesTable)
+    .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "5m")));
+
+  const priorBase1m = Number(pre1m?.cnt ?? 0);
+  const priorBase5m = Number(pre5m?.cnt ?? 0);
+
+  let insufficiencyReason: string | null = null;
+  if (priorBase1m < MIN_BASE_1M_FOR_ENRICHMENT) {
+    insufficiencyReason = `Only ${priorBase1m} 1m candles — minimum is ${MIN_BASE_1M_FOR_ENRICHMENT} for enrichment. Run data top-up (historical download) first.`;
+    console.warn(`[Reconcile] ${symbol}: ${insufficiencyReason}`);
+  }
+
+  // ── Step 2: Repair gaps in 1m and 5m (even if base is thin) ─────────
+  let gapsFound = 0;
+  let gapsRepaired = 0;
+  let candlesInserted = 0;
+  const repairErrors: string[] = [];
+
+  if (priorBase1m > 0) {
+    for (const tf of ["1m", "5m"] as const) {
+      try {
+        const gaps = await detectCandleGaps(symbol, tf);
+        gapsFound += gaps.length;
+        if (gaps.length > 0) {
+          console.log(`[Reconcile] ${symbol}/${tf}: ${gaps.length} gaps found — repairing...`);
+          const { inserted, errors: repErr } = await repairAllGaps(symbol, tf, client);
+          candlesInserted += inserted;
+          gapsRepaired += gaps.length - repErr.length;
+          repairErrors.push(...repErr);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        repairErrors.push(`${tf} repair: ${msg}`);
+      }
+    }
+  } else {
+    console.warn(`[Reconcile] ${symbol}: No 1m base data — skipping gap repair. Download historical data first.`);
+  }
+
+  // ── Step 3: Re-check after repair ────────────────────────────────────
+  const [post1m] = await db
+    .select({ cnt: count() })
+    .from(candlesTable)
+    .where(and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, "1m")));
+  const postBase1m = Number(post1m?.cnt ?? 0);
+  const canEnrich = postBase1m >= MIN_BASE_1M_FOR_ENRICHMENT;
+
+  // ── Step 4: Enrich derived TFs (only if base is sufficient) ──────────
+  let enrichInserted = 0;
+  let enrichSkipped = 0;
+  const enrichErrors: string[] = [];
+  let enrichRan = false;
+
+  if (canEnrich) {
+    try {
+      const { enrichTimeframes } = await import("./candleEnrichment.js");
+      const result = await enrichTimeframes(symbol);
+      enrichInserted = result.inserted;
+      enrichSkipped  = result.skipped;
+      enrichRan = true;
+      console.log(`[Reconcile] ${symbol}: enrichment complete — ${result.inserted} inserted, ${result.skipped} skipped`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      enrichErrors.push(`enrichment failed: ${msg}`);
+      console.error(`[Reconcile] ${symbol} enrichment error: ${msg}`);
+      errors.push(msg);
+    }
+  } else {
+    const reason = `Skipping enrichment: only ${postBase1m} 1m candles after repair (minimum ${MIN_BASE_1M_FOR_ENRICHMENT})`;
+    enrichErrors.push(reason);
+    console.warn(`[Reconcile] ${symbol}: ${reason}`);
+    if (insufficiencyReason) errors.push(insufficiencyReason);
+  }
+
+  const durationMs = Date.now() - start;
+  console.log(
+    `[Reconcile] ${symbol}: done in ${durationMs}ms | gaps=${gapsFound} repaired=${gapsRepaired} ` +
+    `inserted=${candlesInserted} enriched=${enrichInserted} errors=${errors.length + repairErrors.length + enrichErrors.length}`,
+  );
+
+  return {
+    symbol,
+    baseCheck: {
+      base1mCount:              priorBase1m,
+      base5mCount:              priorBase5m,
+      sufficientForEnrichment:  priorBase1m >= MIN_BASE_1M_FOR_ENRICHMENT,
+      insufficiencyReason,
+    },
+    repair: {
+      gapsFound,
+      gapsRepaired,
+      candlesInserted,
+      errors: repairErrors,
+    },
+    enrichment: {
+      inserted: enrichInserted,
+      skipped:  enrichSkipped,
+      errors:   enrichErrors,
+      ran:      enrichRan,
+    },
+    postCheck: {
+      base1mCount:      postBase1m,
+      improvementDelta: postBase1m - priorBase1m,
+    },
+    errors,
+    durationMs,
+  };
+}
+
+/**
  * Quick data status summary for a symbol — counts per timeframe.
  * Lightweight — uses COUNT queries only.
  */

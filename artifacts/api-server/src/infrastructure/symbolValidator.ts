@@ -1,14 +1,24 @@
 import { db, platformStateTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { getDerivClientWithDbToken } from "./deriv.js";
+import {
+  V1_DEFAULT_SYMBOLS,
+  ACTIVE_TRADING_SYMBOLS,
+  RESEARCH_ONLY_SYMBOLS,
+} from "./deriv.js";
+
+export type SymbolStreamingState = "streaming" | "available" | "idle" | "disabled";
 
 export interface SymbolStatus {
   configured: string;
   instrumentFamily: string;
+  isActiveTradingSymbol: boolean;
+  isResearchOnly: boolean;
   activeSymbolFound: boolean;
   apiSymbol: string | null;
   displayName: string | null;
   marketType: string | null;
+  streamingState: SymbolStreamingState;
   streaming: boolean;
   lastTickTs: number | null;
   lastTickValue: number | null;
@@ -30,34 +40,34 @@ interface ActiveSymbol {
 }
 
 const SYMBOL_ALIASES: Record<string, string[]> = {
-  "BOOM1000": ["BOOM1000", "1HZ1000V", "BOOM1000_"],
+  "BOOM1000":  ["BOOM1000", "1HZ1000V", "BOOM1000_"],
   "CRASH1000": ["CRASH1000", "1HZ1000V", "CRASH1000_"],
-  "BOOM900": ["BOOM900", "BOOM900N", "1HZ900V"],
-  "CRASH900": ["CRASH900", "CRASH900N", "1HZ900V"],
-  "BOOM600": ["BOOM600", "BOOM600N", "1HZ600V"],
-  "CRASH600": ["CRASH600", "CRASH600N", "1HZ600V"],
-  "BOOM500": ["BOOM500", "1HZ500V", "BOOM500_"],
-  "CRASH500": ["CRASH500", "1HZ500V", "CRASH500_"],
-  "BOOM300": ["BOOM300", "BOOM300N", "1HZ300V"],
-  "CRASH300": ["CRASH300", "CRASH300N", "1HZ300V"],
-  "R_75": ["R_75", "1HZ75V"],
-  "R_100": ["R_100", "1HZ100V"],
-  "R_10": ["R_10", "1HZ10V"],
-  "R_25": ["R_25", "1HZ25V"],
-  "R_50": ["R_50", "1HZ50V"],
-  "RDBULL": ["RDBULL"],
-  "RDBEAR": ["RDBEAR"],
-  "JD10": ["JD10"],
-  "JD25": ["JD25"],
-  "JD50": ["JD50"],
-  "JD75": ["JD75"],
-  "JD100": ["JD100"],
-  "stpRNG": ["stpRNG"],
-  "stpRNG2": ["stpRNG2"],
-  "stpRNG3": ["stpRNG3"],
-  "stpRNG5": ["stpRNG5"],
-  "RB100": ["RB100"],
-  "RB200": ["RB200"],
+  "BOOM900":   ["BOOM900", "BOOM900N", "1HZ900V"],
+  "CRASH900":  ["CRASH900", "CRASH900N", "1HZ900V"],
+  "BOOM600":   ["BOOM600", "BOOM600N", "1HZ600V"],
+  "CRASH600":  ["CRASH600", "CRASH600N", "1HZ600V"],
+  "BOOM500":   ["BOOM500", "1HZ500V", "BOOM500_"],
+  "CRASH500":  ["CRASH500", "1HZ500V", "CRASH500_"],
+  "BOOM300":   ["BOOM300", "BOOM300N", "1HZ300V"],
+  "CRASH300":  ["CRASH300", "CRASH300N", "1HZ300V"],
+  "R_75":      ["R_75", "1HZ75V"],
+  "R_100":     ["R_100", "1HZ100V"],
+  "R_10":      ["R_10", "1HZ10V"],
+  "R_25":      ["R_25", "1HZ25V"],
+  "R_50":      ["R_50", "1HZ50V"],
+  "RDBULL":    ["RDBULL"],
+  "RDBEAR":    ["RDBEAR"],
+  "JD10":      ["JD10"],
+  "JD25":      ["JD25"],
+  "JD50":      ["JD50"],
+  "JD75":      ["JD75"],
+  "JD100":     ["JD100"],
+  "stpRNG":    ["stpRNG"],
+  "stpRNG2":   ["stpRNG2"],
+  "stpRNG3":   ["stpRNG3"],
+  "stpRNG5":   ["stpRNG5"],
+  "RB100":     ["RB100"],
+  "RB200":     ["RB200"],
 };
 
 const symbolHealthStore: Map<string, {
@@ -68,11 +78,22 @@ const symbolHealthStore: Map<string, {
   error: string | null;
 }> = new Map();
 
+// In-memory per-symbol streaming disable set.
+// Symbols in this set will not be streamed even if active trading symbols.
+// Persists until server restart (intentional — survivable in practice).
+const disabledSymbols = new Set<string>();
+
 let validatedSymbolMap: Map<string, { apiSymbol: string; displayName: string; marketType: string }> = new Map();
 let lastValidationTs = 0;
 const VALIDATION_CACHE_MS = 300_000;
 const STALE_THRESHOLD_MS = 120_000;
 let watchdogHandle: ReturnType<typeof setInterval> | null = null;
+
+// All 28 known symbols: 12 V1 + 16 research-only
+// Lazy function avoids circular-import TDZ (deriv.ts ↔ symbolValidator.ts)
+function getAllKnownSymbols(): string[] {
+  return [...V1_DEFAULT_SYMBOLS, ...RESEARCH_ONLY_SYMBOLS];
+}
 
 export function recordTick(symbol: string, price: number, epochTs: number): void {
   const now = Date.now();
@@ -111,14 +132,69 @@ export function markSymbolError(symbol: string, error: string): void {
   health.error = error;
 }
 
+/**
+ * Enable streaming for a specific symbol.
+ * Removes it from the disabled set. The symbol will resume streaming
+ * on the next subscription cycle if it is an active trading symbol.
+ */
+export function enableSymbolStreaming(symbol: string): void {
+  disabledSymbols.delete(symbol);
+  console.log(`[SymbolValidator] Streaming ENABLED for ${symbol}`);
+}
+
+/**
+ * Disable streaming for a specific symbol.
+ * Adds it to the disabled set. The symbol will be treated as "disabled"
+ * in status reports and skipped for live streaming subscriptions.
+ */
+export function disableSymbolStreaming(symbol: string): void {
+  disabledSymbols.add(symbol);
+  const health = symbolHealthStore.get(symbol);
+  if (health) health.streaming = false;
+  console.log(`[SymbolValidator] Streaming DISABLED for ${symbol}`);
+}
+
+export function isSymbolStreamingDisabled(symbol: string): boolean {
+  return disabledSymbols.has(symbol);
+}
+
+export function getDisabledSymbols(): string[] {
+  return Array.from(disabledSymbols);
+}
+
 function classifyInstrumentFamily(symbol: string): string {
-  if (symbol.startsWith("BOOM")) return "Boom/Crash";
+  if (symbol.startsWith("BOOM"))  return "Boom/Crash";
   if (symbol.startsWith("CRASH")) return "Boom/Crash";
-  if (symbol.startsWith("R_")) return "Volatility";
+  if (symbol.startsWith("R_"))    return "Volatility";
+  if (symbol.startsWith("JD"))    return "Jump";
+  if (symbol.startsWith("RD"))    return "Bull/Bear";
+  if (symbol.startsWith("stp"))   return "Step";
+  if (symbol.startsWith("RB"))    return "Range Break";
   return "Other";
 }
 
-export async function validateActiveSymbols(forceRefresh = false): Promise<Map<string, { apiSymbol: string; displayName: string; marketType: string }>> {
+/**
+ * Resolves the streaming state for a symbol.
+ *
+ * disabled  — explicitly disabled via per-symbol toggle
+ * streaming — actively receiving ticks right now
+ * available — validated against Deriv API but not currently streaming
+ * idle      — not validated / not in active streaming set
+ */
+function resolveStreamingState(
+  symbol: string,
+  health: { streaming: boolean; lastTickTs: number } | undefined,
+  validated: boolean,
+): SymbolStreamingState {
+  if (disabledSymbols.has(symbol)) return "disabled";
+  if (health?.streaming) return "streaming";
+  if (validated) return "available";
+  return "idle";
+}
+
+export async function validateActiveSymbols(
+  forceRefresh = false,
+): Promise<Map<string, { apiSymbol: string; displayName: string; marketType: string }>> {
   if (!forceRefresh && validatedSymbolMap.size > 0 && Date.now() - lastValidationTs < VALIDATION_CACHE_MS) {
     return validatedSymbolMap;
   }
@@ -139,7 +215,6 @@ export async function validateActiveSymbols(forceRefresh = false): Promise<Map<s
     }
 
     const newMap = new Map<string, { apiSymbol: string; displayName: string; marketType: string }>();
-
     const configuredSymbols = await getConfiguredSymbols();
 
     for (const configured of configuredSymbols) {
@@ -164,7 +239,7 @@ export async function validateActiveSymbols(forceRefresh = false): Promise<Map<s
             displayName: aliasMatch.display_name,
             marketType: aliasMatch.market_display_name,
           });
-          console.log(`[SymbolValidator] ✓ ${configured} → ${aliasMatch.symbol} (alias match: ${aliasMatch.display_name})`);
+          console.log(`[SymbolValidator] ✓ ${configured} → ${aliasMatch.symbol} (alias: ${aliasMatch.display_name})`);
           found = true;
           break;
         }
@@ -173,7 +248,7 @@ export async function validateActiveSymbols(forceRefresh = false): Promise<Map<s
       if (!found) {
         const fuzzyMatches = activeSymbols.filter(s =>
           s.display_name.toLowerCase().includes(configured.toLowerCase().replace(/_/g, " ")) ||
-          s.symbol.toLowerCase().includes(configured.toLowerCase())
+          s.symbol.toLowerCase().includes(configured.toLowerCase()),
         );
         if (fuzzyMatches.length > 0) {
           const best = fuzzyMatches[0];
@@ -184,7 +259,7 @@ export async function validateActiveSymbols(forceRefresh = false): Promise<Map<s
           });
           console.log(`[SymbolValidator] ~ ${configured} → ${best.symbol} (fuzzy: ${best.display_name})`);
         } else {
-          console.warn(`[SymbolValidator] ✗ ${configured} — NOT FOUND in active symbols. Will not subscribe.`);
+          console.warn(`[SymbolValidator] ✗ ${configured} — NOT FOUND in active symbols.`);
           markSymbolError(configured, "Not found in Deriv active symbols");
         }
       }
@@ -231,34 +306,42 @@ export function getApiSymbol(configured: string): string {
   return validatedSymbolMap.get(configured)?.apiSymbol || configured;
 }
 
+/**
+ * Returns status for ALL 28 known symbols.
+ *
+ * Each symbol has a `streamingState` field:
+ *   streaming — actively receiving live ticks
+ *   available — validated against Deriv API, not currently streaming
+ *   idle      — known symbol, not validated / no live data
+ *   disabled  — explicitly disabled via per-symbol toggle
+ */
 export function getAllSymbolStatuses(): SymbolStatus[] {
-  const configuredSymbols = [
-    "BOOM1000", "CRASH1000", "BOOM900", "CRASH900",
-    "BOOM600", "CRASH600", "BOOM500", "CRASH500",
-    "BOOM300", "CRASH300",
-    "R_75", "R_100",
-  ];
-
   const now = Date.now();
 
-  return configuredSymbols.map(symbol => {
-    const validated = validatedSymbolMap.get(symbol);
-    const health = symbolHealthStore.get(symbol);
-    const isStale = health ? (now - health.lastTickTs > STALE_THRESHOLD_MS && health.streaming) : false;
+  return getAllKnownSymbols().map(symbol => {
+    const validated  = validatedSymbolMap.get(symbol);
+    const health     = symbolHealthStore.get(symbol);
+    const isStale    = health ? (now - health.lastTickTs > STALE_THRESHOLD_MS && health.streaming) : false;
+    const streaming  = !disabledSymbols.has(symbol) && (health?.streaming || false);
+
+    const streamingState = resolveStreamingState(symbol, health, !!validated);
 
     return {
-      configured: symbol,
-      instrumentFamily: classifyInstrumentFamily(symbol),
-      activeSymbolFound: !!validated,
-      apiSymbol: validated?.apiSymbol || null,
-      displayName: validated?.displayName || null,
-      marketType: validated?.marketType || null,
-      streaming: health?.streaming || false,
-      lastTickTs: health?.lastTickTs || null,
-      lastTickValue: health?.lastTickValue || null,
-      tickCount5min: health?.tickTimestamps.filter(t => t > now - 300_000).length || 0,
-      stale: isStale,
-      error: !validated ? "Not found in active symbols" : (health?.error || null),
+      configured:            symbol,
+      instrumentFamily:      classifyInstrumentFamily(symbol),
+      isActiveTradingSymbol: ACTIVE_TRADING_SYMBOLS.includes(symbol),
+      isResearchOnly:        !V1_DEFAULT_SYMBOLS.includes(symbol),
+      activeSymbolFound:     !!validated,
+      apiSymbol:             validated?.apiSymbol   || null,
+      displayName:           validated?.displayName || null,
+      marketType:            validated?.marketType  || null,
+      streamingState,
+      streaming,
+      lastTickTs:      health?.lastTickTs  || null,
+      lastTickValue:   health?.lastTickValue || null,
+      tickCount5min:   health?.tickTimestamps.filter(t => t > now - 300_000).length || 0,
+      stale:           isStale,
+      error:           !validated ? "Not found in active symbols" : (health?.error || null),
     };
   });
 }
@@ -274,6 +357,7 @@ export function startWatchdog(resubscribeFn: (symbol: string) => Promise<void>):
 
     for (const [symbol, health] of symbolHealthStore.entries()) {
       if (!health.streaming) continue;
+      if (disabledSymbols.has(symbol)) continue;
 
       if (now - health.lastTickTs > STALE_THRESHOLD_MS) {
         console.warn(`[Watchdog] Stream stale for ${symbol} — no tick in ${((now - health.lastTickTs) / 1000).toFixed(0)}s. Auto-resubscribing...`);

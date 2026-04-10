@@ -177,9 +177,17 @@ function Table({
 
 // ─── Symbol selector ─────────────────────────────────────────────────────
 
+// All 28 researchable symbols: 12 V1 trading symbols + 16 research-only
 const ALL_SYMBOLS = [
+  // V1 — trading + data collection
   "BOOM1000","CRASH1000","BOOM900","CRASH900","BOOM600","CRASH600",
   "BOOM500","CRASH500","BOOM300","CRASH300","R_75","R_100",
+  // Research-only
+  "R_10","R_25","R_50",
+  "RDBULL","RDBEAR",
+  "JD10","JD25","JD50","JD75","JD100",
+  "stpRNG","stpRNG2","stpRNG3","stpRNG5",
+  "RB100","RB200",
 ];
 
 const ACTIVE_SYMBOLS = ["CRASH300","BOOM300","R_75","R_100"];
@@ -709,8 +717,8 @@ function AiResearchTab() {
               {[
                 { k: "Window", v: `${displayResult.analysisWindowDays ?? "?"} days` },
                 { k: "1m Candles", v: (displayResult.totalCandles1m ?? 0).toLocaleString() },
-                { k: "Swings Detected", v: displayResult.swingStats?.count ?? "?" },
-                { k: "Swings/Month", v: displayResult.swingStats?.swingsPerMonth ?? "?" },
+                { k: "Swings ≥2%", v: displayResult.swingStats?.count ?? "?" },
+                { k: "Large ≥30%", v: displayResult.swingStats?.largeMoves ?? "?" },
               ].map(m => (
                 <div key={m.k} className="bg-muted/20 rounded-lg p-3">
                   <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{m.k}</div>
@@ -721,27 +729,33 @@ function AiResearchTab() {
 
             {displayResult.swingStats && (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-                <KV k="Avg Move %" v={`${(displayResult.swingStats.avgMovePct ?? 0).toFixed(1)}%`} mono />
-                <KV k="Median Move %" v={`${(displayResult.swingStats.medianMovePct ?? 0).toFixed(1)}%`} mono />
+                <KV k="Avg Move" v={`${(displayResult.swingStats.avgMovePct ?? 0).toFixed(1)}%`} mono />
+                <KV k="Median Move" v={`${(displayResult.swingStats.medianMovePct ?? 0).toFixed(1)}%`} mono />
                 <KV k="Avg Hold" v={`${(displayResult.swingStats.avgHoldingHours ?? 0).toFixed(1)}h`} mono />
-                <KV k="Up Moves" v={displayResult.swingStats.upMoves} mono />
-                <KV k="Down Moves" v={displayResult.swingStats.downMoves} mono />
-                <KV k="Data From" v={displayResult.dataFrom?.slice(0, 10) ?? "?"} mono />
+                <KV k="Up / Down" v={`${displayResult.swingStats.upMoves} / ${displayResult.swingStats.downMoves}`} mono />
+                <KV k="Swings/Month" v={displayResult.swingStats.swingsPerMonth ?? "?"} mono />
+                <KV k="Active Symbol" v={<Badge label={displayResult.isActiveTradingSymbol ? "YES" : "NO"} variant={displayResult.isActiveTradingSymbol ? "ok" : "default"} />} />
               </div>
             )}
 
             <div className="space-y-3 mt-2">
               {[
                 ["Summary", displayResult.aiSummary],
+                ["System Alignment (50–200%+ Hold)", displayResult.aiSystemAlignment],
+                ["Long-Hold Analysis (≥30% moves)", displayResult.aiLongHoldAnalysis],
+                ["Medium-Hold Analysis (10–30% moves)", displayResult.aiMediumHoldAnalysis],
+                ["Spike Cluster Recovery Analysis", displayResult.aiSpikeClusterAnalysis],
                 ["Move Frequency", displayResult.aiMoveFrequency],
                 ["Move Size vs TP Targets", displayResult.aiMoveSize],
-                ["Hold Duration", displayResult.aiHoldDuration],
+                ["Hold Duration vs System Philosophy", displayResult.aiHoldDuration],
                 ["Useful Timeframes", displayResult.aiUsefulTimeframes],
                 ["Repeatable Setups", displayResult.aiRepeatableSetups],
                 ["Expected Signal Frequency", displayResult.aiFiringFrequency],
                 ["Behavior Drift (Recent vs Older)", displayResult.aiBehaviorDrift],
                 ["Promising Areas", displayResult.aiPromisingAreas],
                 ["Degrading Areas", displayResult.aiDegradingAreas],
+                ["New Opportunities Discovered", displayResult.aiNewOpportunities],
+                ["Risk Warnings", displayResult.aiRiskWarnings],
               ].filter(([, v]) => v).map(([label, value]) => (
                 <div key={label as string} className="space-y-1">
                   <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{label as string}</div>
@@ -750,8 +764,35 @@ function AiResearchTab() {
               ))}
             </div>
 
+            {Array.isArray(displayResult.longHoldOpportunities) && displayResult.longHoldOpportunities.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-[10px] font-semibold text-green-400 uppercase tracking-wider">Long-Hold Opportunities (Engine-Aligned)</div>
+                {displayResult.longHoldOpportunities.map((o: any, i: number) => (
+                  <div key={i} className="rounded border border-green-500/20 bg-green-500/5 p-3 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-green-400">{o.name}</span>
+                      <Badge label={o.family} variant="ok" />
+                      <Badge label={o.direction} variant="info" />
+                      <Badge label={o.confidence} variant={o.confidence === "high" ? "ok" : o.confidence === "medium" ? "warn" : "default"} />
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
+                      <KV k="Avg Move" v={`${(o.avgMovePct ?? 0).toFixed(1)}%`} mono />
+                      <KV k="Avg Hold" v={`${(o.avgHoldHours ?? 0).toFixed(0)}h`} mono />
+                      <KV k="Trades/Month" v={o.tradesPerMonth ?? "?"} mono />
+                      <KV k="Monthly Profit" v={`~${(o.roughMonthlyProfitPct ?? 0).toFixed(0)}%`} mono />
+                      <KV k="Engine Fit" v={<Badge label={o.engineFit} variant={o.engineFit === "compatible" ? "ok" : "warn"} />} />
+                      <KV k="Win/Loss" v={o.winLossEstimate} />
+                    </div>
+                    {o.walkForwardRuleSketch && (
+                      <div className="text-[10px] text-muted-foreground bg-muted/20 rounded p-1.5 font-mono leading-relaxed">{o.walkForwardRuleSketch}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="text-[10px] text-muted-foreground font-mono">
-              Generated: {displayResult.generatedAt ?? "unknown"}
+              Generated: {displayResult.generatedAt ?? "unknown"} | Data: {displayResult.dataFrom?.slice(0, 10)} → {displayResult.dataTo?.slice(0, 10)}
             </div>
           </div>
         </Section>
@@ -784,7 +825,19 @@ function ExportTab() {
     setPrecheck(null);
     try {
       const d = await apiFetch(`diagnostics/data-integrity/${symbol}`);
-      const tfEntry = (d.timeframes ?? []).find((t: any) => t.timeframe === timeframe);
+
+      // The enrichment status endpoint only returns derived TFs (5m+).
+      // For 1m, use base1mCount directly from the response.
+      let tfEntry: any;
+      if (timeframe === "1m") {
+        const cnt = d.base1mCount ?? 0;
+        tfEntry = cnt > 0
+          ? { timeframe: "1m", count: cnt, status: "ready", firstDate: null, lastDate: null }
+          : null;
+      } else {
+        tfEntry = (d.timeframes ?? []).find((t: any) => t.timeframe === timeframe) ?? null;
+      }
+
       setPrecheck({ symbol, timeframe, symbolDetail: d, tfEntry });
     } catch (e: any) {
       setPrecheckErr(e.message);
@@ -906,11 +959,19 @@ function ExportTab() {
 
 // ─── TAB: Streaming ──────────────────────────────────────────────────────
 
+const STREAMING_STATE_STYLE: Record<string, { label: string; variant: "ok" | "warn" | "error" | "info" | "default" }> = {
+  streaming: { label: "STREAMING", variant: "ok" },
+  available: { label: "AVAILABLE", variant: "info" },
+  idle:      { label: "IDLE",      variant: "default" },
+  disabled:  { label: "DISABLED",  variant: "error" },
+};
+
 function StreamingTab() {
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [symData, setSymData] = useState<any | null>(null);
+  const [toggling, setToggling] = useState<Record<string, boolean>>({});
 
   const load = async () => {
     setLoading(true);
@@ -929,7 +990,30 @@ function StreamingTab() {
     }
   };
 
+  const toggleStreaming = async (symbol: string, currentState: string) => {
+    const enable = currentState === "disabled";
+    setToggling(t => ({ ...t, [symbol]: true }));
+    try {
+      await apiFetch(`diagnostics/symbols/${symbol}/streaming`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enable }),
+      });
+      await load();
+    } catch (e: any) {
+      setErr(`Toggle failed for ${symbol}: ${(e as Error).message}`);
+    } finally {
+      setToggling(t => ({ ...t, [symbol]: false }));
+    }
+  };
+
   useEffect(() => { load(); }, []);
+
+  const symbols: any[] = symData?.symbols ?? [];
+  const streamingCount = symbols.filter((s: any) => s.streamingState === "streaming").length;
+  const availableCount = symbols.filter((s: any) => s.streamingState === "available").length;
+  const idleCount      = symbols.filter((s: any) => s.streamingState === "idle").length;
+  const disabledCount  = symbols.filter((s: any) => s.streamingState === "disabled").length;
 
   return (
     <div className="space-y-4">
@@ -939,42 +1023,91 @@ function StreamingTab() {
 
       {err && <ErrorBox msg={err} />}
 
-      <Section title="Streaming Symbol Configuration" icon={Radio}
-        badge={symData && <Badge label={`${symData.summary?.valid ?? "?"} valid`} variant="ok" />}
+      <Section title="Symbol State — All 28 Known Symbols" icon={Radio}
+        badge={symData && (
+          <div className="flex gap-1.5">
+            <Badge label={`${streamingCount} streaming`} variant="ok" />
+            <Badge label={`${availableCount} available`} variant="info" />
+            {idleCount > 0 && <Badge label={`${idleCount} idle`} variant="default" />}
+            {disabledCount > 0 && <Badge label={`${disabledCount} disabled`} variant="error" />}
+          </div>
+        )}
       >
         <div className="space-y-3">
-          <div className="text-xs text-muted-foreground bg-muted/20 rounded p-3 leading-relaxed">
-            <strong className="text-foreground">Source of truth:</strong> Active streaming symbols are set at server startup from <code className="text-primary">ACTIVE_TRADING_SYMBOLS</code> in <code className="text-primary">deriv.ts</code>.
-            Currently: <strong className="text-foreground">CRASH300, BOOM300, R_75, R_100</strong>. Per-symbol toggles do not yet exist at the backend level —
-            adding/removing symbols requires a code change and restart. The final V3 UI will need backend toggle support.
+          <div className="text-xs text-muted-foreground bg-muted/20 rounded p-3 leading-relaxed space-y-1.5">
+            <div>
+              <strong className="text-foreground">28 symbols</strong> total: 12 V1 (BOOM/CRASH/R_75/R_100 series) + 16 research-only.
+              <strong className="text-foreground"> 4 active trading symbols</strong> (CRASH300, BOOM300, R_75, R_100) are streamed live by default.
+            </div>
+            <div>
+              State model: <span className="text-green-400 font-semibold">streaming</span> = receiving live ticks |{" "}
+              <span className="text-primary font-semibold">available</span> = validated by Deriv, not currently subscribed |{" "}
+              <span className="text-muted-foreground font-semibold">idle</span> = not validated / no live data |{" "}
+              <span className="text-red-400 font-semibold">disabled</span> = explicitly turned off via toggle.
+            </div>
+            <div className="text-yellow-400/80">
+              Note: Toggle changes are in-memory only — they reset on server restart.
+              Full subscription management requires a server-side connection change.
+            </div>
           </div>
 
           {loading ? <Spinner /> : symData && (
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {[
-                  { k: "Total Symbols", v: symData.summary?.total ?? "?" },
-                  { k: "Valid", v: symData.summary?.valid ?? "?", color: "text-green-400" },
-                  { k: "Streaming", v: symData.summary?.streaming ?? "?", color: "text-primary" },
-                  { k: "Errors", v: symData.summary?.errors ?? "?", color: "text-red-400" },
+                  { k: "Total Symbols", v: symbols.length },
+                  { k: "Streaming", v: streamingCount, color: "text-green-400" },
+                  { k: "Available", v: availableCount, color: "text-primary" },
+                  { k: "Idle / Disabled", v: `${idleCount} / ${disabledCount}`, color: "text-muted-foreground" },
                 ].map(m => (
                   <div key={m.k} className="bg-muted/20 rounded-lg p-3">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{m.k}</div>
-                    <div className={cn("text-sm font-mono font-bold", m.color ?? "text-foreground")}>{m.v}</div>
+                    <div className={cn("text-sm font-mono font-bold", (m as any).color ?? "text-foreground")}>{m.v}</div>
                   </div>
                 ))}
               </div>
 
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mt-2 mb-1 px-1">Active Trading Symbols (live)</div>
               <Table
-                cols={["Symbol", "Valid", "Active Symbol", "Streaming", "Stale", "Error"]}
-                rows={(symData.symbols ?? []).map((s: any) => [
-                  <span className={cn("font-semibold", ACTIVE_SYMBOLS.includes(s.symbol) ? "text-primary" : "text-foreground")}>{s.symbol}</span>,
-                  <Pill ok={s.activeSymbolFound} yes="YES" no="NO" />,
-                  s.resolvedSymbol ?? "—",
-                  s.streaming ? <Badge label="STREAMING" variant="ok" /> : <Badge label="OFF" variant="default" />,
-                  s.stale ? <Badge label="STALE" variant="warn" /> : <Badge label="OK" variant="ok" />,
-                  s.error ? <span className="text-red-400 text-[10px]">{s.error}</span> : "—",
-                ])}
+                cols={["Symbol", "State", "Family", "Valid", "Ticks/5m", "Toggle"]}
+                rows={symbols.filter((s: any) => s.isActiveTradingSymbol).map((s: any) => {
+                  const ss = STREAMING_STATE_STYLE[s.streamingState] ?? STREAMING_STATE_STYLE.idle;
+                  return [
+                    <span className="font-semibold text-primary">{s.configured}</span>,
+                    <Badge label={ss.label} variant={ss.variant} />,
+                    <span className="text-muted-foreground">{s.instrumentFamily}</span>,
+                    <Pill ok={s.activeSymbolFound} yes="YES" no="NO" />,
+                    <span className="font-mono">{s.tickCount5min}</span>,
+                    <button
+                      disabled={toggling[s.configured]}
+                      onClick={() => toggleStreaming(s.configured, s.streamingState)}
+                      className={cn(
+                        "text-[10px] px-2 py-0.5 rounded border font-medium transition-all",
+                        s.streamingState === "disabled"
+                          ? "bg-green-500/15 border-green-500/30 text-green-400 hover:bg-green-500/25"
+                          : "bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25",
+                        toggling[s.configured] && "opacity-50 cursor-not-allowed",
+                      )}
+                    >
+                      {toggling[s.configured] ? "…" : s.streamingState === "disabled" ? "Enable" : "Disable"}
+                    </button>,
+                  ];
+                })}
+              />
+
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mt-3 mb-1 px-1">All Other Symbols (research / data)</div>
+              <Table
+                cols={["Symbol", "State", "Family", "Valid", "Research Only"]}
+                rows={symbols.filter((s: any) => !s.isActiveTradingSymbol).map((s: any) => {
+                  const ss = STREAMING_STATE_STYLE[s.streamingState] ?? STREAMING_STATE_STYLE.idle;
+                  return [
+                    <span className="font-semibold text-foreground">{s.configured}</span>,
+                    <Badge label={ss.label} variant={ss.variant} />,
+                    <span className="text-muted-foreground">{s.instrumentFamily}</span>,
+                    <Pill ok={s.activeSymbolFound} yes="YES" no="NO" />,
+                    <Badge label={s.isResearchOnly ? "RESEARCH" : "V1 DATA"} variant={s.isResearchOnly ? "default" : "info"} />,
+                  ];
+                })}
               />
             </>
           )}

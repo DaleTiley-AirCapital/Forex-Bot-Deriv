@@ -581,44 +581,80 @@ Key differences from previous universal thresholds:
 
 ## Section 12 — Key File Map
 
-### Backend (artifacts/api-server/src/lib/)
+> ⚠️ `src/lib/` MUST NEVER be re-introduced. All trading logic lives in `src/core/` and `src/infrastructure/`.
+
+### V3 Core Engines (artifacts/api-server/src/core/)
 | File | Purpose |
 |------|---------|
-| `strategies.ts` | 5 strategy families — entry conditions, signal generation |
-| `tradeEngine.ts` | TP/SL calculation, trailing stop, position sizing, trade lifecycle |
-| `backtestEngine.ts` | Walk-forward backtest simulation, mirrors live engine |
-| `features.ts` | 40+ technical feature extraction from candle data |
-| `model.ts` | Big Move Readiness scoring (5 dimensions) |
-| `scoring.ts` | Composite score computation from readiness dimensions |
-| `regimeEngine.ts` | Market regime classification (hourly, cached) |
-| `signalRouter.ts` | Signal routing, threshold gates, portfolio allocation |
-| `pendingSignals.ts` | Multi-window signal confirmation system |
-| `deriv.ts` | Deriv WebSocket client, tick streaming, candle aggregation |
-| `symbolValidator.ts` | Symbol validation, aliases, status tracking |
-| `scheduler.ts` | Periodic signal scanning, AI suggestions |
-| `extractionEngine.ts` | Capital extraction cycle management |
-| `openai.ts` | AI signal verification, backtest analysis |
+| `scanV3.ts` | V3 scan entry: `scheduleStaggeredScan → scanSingleSymbolV3 → scanSymbolV3 → allocateV3Signal` |
+| `tradeEngineV3.ts` | V3 position lifecycle: openPositionV3, closePositionV3, managePositionsV3 |
+| `aiResearchJob.ts` | AI research analysis per symbol — multi-scale swing, strategy family classification, long/medium/short hold, spike cluster analysis, monthly profit estimates |
+| `candleEnrichment.ts` | Derives multi-timeframe candles (5m→4d) from stored 1m base. Canonical enrichment. |
+| `dataIntegrity.ts` | Gap detection, top-up (1m/5m API repair), `reconcileSymbolData()` (inspect→repair→enrich) |
+| `scheduler.ts` | Periodic scan (60s), position management (10s), weekly AI check |
+
+### V2 Backtest-Only (artifacts/api-server/src/core/) — DO NOT use for live trading
+| File | Purpose |
+|------|---------|
+| `strategies.ts` | V2 strategy families (backtest only) |
+| `signalRouter.ts` | V2 signal routing (backtest only) |
+| `pendingSignals.ts` | V2 pending signal confirmation (backtest only) |
+
+### Infrastructure (artifacts/api-server/src/infrastructure/)
+| File | Purpose |
+|------|---------|
+| `symbolValidator.ts` | All 28 known symbols, 4-state streaming model (streaming/available/idle/disabled), per-symbol disable toggle, health tracking |
+| `deriv.ts` | Deriv WebSocket client, tick streaming, candle aggregation, V1_DEFAULT_SYMBOLS, ACTIVE_TRADING_SYMBOLS, RESEARCH_ONLY_SYMBOLS |
+| `openai.ts` | OpenAI client factory |
+| `db.ts` | DB connection export |
+
+### Symbol Constants (in deriv.ts)
+```typescript
+ACTIVE_TRADING_SYMBOLS = ["CRASH300","BOOM300","R_75","R_100"]  // 4 live-traded
+V1_DEFAULT_SYMBOLS     = 12 symbols (BOOM/CRASH 1000→300, R_75, R_100)
+RESEARCH_ONLY_SYMBOLS  = 16 symbols (R_10/R_25/R_50, RDBULL/RDBEAR, JD10-100, stpRNG×4, RB100/RB200)
+// Total: 28 known symbols in symbolValidator
+```
+
+### 4-State Streaming Model (symbolValidator.ts)
+- `streaming`  — currently receiving live ticks (active subscription)
+- `available`  — validated by Deriv API, not currently subscribed
+- `idle`       — known symbol, not validated / no live data
+- `disabled`   — explicitly disabled via in-memory toggle (resets on restart)
+
+### Canonical Candle Truth
+- `candlesTable` is THE single store: historical backfill, live tick rollup, enrichment all write here
+- Export reads directly from `candlesTable`
+- `ENRICHMENT_TIMEFRAMES` = `1m,5m,10m,20m,40m,1h,2h,4h,8h,1d,2d,4d` (defined in dataIntegrity.ts)
+- Export precheck for `1m`: use `d.base1mCount` from `/diagnostics/data-integrity/:symbol` (NOT `getEnrichmentStatus`)
+- Export precheck for `5m+`: use `d.timeframes.find(t => t.timeframe === tf)` from enrichment status
+
+### Reconcile Pipeline (dataIntegrity.ts + research.ts)
+`POST /research/reconcile` runs the correct operational flow:
+1. Inspect: check if ≥1000 1m candles exist (fail loudly if not)
+2. Repair: runDataTopUp (1m/5m API gap fill)
+3. Re-check base after repair
+4. Enrich: enrichTimeframes on clean/sufficient base only
 
 ### Backend Routes (artifacts/api-server/src/routes/)
-| File | Purpose |
-|------|---------|
-| `research.ts` | Data download, backtest execution, grouped results, AI chat |
+| File | Key Endpoints |
+|------|--------------|
+| `research.ts` | POST /research/reconcile, /data-top-up, /enrich, /ai-analyze, /ai-analyze/background, GET /ai-analyze/status, /candles/export |
+| `diagnostics.ts` | GET /diagnostics/symbols, /diagnostics/symbols/streaming-config, /diagnostics/data-integrity/:symbol, POST /diagnostics/symbols/:symbol/streaming |
 | `settings.ts` | Settings CRUD |
-| `aiChat.ts` | AI chatbot with system knowledge |
+| `aiChat.ts` | AI chatbot |
 
 ### Frontend (artifacts/deriv-quant/src/pages/)
 | File | Purpose |
 |------|---------|
-| `research.tsx` | Research page — data status, backtest UI, results display |
-| `signals.tsx` | Signal monitoring and details |
-| `settings.tsx` | Settings configuration UI |
+| `v3-backend.tsx` | V3 Admin panel — 7 tabs: System Status, Streaming (4-state, toggle), Data Integrity, Top Up, AI Research, Export Check, Reconcile |
 | `overview.tsx` | Dashboard overview |
+| `signals.tsx` | Signal monitoring |
 | `trades.tsx` | Open and closed trades |
-| `help.tsx` | Help and version info |
+| `settings.tsx` | Settings configuration |
+| `research.tsx` | V2 research/backtest page |
 
 ### Specifications
 | File | Purpose |
 |------|---------|
-| `V2_SPECIFICATION.md` | Full V2 system specification |
-| `V2_EVOLUTION_BLUEPRINT.md` | Future features roadmap |
 | `replit.md` | Project memory and structure reference |

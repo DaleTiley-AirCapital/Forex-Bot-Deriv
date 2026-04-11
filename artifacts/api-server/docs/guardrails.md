@@ -78,10 +78,3 @@ These are never allowed:
 - `tsconfig.json` path aliases added to paper over stale import strings
 - Bridge or shim files of any kind unless explicitly justified and documented
 
----
-
-## Checklists
-
-For UI/backend parity verification: see `docs/ui-backend-parity-checklist.md`
-
-For structural refactor completion: see `docs/refactor-checklist.md`

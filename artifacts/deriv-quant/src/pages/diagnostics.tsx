@@ -1,9 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
-import {
-  Shield, RefreshCw, XCircle, Cpu, Settings2,
-} from "lucide-react";
+import { Cpu, RefreshCw, XCircle, ArrowRight } from "lucide-react";
 import { useGetOverview } from "@workspace/api-client-react";
+import { Link } from "wouter";
 
 const BASE = import.meta.env.BASE_URL || "/";
 
@@ -37,59 +36,15 @@ function KV({ k, v, mono }: { k: string; v: React.ReactNode; mono?: boolean }) {
   );
 }
 
-function Pill({ variant, label }: { variant: "ok"|"warn"|"error"|"info"|"default"; label: string }) {
-  const cls = {
-    ok:      "bg-green-500/15 text-green-400 border-green-500/25",
-    warn:    "bg-amber-500/15 text-amber-400 border-amber-500/25",
-    error:   "bg-red-500/15 text-red-400 border-red-500/25",
-    info:    "bg-primary/15 text-primary border-primary/25",
-    default: "bg-muted/40 text-muted-foreground border-border/50",
-  }[variant];
-  return <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border", cls)}>{label}</span>;
-}
-
-function Panel({ title, icon: Icon, badge, children }: {
-  title: string; icon: React.ElementType; badge?: React.ReactNode; children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
-      <div className="px-4 py-3 border-b border-border/30 flex items-center justify-between gap-3 bg-muted/10">
-        <div className="flex items-center gap-2">
-          <Icon className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold">{title}</h3>
-        </div>
-        {badge}
-      </div>
-      <div className="p-4">{children}</div>
-    </div>
-  );
-}
-
-// ─── Runtime Debug Content ────────────────────────────────────────────────
-
-function RuntimeContent() {
-  const [err, setErr] = useState<string | null>(null);
+export default function Diagnostics() {
   const [features, setFeatures] = useState<Record<string, any>>({});
   const [featLoading, setFeatLoading] = useState<Record<string, boolean>>({});
+  const [featErr, setFeatErr] = useState<string | null>(null);
 
   const { data: rawData, isLoading, refetch } = useGetOverview({
-    query: { refetchInterval: 5000 },
+    query: { refetchInterval: 8000 },
   });
-  const data = rawData as any;
-
-  useEffect(() => { if (isLoading === false && !rawData) setErr("Failed to load overview"); }, [isLoading, rawData]);
-
-  const loadFeatures = async (sym: string) => {
-    setFeatLoading(f => ({ ...f, [sym]: true }));
-    try {
-      const result = await apiFetch(`signals/features/${sym}`);
-      setFeatures(prev => ({ ...prev, [sym]: result }));
-    } catch (e: any) {
-      setFeatures(prev => ({ ...prev, [sym]: { error: (e as Error).message } }));
-    } finally {
-      setFeatLoading(f => ({ ...f, [sym]: false }));
-    }
-  };
+  const ov = rawData as any;
 
   const toggleKS = async (current: boolean) => {
     try {
@@ -102,126 +57,120 @@ function RuntimeContent() {
     } catch {}
   };
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => refetch()}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border/50 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors">
-          <RefreshCw className="w-3 h-3" /> Refresh
-        </button>
-      </div>
-      {err && <ErrorBox msg={err} />}
+  const loadFeatures = async (sym: string) => {
+    setFeatLoading(f => ({ ...f, [sym]: true }));
+    setFeatErr(null);
+    try {
+      const result = await apiFetch(`signals/features/${sym}`);
+      setFeatures(prev => ({ ...prev, [sym]: result }));
+    } catch (e: any) {
+      setFeatErr((e as Error).message);
+    } finally {
+      setFeatLoading(f => ({ ...f, [sym]: false }));
+    }
+  };
 
-      {data && (
-        <>
-          <Panel title="System Overview" icon={Settings2}>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
-              <KV k="Active Mode" v={<Pill variant={data.mode === "idle" ? "default" : "ok"} label={(data.mode?.toUpperCase() ?? "IDLE")} />} />
-              <KV k="Tick Streaming" v={<Pill variant={data.streamingOnline ? "ok" : "warn"} label={data.streamingOnline ? "Online" : "Offline"} />} />
-              <KV k="Scanner Running" v={<Pill variant={data.scannerRunning ? "ok" : "warn"} label={data.scannerRunning ? "Running" : "Stopped"} />} />
-              <KV k="Kill Switch" v={
-                <button onClick={() => toggleKS(data.killSwitchActive)}
-                  className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold transition-all",
-                    data.killSwitchActive
-                      ? "bg-red-500/15 text-red-400 border-red-500/25 hover:bg-red-500/25"
-                      : "bg-muted/40 text-muted-foreground border-border/50 hover:bg-muted/60")}>
-                  {data.killSwitchActive ? "ACTIVE — click to disable" : "OFF — click to enable"}
-                </button>
-              } />
-              <KV k="Last Scan Symbol" v={data.lastScanSymbol ?? "—"} mono />
-              <KV k="Total Scans Run" v={(data.totalScansRun ?? 0).toLocaleString()} mono />
-              <KV k="Total Decisions Logged" v={(data.totalDecisionsLogged ?? 0).toLocaleString()} mono />
-              <KV k="Streaming Symbols" v={String(data.subscribedSymbolCount ?? "—")} mono />
-            </div>
-          </Panel>
-
-          {data.perMode && (
-            <Panel title="Per-Mode Status" icon={Shield}>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {(["paper","demo","real"] as const).map(m => {
-                  const pm = data.perMode?.[m] ?? {};
-                  const isActive = (data.paperModeActive && m === "paper") || (data.demoModeActive && m === "demo") || (data.realModeActive && m === "real");
-                  return (
-                    <div key={m} className="space-y-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-xs font-semibold uppercase">{m}</span>
-                        <Pill variant={isActive ? "ok" : "default"} label={isActive ? "ACTIVE" : "OFF"} />
-                      </div>
-                      <KV k="Capital" v={(pm as any).capital ? `$${(pm as any).capital}` : "—"} mono />
-                      <KV k="Min Score" v={String((pm as any).minScore ?? "—")} mono />
-                      <KV k="Open Trades" v={String((pm as any).openTrades ?? "—")} mono />
-                      <KV k="P&L" v={(pm as any).pnl != null ? `$${Number((pm as any).pnl).toFixed(2)}` : "—"} mono />
-                    </div>
-                  );
-                })}
-              </div>
-            </Panel>
-          )}
-        </>
-      )}
-
-      <Panel title="V3 Engine Features — Live State" icon={Cpu}
-        badge={<span className="text-[10px] text-muted-foreground">Active symbols only</span>}>
-        <div className="space-y-3">
-          <p className="text-xs text-muted-foreground bg-muted/20 rounded p-3">
-            Computed feature vectors that the V3 coordinator sees on each scan. Click a symbol to load its latest features.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {ACTIVE_SYMBOLS.map(sym => (
-              <button key={sym}
-                onClick={() => loadFeatures(sym)}
-                disabled={featLoading[sym]}
-                className={cn(
-                  "inline-flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs font-medium transition-all",
-                  features[sym]
-                    ? "bg-primary/15 border-primary/30 text-primary"
-                    : "bg-muted/40 border-border/50 text-foreground hover:bg-muted/70",
-                  featLoading[sym] && "opacity-60 cursor-not-allowed"
-                )}>
-                {featLoading[sym] ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
-                {sym}
-              </button>
-            ))}
-          </div>
-          {Object.entries(features).map(([sym, f]) => (
-            <div key={sym} className="rounded border border-border/40 p-3 space-y-1.5">
-              <div className="text-xs font-semibold text-primary mb-2">{sym}</div>
-              {f.error ? <ErrorBox msg={f.error} /> : (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-0">
-                  {Object.entries(f).filter(([k]) => !["symbol","error"].includes(k)).slice(0, 24).map(([k, v]) => (
-                    <KV key={k} k={k} v={String(v ?? "—")} mono />
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-// ─── Main Page ────────────────────────────────────────────────────────────
-
-export default function Diagnostics() {
   return (
     <div className="p-6 space-y-5 max-w-5xl">
+      {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <Cpu className="w-6 h-6 text-muted-foreground" />
-          Runtime Debug
+        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2 text-muted-foreground">
+          <Cpu className="w-6 h-6" />
+          Advanced Debug
           <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border bg-muted/40 text-muted-foreground border-border/50 ml-1">
-            ADVANCED
+            DEV ONLY
           </span>
         </h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Live system state · kill switch · per-mode status · engine feature vectors
-          <span className="ml-2 text-muted-foreground/50">— Data operations moved to Data console · AI research moved to Research</span>
+          Raw system debug access — kill switch · raw feature vectors
         </p>
       </div>
 
-      <RuntimeContent />
+      {/* Redirect notice */}
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 flex items-start gap-3">
+        <ArrowRight className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-foreground">Operational runtime content has moved to Data</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            System Overview, Per-Mode Status, engine live state, and export are all in the{" "}
+            <Link href="/data" className="text-primary underline underline-offset-2">Data page</Link>.
+            This page contains raw debug tooling only.
+          </p>
+        </div>
+      </div>
+
+      {/* Kill Switch */}
+      {ov && (
+        <div className="rounded-xl border border-border/50 bg-card p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold">Kill Switch</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">Immediately halt all new signal processing and order placement</p>
+            </div>
+            <button onClick={() => toggleKS(ov.killSwitchActive)}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded border text-xs font-semibold transition-all",
+                ov.killSwitchActive
+                  ? "bg-red-500/15 text-red-400 border-red-500/30 hover:bg-red-500/25"
+                  : "bg-muted/40 text-muted-foreground border-border/50 hover:bg-muted/60"
+              )}>
+              {ov.killSwitchActive ? "ACTIVE — click to disable" : "OFF — click to enable"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Raw feature vectors */}
+      <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Raw Feature Vectors</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Raw computed features fed to the V3 coordinator on each scan cycle
+            </p>
+          </div>
+          <button onClick={() => refetch()}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border/50 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors">
+            <RefreshCw className="w-3 h-3" /> Refresh
+          </button>
+        </div>
+        {featErr && <ErrorBox msg={featErr} />}
+        <div className="flex flex-wrap gap-2">
+          {ACTIVE_SYMBOLS.map(sym => (
+            <button key={sym} onClick={() => loadFeatures(sym)} disabled={featLoading[sym]}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs font-medium transition-all",
+                features[sym]
+                  ? "bg-primary/15 border-primary/30 text-primary"
+                  : "bg-muted/40 border-border/50 text-foreground hover:bg-muted/70",
+                featLoading[sym] && "opacity-60 cursor-not-allowed"
+              )}>
+              {featLoading[sym] ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+              {sym}
+            </button>
+          ))}
+        </div>
+        {Object.entries(features).map(([sym, f]) => (
+          <div key={sym} className="rounded border border-border/40 p-3">
+            <div className="text-xs font-semibold text-primary mb-2">{sym}</div>
+            {(f as any).error ? <ErrorBox msg={(f as any).error} /> : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-0">
+                {Object.entries(f as Record<string,any>)
+                  .filter(([k]) => !["symbol","error"].includes(k))
+                  .slice(0, 30)
+                  .map(([k, v]) => (
+                    <KV key={k} k={k} v={String(v ?? "—")} mono />
+                  ))}
+              </div>
+            )}
+          </div>
+        ))}
+        {!isLoading && Object.keys(features).length === 0 && (
+          <p className="text-xs text-muted-foreground/60 text-center py-4">
+            Click a symbol above to load its raw feature vector
+          </p>
+        )}
+      </div>
     </div>
   );
 }

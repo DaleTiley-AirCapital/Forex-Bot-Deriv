@@ -75,12 +75,12 @@ const FAQ_ITEMS: { q: string; a: string; icon: React.ReactNode }[] = [
   },
   {
     q: "What does 'Interpolated' mean in the Data page?",
-    a: "When tick-derived candle data has gaps (e.g. no ticks arrived for a minute), the system inserts synthetic interpolated candles using the previous real close to maintain time continuity. These are NOT real market data. Signals are penalized or blocked if too many interpolated candles appear in the evaluation window. Use Research → Data Operations → Repair Interpolated to attempt recovery from the Deriv API.",
+    a: "When tick-derived candle data has gaps (e.g. no ticks arrived for a minute), the system inserts synthetic interpolated candles using the previous real close to maintain time continuity. These are NOT real market data. Signals are penalized or blocked if too many interpolated candles appear in the evaluation window. Use Data → Data Operations → Repair Interpolated to attempt recovery from the Deriv API.",
     icon: <AlertTriangle className="w-4 h-4 text-amber-400" />,
   },
   {
     q: "Why is streaming offline for some symbols?",
-    a: "Streaming means the server is actively receiving real-time ticks from Deriv's API for that symbol. It requires a valid Deriv API token configured in Settings. The 4 active trading symbols (CRASH300, BOOM300, R_75, R_100) should be streaming during active hours. Other symbols may be idle — they have historical candle data but no live tick feed. Start All in the Data page to activate streaming for all symbols.",
+    a: "Streaming means the server is actively receiving real-time ticks from Deriv's API for that symbol. It requires a valid Deriv API token configured in Settings. The 4 active trading symbols (CRASH300, BOOM300, R_75, R_100) should be streaming during active hours. Other symbols may be idle — they have historical candle data but no live tick feed. Toggle streaming per symbol in the Data page → Symbol State tab.",
     icon: <Radio className="w-4 h-4 text-green-400" />,
   },
   {
@@ -295,10 +295,10 @@ export default function Help() {
             { page: "Overview",         path: "/",            desc: "System status, portfolio snapshot, mode summary, engine config, data health. Start here." },
             { page: "Engine Decisions", path: "/decisions",   desc: "Every signal decision — scored, classified by state (traded/pending/approved/rejected/blocked/suppressed), with coordinator reasoning and AI verdict." },
             { page: "Trades",           path: "/trades",      desc: "Open positions with floating PnL and progress to TP, closed trade history with exit reasons, attribution by symbol and engine." },
-            { page: "Research",         path: "/research",    desc: "AI market analysis, data repair/reconcile operations, and candle export by date range." },
-            { page: "Data",             path: "/data",        desc: "Streaming state per symbol, candle coverage for all 28 symbols, live tick feed, and spike events." },
+            { page: "Research",         path: "/research",    desc: "AI market analysis and structured GPT-4o research reports per symbol." },
+            { page: "Data",             path: "/data",        desc: "Streaming state for all 28 symbols · candle coverage · data operations · top-up · ZIP export · runtime engine state." },
             { page: "Settings",         path: "/settings",    desc: "Trading mode activation, kill switch, capital, score thresholds, AI verification, streaming config." },
-            { page: "Diagnostics",      path: "/diagnostics", desc: "Data integrity grid, enrichment pipeline, top-up, AI research jobs, export controls, streaming state, runtime info." },
+            { page: "Diagnostics",      path: "/diagnostics", desc: "Advanced debug access — raw feature vectors and kill switch. Operational runtime content lives in Data." },
           ].map(({ page, path, desc }) => (
             <div key={page} className="flex items-start gap-3 rounded-lg border border-border/40 bg-card px-4 py-3">
               <span className="font-mono text-[11px] text-primary bg-primary/10 border border-primary/20 rounded px-1.5 py-0.5 shrink-0 mt-0.5">{path}</span>

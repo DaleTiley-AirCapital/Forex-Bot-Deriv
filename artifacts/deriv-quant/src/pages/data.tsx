@@ -1,16 +1,18 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useGetDataStatus,
   useGetTicks,
   useGetCandles,
   useGetSpikeEvents,
+  useGetOverview,
   getGetDataStatusQueryKey,
 } from "@workspace/api-client-react";
 import { formatNumber, cn } from "@/lib/utils";
 import {
   Database, Play, RefreshCw, Radio, RadioTower, Activity, Loader2,
   TrendingUp, Layers, CheckCircle, XCircle, AlertTriangle, Eye, EyeOff, Wrench,
+  Download, ChevronRight, Shield, Settings2, Cpu,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL || "/";
@@ -81,7 +83,7 @@ interface ResearchDataStatus {
 }
 
 type OpResult = { ok: boolean; msg: string; detail?: Record<string, string> } | null;
-type ViewTab = "streaming" | "coverage" | "ops" | "topup" | "live";
+type ViewTab = "streaming" | "coverage" | "ops" | "topup" | "live" | "export" | "runtime";
 type LiveSubtab = "ticks" | "candles" | "spikes";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -574,6 +576,426 @@ function TopUpTab() {
   );
 }
 
+// ── Export Tab ────────────────────────────────────────────────────────────────
+
+const EXPORT_TIMEFRAMES = ["1m", "5m"] as const;
+type ExportTimeframe = typeof EXPORT_TIMEFRAMES[number];
+
+function ExportTab() {
+  const [symbol, setSymbol] = useState("CRASH300");
+  const [timeframe, setTimeframe] = useState<ExportTimeframe>("1m");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [range, setRange] = useState<any | null>(null);
+  const [rangeLoading, setRangeLoading] = useState(false);
+  const [precheck, setPrecheck] = useState<any | null>(null);
+  const [prechecking, setPrechecking] = useState(false);
+  const [precheckErr, setPrecheckErr] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportErr, setExportErr] = useState<string | null>(null);
+  const [exportOk, setExportOk] = useState(false);
+
+  useEffect(() => {
+    setRangeLoading(true);
+    setRange(null);
+    setPrecheck(null);
+    setPrecheckErr(null);
+    apiFetch(`export/range?symbol=${symbol}&timeframe=${timeframe}`)
+      .then((d: any) => {
+        setRange(d);
+        if (d.firstAvailableDate) setStartDate(d.firstAvailableDate);
+        if (d.lastAvailableDate)  setEndDate(d.lastAvailableDate);
+      })
+      .catch(() => {})
+      .finally(() => setRangeLoading(false));
+  }, [symbol, timeframe]);
+
+  const runPrecheck = async () => {
+    if (!startDate || !endDate) return;
+    setPrechecking(true); setPrecheck(null); setPrecheckErr(null);
+    try {
+      const d = await apiFetch(
+        `export/precheck?symbol=${symbol}&timeframe=${timeframe}&startDate=${startDate}&endDate=${endDate}`
+      );
+      setPrecheck(d);
+    } catch (e: any) { setPrecheckErr(e.message); }
+    finally { setPrechecking(false); }
+  };
+
+  const runExport = async () => {
+    if (!startDate || !endDate) return;
+    setExporting(true); setExportErr(null); setExportOk(false);
+    try {
+      const resp = await fetch(`${BASE}api/export/research`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, timeframe, startDate, endDate }),
+      });
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}));
+        throw new Error((d as any).error ?? `HTTP ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url;
+      a.download = `${symbol}_${timeframe}_${startDate}_${endDate}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setExportOk(true);
+    } catch (e: any) { setExportErr(e.message); }
+    finally { setExporting(false); }
+  };
+
+  const canAct = !!(startDate && endDate && startDate <= endDate);
+  const noData = range?.health === "empty";
+
+  return (
+    <div className="space-y-5">
+      {/* Config */}
+      <div className="rounded-xl border border-border/50 bg-card p-4 space-y-4">
+        <div>
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <Download className="w-4 h-4 text-primary" /> Export Candle Data — ZIP
+          </h3>
+          <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">
+            Downloads a ZIP archive containing raw candle chunks, <span className="font-mono text-foreground">manifest.json</span> (file map + row counts),
+            and <span className="font-mono text-foreground">validation.json</span> (gap and interpolation report).
+            ZIP is the only export format — no CSV-only or JSON-only options.
+          </p>
+        </div>
+
+        {/* Symbol + Timeframe */}
+        <div className="flex flex-wrap items-center gap-4">
+          <SymbolSelectFull value={symbol} onChange={s => { setSymbol(s); setPrecheck(null); }} />
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">Timeframe:</span>
+            {EXPORT_TIMEFRAMES.map(tf => (
+              <button key={tf} onClick={() => { setTimeframe(tf); setPrecheck(null); }}
+                className={cn("px-2.5 py-1 rounded border text-xs transition-colors",
+                  timeframe === tf
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-border/40 text-muted-foreground hover:border-border")}>
+                {tf}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Available range banner */}
+        {rangeLoading && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="w-3 h-3 animate-spin" /> Loading available range…
+          </div>
+        )}
+        {range && !rangeLoading && (
+          <div className="rounded-lg bg-muted/20 border border-border/30 px-3 py-2.5 space-y-1.5">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              Available Range — {symbol}/{timeframe}
+            </p>
+            <div className="flex flex-wrap gap-x-6 gap-y-1">
+              <span className="text-xs">
+                <span className="text-muted-foreground">First: </span>
+                <span className="font-mono text-foreground">{range.firstAvailableDate ?? "—"}</span>
+              </span>
+              <span className="text-xs">
+                <span className="text-muted-foreground">Last: </span>
+                <span className="font-mono text-foreground">{range.lastAvailableDate ?? "—"}</span>
+              </span>
+              <span className="text-xs">
+                <span className="text-muted-foreground">Total: </span>
+                <span className="font-mono text-foreground">{range.totalRows?.toLocaleString() ?? "—"} rows</span>
+              </span>
+              <span className="text-xs">
+                <span className="text-muted-foreground">Interpolated: </span>
+                <span className="font-mono text-foreground">{range.interpolatedCount?.toLocaleString() ?? "—"}</span>
+              </span>
+              <span className={cn("text-xs font-semibold",
+                range.health === "ok" ? "text-green-400" : range.health === "partial" ? "text-amber-400" : "text-red-400")}>
+                {range.health?.toUpperCase() ?? "—"}
+              </span>
+            </div>
+          </div>
+        )}
+        {noData && <ErrorBox msg={`No ${symbol}/${timeframe} candle data found in the database. Run a Top-Up first.`} />}
+
+        {/* Date range pickers */}
+        {!noData && (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-10">From:</span>
+              <input type="date" value={startDate}
+                min={range?.firstAvailableDate || undefined}
+                max={endDate || range?.lastAvailableDate || undefined}
+                onChange={e => { setStartDate(e.target.value); setPrecheck(null); }}
+                className="text-xs bg-background border border-border/50 rounded px-2 py-1.5 text-foreground focus:outline-none focus:border-primary/50" />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-10">To:</span>
+              <input type="date" value={endDate}
+                min={startDate || range?.firstAvailableDate || undefined}
+                max={range?.lastAvailableDate || undefined}
+                onChange={e => { setEndDate(e.target.value); setPrecheck(null); }}
+                className="text-xs bg-background border border-border/50 rounded px-2 py-1.5 text-foreground focus:outline-none focus:border-primary/50" />
+            </div>
+          </div>
+        )}
+
+        {/* Actions */}
+        {!noData && (
+          <div className="flex items-center gap-3 flex-wrap pt-1">
+            <button onClick={runPrecheck} disabled={!canAct || prechecking}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-border/50 text-foreground text-xs font-medium hover:border-border hover:bg-muted/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              {prechecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
+              Precheck
+            </button>
+            <button onClick={runExport} disabled={!canAct || exporting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-primary/30 bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              {exporting ? "Preparing ZIP…" : "Download ZIP"}
+            </button>
+          </div>
+        )}
+
+        {precheckErr && <ErrorBox msg={precheckErr} />}
+        {exportErr   && <ErrorBox msg={exportErr} />}
+        {exportOk    && <SuccessBox msg="ZIP download started — check your downloads folder." />}
+      </div>
+
+      {/* Precheck results */}
+      {precheck && (
+        <div className="rounded-xl border border-border/50 bg-card p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-green-400" />
+              Precheck — {symbol}/{timeframe}
+            </h3>
+            {precheck.outOfRange && (
+              <span className="text-[10px] px-2 py-0.5 rounded border bg-amber-500/10 text-amber-400 border-amber-500/25">
+                Out of range
+              </span>
+            )}
+          </div>
+          {precheck.outOfRangeMsg && <ErrorBox msg={precheck.outOfRangeMsg} />}
+          {!precheck.outOfRange && (
+            <>
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Selected Range</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { label: "Row Count",    value: (precheck.selectedRange?.rowCount        ?? 0).toLocaleString() },
+                    { label: "Real Rows",    value: (precheck.selectedRange?.realCount        ?? 0).toLocaleString() },
+                    { label: "Interpolated", value: (precheck.selectedRange?.interpolatedCount ?? 0).toLocaleString() },
+                    { label: "Date Range",   value: precheck.selectedRange?.firstDate && precheck.selectedRange?.lastDate
+                      ? `${precheck.selectedRange.firstDate} → ${precheck.selectedRange.lastDate}` : "—" },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="bg-muted/20 rounded-lg p-3">
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{label}</div>
+                      <div className="text-sm font-mono font-bold text-foreground">{value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
+                  Total Available — {symbol}/{timeframe}
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {[
+                    { label: "Total Rows",   value: (precheck.totalAvailable?.rowCount        ?? 0).toLocaleString() },
+                    { label: "Real Rows",    value: (precheck.totalAvailable?.realCount        ?? 0).toLocaleString() },
+                    { label: "Interpolated", value: (precheck.totalAvailable?.interpolatedCount ?? 0).toLocaleString() },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="bg-muted/20 rounded-lg p-3">
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{label}</div>
+                      <div className="text-sm font-mono font-bold text-muted-foreground">{value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+          <p className="text-[10px] text-muted-foreground border-t border-border/20 pt-3">
+            ZIP contains: raw candle chunks (25k rows/file) · <span className="font-mono">manifest.json</span> (file map + counts) · <span className="font-mono">validation.json</span> (gap + interpolation audit)
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Runtime Tab (operational system state) ────────────────────────────────────
+
+function RuntimeKV({ k, v, mono }: { k: string; v: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-border/20 last:border-0">
+      <span className="text-xs text-muted-foreground shrink-0">{k}</span>
+      <span className={cn("text-xs text-foreground text-right break-all", mono && "font-mono")}>{v}</span>
+    </div>
+  );
+}
+
+function RuntimePill({ variant, label }: { variant: "ok"|"warn"|"error"|"info"|"default"; label: string }) {
+  const cls = {
+    ok:      "bg-green-500/15 text-green-400 border-green-500/25",
+    warn:    "bg-amber-500/15 text-amber-400 border-amber-500/25",
+    error:   "bg-red-500/15 text-red-400 border-red-500/25",
+    info:    "bg-primary/15 text-primary border-primary/25",
+    default: "bg-muted/40 text-muted-foreground border-border/50",
+  }[variant];
+  return <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border", cls)}>{label}</span>;
+}
+
+function RuntimePanel({ title, icon: Icon, badge, children }: {
+  title: string; icon: React.ElementType; badge?: React.ReactNode; children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+      <div className="px-4 py-3 border-b border-border/30 flex items-center justify-between gap-3 bg-muted/10">
+        <div className="flex items-center gap-2">
+          <Icon className="w-4 h-4 text-primary" />
+          <h3 className="text-sm font-semibold">{title}</h3>
+        </div>
+        {badge}
+      </div>
+      <div className="p-4">{children}</div>
+    </div>
+  );
+}
+
+function RuntimeTab() {
+  const [featErr, setFeatErr] = useState<string | null>(null);
+  const [features, setFeatures] = useState<Record<string, any>>({});
+  const [featLoading, setFeatLoading] = useState<Record<string, boolean>>({});
+
+  const { data: rawData, isLoading, refetch } = useGetOverview({
+    query: { refetchInterval: 5000 },
+  });
+  const ov = rawData as any;
+
+  const toggleKS = async (current: boolean) => {
+    try {
+      await fetch(`${BASE}api/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "kill_switch", value: current ? "false" : "true" }),
+      });
+      refetch();
+    } catch {}
+  };
+
+  const loadFeatures = async (sym: string) => {
+    setFeatLoading(f => ({ ...f, [sym]: true }));
+    try {
+      const result = await apiFetch(`signals/features/${sym}`);
+      setFeatures(prev => ({ ...prev, [sym]: result }));
+    } catch (e: any) {
+      setFeatures(prev => ({ ...prev, [sym]: { error: (e as Error).message } }));
+    } finally {
+      setFeatLoading(f => ({ ...f, [sym]: false }));
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button onClick={() => refetch()}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border/50 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors">
+          <RefreshCw className="w-3 h-3" /> Refresh
+        </button>
+        {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+      </div>
+      {featErr && <ErrorBox msg={featErr} />}
+
+      {ov && (
+        <>
+          <RuntimePanel title="System Overview" icon={Settings2}>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
+              <RuntimeKV k="Active Mode"         v={<RuntimePill variant={ov.mode === "idle" ? "default" : "ok"} label={ov.mode?.toUpperCase() ?? "IDLE"} />} />
+              <RuntimeKV k="Tick Streaming"      v={<RuntimePill variant={ov.streamingOnline ? "ok" : "warn"} label={ov.streamingOnline ? "Online" : "Offline"} />} />
+              <RuntimeKV k="Scanner Running"     v={<RuntimePill variant={ov.scannerRunning ? "ok" : "warn"} label={ov.scannerRunning ? "Running" : "Stopped"} />} />
+              <RuntimeKV k="Kill Switch" v={
+                <button onClick={() => toggleKS(ov.killSwitchActive)}
+                  className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold transition-all",
+                    ov.killSwitchActive
+                      ? "bg-red-500/15 text-red-400 border-red-500/25 hover:bg-red-500/25"
+                      : "bg-muted/40 text-muted-foreground border-border/50 hover:bg-muted/60")}>
+                  {ov.killSwitchActive ? "ACTIVE — click to disable" : "OFF — click to enable"}
+                </button>
+              } />
+              <RuntimeKV k="Last Scan Symbol"    v={ov.lastScanSymbol ?? "—"} mono />
+              <RuntimeKV k="Total Scans Run"     v={(ov.totalScansRun ?? 0).toLocaleString()} mono />
+              <RuntimeKV k="Total Decisions"     v={(ov.totalDecisionsLogged ?? 0).toLocaleString()} mono />
+              <RuntimeKV k="Streaming Symbols"   v={String(ov.subscribedSymbolCount ?? "—")} mono />
+            </div>
+          </RuntimePanel>
+
+          {ov.perMode && (
+            <RuntimePanel title="Per-Mode Status" icon={Shield}>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {(["paper","demo","real"] as const).map(m => {
+                  const pm = ov.perMode?.[m] ?? {};
+                  const isActive = (ov.paperModeActive && m === "paper") || (ov.demoModeActive && m === "demo") || (ov.realModeActive && m === "real");
+                  return (
+                    <div key={m} className="space-y-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs font-semibold uppercase">{m}</span>
+                        <RuntimePill variant={isActive ? "ok" : "default"} label={isActive ? "ACTIVE" : "OFF"} />
+                      </div>
+                      <RuntimeKV k="Capital"     v={pm.capital ? `$${pm.capital}` : "—"} mono />
+                      <RuntimeKV k="Min Score"   v={String(pm.minScore ?? "—")} mono />
+                      <RuntimeKV k="Open Trades" v={String(pm.openTrades ?? "—")} mono />
+                      <RuntimeKV k="P&L"         v={pm.pnl != null ? `$${Number(pm.pnl).toFixed(2)}` : "—"} mono />
+                    </div>
+                  );
+                })}
+              </div>
+            </RuntimePanel>
+          )}
+        </>
+      )}
+
+      <RuntimePanel title="V3 Engine Features — Live State" icon={Cpu}
+        badge={<span className="text-[10px] text-muted-foreground">Active symbols only</span>}>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground bg-muted/20 rounded p-3">
+            Computed feature vectors that the V3 coordinator sees on each scan. Click a symbol to load its latest features.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {ACTIVE_SYMBOLS.map(sym => (
+              <button key={sym} onClick={() => loadFeatures(sym)} disabled={featLoading[sym]}
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs font-medium transition-all",
+                  features[sym]
+                    ? "bg-primary/15 border-primary/30 text-primary"
+                    : "bg-muted/40 border-border/50 text-foreground hover:bg-muted/70",
+                  featLoading[sym] && "opacity-60 cursor-not-allowed"
+                )}>
+                {featLoading[sym] ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+                {sym}
+              </button>
+            ))}
+          </div>
+          {Object.entries(features).map(([sym, f]) => (
+            <div key={sym} className="rounded border border-border/40 p-3 space-y-1.5">
+              <div className="text-xs font-semibold text-primary mb-2">{sym}</div>
+              {(f as any).error ? <ErrorBox msg={(f as any).error} /> : (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-0">
+                  {Object.entries(f as Record<string,any>).filter(([k]) => !["symbol","error"].includes(k)).slice(0, 24).map(([k, v]) => (
+                    <RuntimeKV key={k} k={k} v={String(v ?? "—")} mono />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </RuntimePanel>
+    </div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function DataManager() {
@@ -636,6 +1058,8 @@ export default function DataManager() {
     { id: "ops",       label: "Data Operations",  icon: Wrench    },
     { id: "topup",     label: "Top-Up",           icon: TrendingUp},
     { id: "live",      label: "Live View",        icon: Activity  },
+    { id: "export",    label: "Export",           icon: Download  },
+    { id: "runtime",   label: "Runtime",          icon: Cpu       },
   ];
 
   const liveSubtabs: { id: LiveSubtab; label: string }[] = [
@@ -810,6 +1234,12 @@ export default function DataManager() {
 
       {/* ── Top-Up ── */}
       {tab === "topup" && <TopUpTab />}
+
+      {/* ── Export ── */}
+      {tab === "export" && <ExportTab />}
+
+      {/* ── Runtime / Engine State ── */}
+      {tab === "runtime" && <RuntimeTab />}
 
       {/* ── Live View ── */}
       {tab === "live" && (

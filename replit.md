@@ -51,7 +51,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
     -   **Signal Scheduler:** Manages staggered symbol scanning and position management.
     -   **Multi-Window Signal Confirmation:** Signals must persist across 2 consecutive 60-minute evaluation windows before execution. In-memory pending signal store (`pendingSignals.ts`) tracks confirmation progress per symbol/strategy/direction. Signals expire if gap > 4 hours between confirmations. Price-reversal invalidation: signal reset if price moves >0.5% against expected direction. Pyramiding requires 3 confirmations + 1% price move in expected direction. Frontend shows pending signals with progress bars on the Decision Review page.
     -   **Pyramiding:** Up to 3 positions per symbol (up from 2). After Trade 1 confirmed, continue monitoring; if 3+ more windows confirm with price moved 1%+ in expected direction, open Trade 2/3. MAX_OPEN_TRADES raised to 6 (up from 3). Trades page groups pyramided positions by symbol with combined P&L.
-    -   **Trade Engine (V2):** Full market move TP/SL. Boom/Crash: TP = 50% of 90-day longTermRangePct (min 10% of entry), targeting 50-200%+ full moves. Volatility: TP = 70% of major swing range from 1500+ candle window (min 2% of entry). SL = TP distance / 5 (fixed 1:5 R:R ratio) with 10% equity safety cap. No structural S/R-based SL, no ATR fallbacks ever. TP is PRIMARY exit; 30% trailing stop is SAFETY NET ONLY — activates only after trade reaches 30% of TP target (before that, only fixed SL protects). No time-based exits — trades hold 9-44 days. Composite thresholds: 85 (paper), 90 (demo), 92 (real). Up to 3 positions per symbol (pyramided). See `V2_SPECIFICATION.md`.
+    -   **Trade Engine (V3):** Full market move TP/SL. Boom/Crash: TP = 50% of 90-day longTermRangePct (min 10% of entry), targeting 50-200%+ full moves. Volatility: TP = 70% of major swing range from 1500+ candle window (min 2% of entry). SL = TP distance / 5 (fixed 1:5 R:R ratio) with 10% equity safety cap. No structural S/R-based SL, no ATR fallbacks ever. TP is PRIMARY exit; adaptive trailing stop is SAFETY NET ONLY — activates only after trade reaches 30% of TP target (before that, only fixed SL protects). No time-based exits — trades hold 9-44 days. Score thresholds: 85 (paper), 90 (demo), 92 (real). Up to 3 positions per symbol (pyramided).
     -   **Extraction Engine:** Manages capital cycles, targeting profit percentages for auto-extraction.
     -   **Symbol Diagnostics:** `/api/diagnostics/symbols` endpoint and Settings > Diagnostics tab show per-symbol stream health, validation status, tick counts, and errors.
 -   **Database Schema:** Key tables include `ticks`, `candles`, `spike_events`, `features`, `model_runs`, `backtest_trades`, `backtest_runs`, `trades`, `signal_log`, and `platform_state`.
@@ -65,8 +65,7 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 6. **Boom/Crash and Volatility treated differently** — 50% of 90-day range TP for Boom/Crash, 70% major swing range TP for Volatility.
 
 **Deployment:**
--   Recommended deployment via Railway, using `railway.toml` and a multi-stage `Dockerfile`.
--   Legacy Docker Compose deployments are supported for Docker and Synology NAS environments.
+-   Deployed via Replit (current environment). Separate production environments may use Docker or Docker Compose.
 
 **Instrument Catalog (28 total, 3 tiers):**
 - Active Trading (4): CRASH300, BOOM300, R_75, R_100 — scanned for signals, traded

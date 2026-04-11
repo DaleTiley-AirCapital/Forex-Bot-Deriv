@@ -5,7 +5,7 @@ import { APP_VERSION } from "@/lib/version";
 import {
   Activity,
   BarChart2,
-  Radio,
+  Zap,
   History,
   Database,
   Settings,
@@ -35,14 +35,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { AiChat } from "./AiChat";
 
 const NAV_ITEMS = [
-  { name: "Overview",  href: "/",            icon: Activity },
-  { name: "Research",  href: "/research",    icon: BarChart2 },
-  { name: "Signals",   href: "/signals",     icon: Radio },
-  { name: "Trades",    href: "/trades",      icon: History },
-  { name: "Data",      href: "/data",        icon: Database },
-  { name: "V3 Admin",  href: "/v3-backend",  icon: Wrench },
-  { name: "Settings",  href: "/settings",    icon: Settings },
-  { name: "Help",      href: "/help",        icon: HelpCircle },
+  { name: "Overview",         href: "/",             icon: Activity },
+  { name: "Engine Decisions", href: "/decisions",    icon: Zap },
+  { name: "Trades",           href: "/trades",       icon: History },
+  { name: "Research",         href: "/research",     icon: BarChart2 },
+  { name: "Data",             href: "/data",         icon: Database },
+  { name: "Settings",         href: "/settings",     icon: Settings },
+  { name: "Help",             href: "/help",         icon: HelpCircle },
+  { name: "Diagnostics",      href: "/diagnostics",  icon: Wrench },
 ];
 
 const MOBILE_PRIMARY = NAV_ITEMS.slice(0, 4);

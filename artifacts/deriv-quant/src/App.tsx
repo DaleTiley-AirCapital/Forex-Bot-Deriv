@@ -8,13 +8,13 @@ import NotFound from "@/pages/not-found";
 import SetupWizard from "@/pages/setup";
 
 import Overview from "@/pages/overview";
-import Research from "@/pages/research";
-import Signals from "@/pages/signals";
+import Decisions from "@/pages/decisions";
 import Trades from "@/pages/trades";
+import Research from "@/pages/research";
 import DataManager from "@/pages/data";
 import Settings from "@/pages/settings";
 import Help from "@/pages/help";
-import V3Backend from "@/pages/v3-backend";
+import Diagnostics from "@/pages/diagnostics";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -75,13 +75,16 @@ function Router() {
     <AppLayout>
       <Switch>
         <Route path="/" component={Overview} />
-        <Route path="/research" component={Research} />
-        <Route path="/signals" component={Signals} />
+        <Route path="/decisions" component={Decisions} />
         <Route path="/trades" component={Trades} />
+        <Route path="/research" component={Research} />
         <Route path="/data" component={DataManager} />
         <Route path="/settings" component={Settings} />
         <Route path="/help" component={Help} />
-        <Route path="/v3-backend" component={V3Backend} />
+        <Route path="/diagnostics" component={Diagnostics} />
+        {/* Legacy routes — kept accessible but not in primary nav */}
+        <Route path="/signals" component={Decisions} />
+        <Route path="/v3-backend" component={Diagnostics} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

@@ -1568,16 +1568,13 @@ export default function V3Backend() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold border bg-yellow-500/10 border-yellow-500/25 text-yellow-400 uppercase tracking-wider">
-              <AlertTriangle className="w-3 h-3" /> Temporary
-            </span>
-            <span className="text-[10px] text-muted-foreground">Not the final V3 UI — backend verification only</span>
-          </div>
-          <h1 className="text-xl font-bold text-foreground">V3 Backend Verification</h1>
+          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-muted-foreground" />
+            Diagnostics &amp; Admin
+          </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Exposes Task #92 backend capabilities for end-to-end validation before the full UI rebuild.
-            All data is live from real backend endpoints — no placeholders, no fake data.
+            Low-level operational tools — data integrity, enrichment, top-up, AI research, streaming state, and runtime diagnostics.
+            All data is live from real backend endpoints.
           </p>
         </div>
       </div>

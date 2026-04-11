@@ -55,8 +55,12 @@ export async function allocateV3Signal(
   // Kill switch
   if (stateMap["kill_switch"] === "true") return deny("kill_switch_active");
 
-  // Mode-level enabled check
-  const modeEnabled = stateMap[`${prefix}_mode`] === "active" || stateMap[`${prefix}_enabled`] === "true";
+  // Mode-level enabled check — supports multiple key conventions:
+  // paper_mode_active="true" (V3 settings page), paper_mode="active", paper_enabled="true"
+  const modeEnabled =
+    stateMap[`${prefix}_mode_active`] === "true" ||
+    stateMap[`${prefix}_mode`] === "active" ||
+    stateMap[`${prefix}_enabled`] === "true";
   if (!modeEnabled) return deny(`mode_${mode}_not_active`);
 
   // Symbol-level check

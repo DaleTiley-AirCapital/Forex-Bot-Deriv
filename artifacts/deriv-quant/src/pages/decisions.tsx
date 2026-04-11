@@ -1,15 +1,16 @@
 import React, { useState, useMemo } from "react";
 import { useGetLatestSignals, useGetPendingSignals } from "@workspace/api-client-react";
-import type { ScoringDimensions, GetLatestSignalsParams, SignalLog } from "@workspace/api-client-react";
-import { Card, CardContent, CardHeader, CardTitle, Badge } from "@/components/ui-elements";
+import type { GetLatestSignalsParams, SignalLog } from "@workspace/api-client-react";
 import { formatNumber, cn } from "@/lib/utils";
-import {
-  Zap, ArrowUpRight, ArrowDownRight, Brain, ChevronDown, ChevronUp,
-  Filter, X, ChevronLeft, ChevronRight, Download, ShieldAlert,
-  Target, BarChart3, Clock, Layers, CheckCircle, XCircle, AlertTriangle, Activity,
-} from "lucide-react";
 import { downloadCSV, downloadJSON } from "@/lib/export";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  Zap, ArrowUpRight, ArrowDownRight, Brain, Filter, X, ChevronDown, ChevronUp,
+  Download, ShieldAlert, Target, BarChart3, Clock, Layers, CheckCircle, XCircle,
+  AlertTriangle, Activity, ChevronLeft, ChevronRight, Info,
+} from "lucide-react";
+
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const ENGINES = [
   "boom_expansion_engine",
@@ -23,246 +24,154 @@ const ENGINES = [
   "v3_engine",
 ] as const;
 
-const STATUSES = ["approved", "blocked"] as const;
-const AI_VERDICTS = ["agree", "disagree", "uncertain"] as const;
-
 const ENGINE_LABELS: Record<string, string> = {
-  boom_expansion_engine: "Boom Expansion",
-  crash_expansion_engine: "Crash Expansion",
-  r75_continuation_engine: "R75 Continuation",
-  r75_reversal_engine: "R75 Reversal",
-  r75_breakout_engine: "R75 Breakout",
+  boom_expansion_engine:    "Boom Expansion",
+  crash_expansion_engine:   "Crash Expansion",
+  r75_continuation_engine:  "R75 Continuation",
+  r75_reversal_engine:      "R75 Reversal",
+  r75_breakout_engine:      "R75 Breakout",
   r100_continuation_engine: "R100 Continuation",
-  r100_reversal_engine: "R100 Reversal",
-  r100_breakout_engine: "R100 Breakout",
-  v3_engine: "V3 Engine",
+  r100_reversal_engine:     "R100 Reversal",
+  r100_breakout_engine:     "R100 Breakout",
+  v3_engine:                "V3 Engine",
 };
 
 const ENGINE_COLORS: Record<string, string> = {
-  boom_expansion_engine:  "bg-emerald-500/12 text-emerald-400 border-emerald-500/25",
-  crash_expansion_engine: "bg-red-500/12 text-red-400 border-red-500/25",
-  r75_continuation_engine: "bg-blue-500/12 text-blue-400 border-blue-500/25",
-  r75_reversal_engine:    "bg-purple-500/12 text-purple-400 border-purple-500/25",
-  r75_breakout_engine:    "bg-cyan-500/12 text-cyan-400 border-cyan-500/25",
+  boom_expansion_engine:    "bg-emerald-500/12 text-emerald-400 border-emerald-500/25",
+  crash_expansion_engine:   "bg-red-500/12 text-red-400 border-red-500/25",
+  r75_continuation_engine:  "bg-blue-500/12 text-blue-400 border-blue-500/25",
+  r75_reversal_engine:      "bg-purple-500/12 text-purple-400 border-purple-500/25",
+  r75_breakout_engine:      "bg-cyan-500/12 text-cyan-400 border-cyan-500/25",
   r100_continuation_engine: "bg-indigo-500/12 text-indigo-400 border-indigo-500/25",
-  r100_reversal_engine:   "bg-violet-500/12 text-violet-400 border-violet-500/25",
-  r100_breakout_engine:   "bg-sky-500/12 text-sky-400 border-sky-500/25",
-  v3_engine:              "bg-amber-500/12 text-amber-400 border-amber-500/25",
+  r100_reversal_engine:     "bg-violet-500/12 text-violet-400 border-violet-500/25",
+  r100_breakout_engine:     "bg-sky-500/12 text-sky-400 border-sky-500/25",
+  v3_engine:                "bg-amber-500/12 text-amber-400 border-amber-500/25",
 };
 
-function decisionState(sig: SignalLog): { label: string; variant: "ok" | "warn" | "error" | "info" } {
-  if (!sig.allowedFlag) return { label: "Blocked", variant: "error" };
-  if (sig.executionStatus === "open") return { label: "Traded", variant: "ok" };
-  if (sig.executionStatus === "pending") return { label: "Pending", variant: "warn" };
-  return { label: "Approved", variant: "info" };
+const PAGE_SIZE = 50;
+
+// ── State Classification ──────────────────────────────────────────────────────
+
+type DecisionState = "traded" | "pending" | "approved" | "rejected" | "blocked" | "suppressed";
+
+function classifyDecision(sig: SignalLog): DecisionState {
+  if (sig.executionStatus === "open") return "traded";
+  if (sig.executionStatus === "pending") return "pending";
+  if (!sig.allowedFlag) {
+    const r = sig.rejectionReason?.toLowerCase() ?? "";
+    // Distinguish score-based rejection vs gate/mode blocking
+    if (r.includes("composite") && r.includes("<")) return "rejected";
+    if (r.includes("score") && r.includes("below")) return "rejected";
+    if (r.includes("intelligence only") || r.includes("mode not active")) return "suppressed";
+    return "blocked";
+  }
+  return "approved";
 }
 
-function StateChip({ sig }: { sig: SignalLog }) {
-  const state = decisionState(sig);
-  const cls: Record<string, string> = {
-    ok:    "bg-green-500/12 text-green-400 border-green-500/25",
-    warn:  "bg-amber-500/12 text-amber-400 border-amber-500/25",
-    error: "bg-red-500/12 text-red-400 border-red-500/25",
-    info:  "bg-primary/12 text-primary border-primary/25",
-  };
-  const Icon = state.variant === "ok" ? CheckCircle : state.variant === "error" ? XCircle : state.variant === "warn" ? AlertTriangle : Activity;
-  return (
-    <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold border", cls[state.variant])}>
-      <Icon className="w-3 h-3" />
-      {state.label}
-    </span>
-  );
+interface StateStyle {
+  label: string;
+  chip: string;
+  icon: React.ElementType;
+  row: string;
 }
+
+const STATE_STYLES: Record<DecisionState, StateStyle> = {
+  traded:    { label: "Traded",    chip: "bg-green-500/12 text-green-400 border-green-500/25",   icon: CheckCircle,    row: "border-l-2 border-l-green-500/40" },
+  pending:   { label: "Pending",   chip: "bg-amber-500/12 text-amber-400 border-amber-500/25",   icon: Clock,          row: "border-l-2 border-l-amber-500/40" },
+  approved:  { label: "Approved",  chip: "bg-primary/12 text-primary border-primary/25",          icon: Activity,       row: "border-l-2 border-l-primary/30" },
+  rejected:  { label: "Rejected",  chip: "bg-orange-500/12 text-orange-400 border-orange-500/25",icon: AlertTriangle,  row: "border-l-2 border-l-orange-500/40" },
+  blocked:   { label: "Blocked",   chip: "bg-red-500/12 text-red-400 border-red-500/25",          icon: XCircle,        row: "border-l-2 border-l-red-500/40" },
+  suppressed:{ label: "Suppressed",chip: "bg-slate-500/12 text-slate-400 border-slate-500/25",   icon: Info,           row: "border-l-2 border-l-slate-500/30" },
+};
+
+// ── Blocking Gate Parser ──────────────────────────────────────────────────────
+
+interface GateInfo { gate: string; detail: string; raw: string }
+
+function parseBlockingGate(reason: string | null | undefined): GateInfo | null {
+  if (!reason) return null;
+  const r = reason;
+  const patterns: { test: RegExp; gate: string; detail: (m: RegExpMatchArray) => string }[] = [
+    { test: /composite.*?(\d+).*?[<below].*?(\d+)/i,     gate: "Score Below Threshold", detail: m => `Score ${m[1]} < required ${m[2]}` },
+    { test: /composite.*?(\d+\.?\d*).*?<.*?(\d+\.?\d*)/i,gate: "Score Below Threshold", detail: m => `Score ${m[1]} < required ${m[2]}` },
+    { test: /RR.*?(\d+\.?\d*).*?below.*?(\d+\.?\d*)/i,   gate: "R:R Ratio",             detail: m => `RR ${m[1]} < minimum ${m[2]}` },
+    { test: /EV.*?(-?\d+\.?\d*).*?below.*?(-?\d+\.?\d*)/i,gate:"Expected Value",         detail: m => `EV ${m[1]} < minimum ${m[2]}` },
+    { test: /kill.?switch/i,          gate: "Kill Switch",       detail: () => "Trading halted by kill switch" },
+    { test: /daily.*loss/i,           gate: "Daily Loss Limit",  detail: () => "Daily loss limit reached" },
+    { test: /weekly.*loss/i,          gate: "Weekly Loss Limit", detail: () => "Weekly loss limit reached" },
+    { test: /max.*drawdown/i,         gate: "Max Drawdown",      detail: () => "Maximum drawdown exceeded" },
+    { test: /open.*risk/i,            gate: "Open Risk",         detail: () => "Open risk limit exceeded" },
+    { test: /max.*open.*trades/i,     gate: "Max Open Trades",   detail: () => "Concurrent trade limit reached" },
+    { test: /AI disagree/i,           gate: "AI Verification",   detail: () => "AI disagreed with signal direction" },
+    { test: /intelligence only/i,     gate: "Mode",              detail: () => "System in intelligence-only mode — no execution" },
+    { test: /mode.*not.*active/i,     gate: "Mode",              detail: () => "No active trading mode configured" },
+    { test: /interpolat/i,            gate: "Data Quality",      detail: () => "Interpolated candles detected — signal discarded" },
+    { test: /insufficient.*data/i,    gate: "Data Quality",      detail: () => "Insufficient candle data for signal generation" },
+    { test: /allocat/i,               gate: "Allocator",         detail: () => "Portfolio allocator rejected trade sizing" },
+    { test: /coordinator/i,           gate: "Coordinator",       detail: () => "Signal coordinator blocked execution" },
+  ];
+  for (const p of patterns) {
+    const m = r.match(p.test);
+    if (m) return { gate: p.gate, detail: p.detail(m), raw: r };
+  }
+  return { gate: "Gate", detail: r.slice(0, 120), raw: r };
+}
+
+// ── Micro Components ──────────────────────────────────────────────────────────
 
 function DirectionChip({ direction }: { direction: string | null | undefined }) {
-  if (!direction) return <span className="text-muted-foreground text-xs">—</span>;
-  const isBuy = direction === "buy";
+  if (!direction) return <span className="text-muted-foreground/50 text-xs">—</span>;
+  const buy = direction === "buy";
   return (
-    <span className={cn("inline-flex items-center gap-1 text-xs font-semibold", isBuy ? "text-emerald-400" : "text-red-400")}>
-      {isBuy ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
-      {direction.toUpperCase()}
+    <span className={cn("inline-flex items-center gap-0.5 text-xs font-bold uppercase", buy ? "text-emerald-400" : "text-red-400")}>
+      {buy ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
+      {direction}
     </span>
   );
 }
 
 function ScorePill({ score }: { score: number | null | undefined }) {
-  if (score == null) return <span className="text-xs text-muted-foreground/50">—</span>;
-  const color = score >= 85 ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25"
+  if (score == null) return <span className="text-xs text-muted-foreground/40">—</span>;
+  const cls = score >= 85 ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25"
     : score >= 70 ? "text-amber-400 bg-amber-500/10 border-amber-500/25"
     : "text-red-400 bg-red-500/10 border-red-500/25";
   return (
-    <span className={cn("inline-flex items-center px-2 py-0.5 rounded-md text-sm font-bold border mono-num", color)}>
+    <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-sm font-bold border tabular-nums", cls)}>
       {Math.round(score)}
     </span>
   );
 }
 
-const DIMENSION_LABELS: Record<keyof ScoringDimensions, string> = {
-  rangePosition: "Range Position",
-  maDeviation: "MA Deviation",
-  volatilityProfile: "Volatility Profile",
-  rangeExpansion: "Range Expansion",
-  directionalConfirmation: "Directional Confirm",
-};
-
-function DimensionBar({ label, value }: { label: string; value: number }) {
-  const color = value >= 80 ? "bg-emerald-500" : value >= 60 ? "bg-amber-500" : "bg-red-500";
+function StateChip({ state }: { state: DecisionState }) {
+  const s = STATE_STYLES[state];
+  const Icon = s.icon;
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-[10px] text-muted-foreground w-28 shrink-0 text-right">{label}</span>
-      <div className="flex-1 h-1.5 bg-muted/50 rounded-full overflow-hidden">
-        <div className={cn("h-full rounded-full transition-all", color)} style={{ width: `${value}%` }} />
-      </div>
-      <span className="text-[10px] mono-num text-foreground w-6 text-right">{value}</span>
-    </div>
+    <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border whitespace-nowrap", s.chip)}>
+      <Icon className="w-3 h-3 shrink-0" /> {s.label}
+    </span>
   );
 }
 
-function BlockingGate({ reason }: { reason: string }) {
-  const patterns: { test: RegExp; gate: string; extract: (m: RegExpMatchArray) => string }[] = [
-    { test: /composite.*?(\d+).*?below.*?(\d+)/i,      gate: "Composite Score",   extract: m => `Score ${m[1]} < threshold ${m[2]}` },
-    { test: /composite.*?(\d+).*?<.*?(\d+)/i,           gate: "Composite Score",   extract: m => `Score ${m[1]} < threshold ${m[2]}` },
-    { test: /RR.*?(\d+\.?\d*).*?below.*?(\d+\.?\d*)/i, gate: "Reward/Risk Ratio", extract: m => `RR ${m[1]} < minimum ${m[2]}` },
-    { test: /EV.*?(-?\d+\.?\d*).*?below.*?(-?\d+\.?\d*)/i, gate: "Expected Value", extract: m => `EV ${m[1]} < minimum ${m[2]}` },
-    { test: /kill.?switch/i,         gate: "Kill Switch",      extract: () => "Trading halted by kill switch" },
-    { test: /daily.*loss/i,          gate: "Daily Loss Limit", extract: () => "Daily loss limit reached" },
-    { test: /weekly.*loss/i,         gate: "Weekly Loss Limit",extract: () => "Weekly loss limit reached" },
-    { test: /max.*drawdown/i,        gate: "Max Drawdown",     extract: () => "Maximum drawdown exceeded" },
-    { test: /open.*risk/i,           gate: "Open Risk",        extract: () => "Open risk limit exceeded" },
-    { test: /max.*open.*trades/i,    gate: "Max Open Trades",  extract: () => "Maximum concurrent trades reached" },
-    { test: /AI disagree/i,          gate: "AI Verification",  extract: () => "AI disagreed with signal" },
-    { test: /intelligence only/i,    gate: "Mode",             extract: () => "No execution mode active" },
-    { test: /mode.*not.*active/i,    gate: "Mode",             extract: () => "No active trading mode" },
-    { test: /interpolat/i,           gate: "Data Quality",     extract: () => "Interpolated candles detected — signal discarded" },
-    { test: /insufficient.*data/i,   gate: "Data Quality",     extract: () => "Insufficient candle data for signal generation" },
-  ];
-  let gateName: string | null = null;
-  let gateDetail: string | null = null;
-  for (const p of patterns) {
-    const match = reason.match(p.test);
-    if (match) { gateName = p.gate; gateDetail = p.extract(match); break; }
-  }
+function EngineChip({ family }: { family: string | null | undefined }) {
+  if (!family) return <span className="text-muted-foreground/50 text-xs">—</span>;
+  const cls = ENGINE_COLORS[family] ?? "bg-gray-500/12 text-gray-400 border-gray-500/25";
   return (
-    <div className="p-2 rounded-md bg-red-500/8 border border-red-500/20 space-y-1">
-      {gateName && (
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-semibold text-red-400/80">Blocking Gate</span>
-          <span className="text-[11px] font-semibold text-red-400">{gateName}</span>
-        </div>
-      )}
-      {gateDetail && <p className="text-[10px] text-red-400/70">{gateDetail}</p>}
-      <p className="text-[10px] text-red-400/60 leading-relaxed">{reason}</p>
-    </div>
+    <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border", cls)}>
+      {ENGINE_LABELS[family] ?? family}
+    </span>
   );
 }
 
-function DetailRow({ label, value, highlight }: { label: string; value: string; highlight?: "green" | "red" }) {
-  const valClass = highlight === "green" ? "text-emerald-400" : highlight === "red" ? "text-red-400" : "text-foreground";
+function AiVerdictChip({ verdict }: { verdict: string | null | undefined }) {
+  if (!verdict || verdict === "skipped") return <span className="text-[11px] text-muted-foreground/40">—</span>;
+  const cls = verdict === "agree" ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25"
+    : verdict === "disagree" ? "text-red-400 bg-red-500/10 border-red-500/25"
+    : "text-amber-400 bg-amber-500/10 border-amber-500/25";
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-[10px] text-muted-foreground">{label}</span>
-      <span className={cn("text-[11px] mono-num font-medium", valClass)}>{value}</span>
-    </div>
-  );
-}
-
-function DecisionDetailPanel({ sig }: { sig: SignalLog }) {
-  const tp = sig.suggestedTp != null ? Math.abs(sig.suggestedTp) : null;
-  const sl = sig.suggestedSl != null ? Math.abs(sig.suggestedSl) : null;
-  const rr = sl && sl > 0 && tp ? (tp / sl) : null;
-
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-card/50 border-t border-border/30">
-      <div className="space-y-3">
-        <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-          <BarChart3 className="w-3.5 h-3.5 text-primary" /> Scoring Breakdown
-        </h4>
-        {sig.scoringDimensions ? (
-          <div className="space-y-1.5">
-            {(Object.keys(DIMENSION_LABELS) as (keyof ScoringDimensions)[]).map(key => (
-              <DimensionBar key={key} label={DIMENSION_LABELS[key]} value={sig.scoringDimensions![key]} />
-            ))}
-          </div>
-        ) : (
-          <p className="text-[10px] text-muted-foreground">No dimension data available</p>
-        )}
-        <div className="pt-2 border-t border-border/20 space-y-1">
-          <DetailRow label="Composite Score" value={sig.compositeScore != null ? Math.round(sig.compositeScore).toString() : "—"} />
-          <DetailRow label="Raw Score" value={formatNumber(sig.score, 3)} />
-          <DetailRow label="Expected Value" value={formatNumber(sig.expectedValue, 4)} highlight={sig.expectedValue > 0 ? "green" : "red"} />
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-          <Target className="w-3.5 h-3.5 text-primary" /> Engine Outcome
-        </h4>
-        <div className="space-y-1">
-          <DetailRow label="Direction" value={sig.direction?.toUpperCase() ?? "—"} />
-          <DetailRow label="Engine" value={ENGINE_LABELS[sig.strategyFamily ?? ""] ?? sig.strategyFamily ?? "—"} />
-          <DetailRow label="Strategy" value={sig.strategyName ?? "—"} />
-          <DetailRow label="Regime" value={sig.regime ?? "—"} />
-          <DetailRow label="Regime Certainty" value={sig.regimeConfidence != null ? `${(sig.regimeConfidence * 100).toFixed(0)}%` : "—"} />
-          <DetailRow label="Allocation" value={sig.allocationPct != null ? `${sig.allocationPct.toFixed(1)}%` : "—"} />
-          <DetailRow label="Mode" value={sig.mode ?? "—"} />
-        </div>
-        <div className="pt-2 border-t border-border/20 space-y-1">
-          <DetailRow label="Take Profit (offset)" value={tp != null ? formatNumber(tp, 4) : "—"} highlight="green" />
-          <DetailRow label="Stop Loss (offset)" value={sl != null ? formatNumber(sl, 4) : "—"} highlight="red" />
-          <DetailRow label="R:R Ratio" value={rr != null ? `${rr.toFixed(2)}:1` : "—"} />
-        </div>
-        {(sig.expectedMovePct != null || sig.expectedHoldDays != null || sig.captureRate != null || sig.empiricalWinRate != null) && (
-          <div className="pt-2 border-t border-border/20 space-y-1">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Signal Intelligence</p>
-            {sig.expectedMovePct != null && <DetailRow label="Expected Move %" value={`${(sig.expectedMovePct * 100).toFixed(1)}%`} highlight="green" />}
-            {sig.expectedHoldDays != null && <DetailRow label="Expected Hold" value={`${sig.expectedHoldDays.toFixed(0)} days`} />}
-            {sig.captureRate != null && <DetailRow label="Capture Rate" value={`${(sig.captureRate * 100).toFixed(0)}%`} />}
-            {sig.empiricalWinRate != null && <DetailRow label="Empirical Win Rate" value={`${(sig.empiricalWinRate * 100).toFixed(0)}%`} />}
-          </div>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-          <ShieldAlert className="w-3.5 h-3.5 text-primary" /> Decision & AI Verdict
-        </h4>
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-muted-foreground">Final Decision</span>
-            <StateChip sig={sig} />
-          </div>
-          {!sig.allowedFlag && sig.rejectionReason && (
-            <BlockingGate reason={sig.rejectionReason} />
-          )}
-        </div>
-        <div className="pt-2 border-t border-border/20 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-muted-foreground">AI Verdict</span>
-            <span className={cn(
-              "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold border",
-              sig.aiVerdict === "agree" ? "bg-emerald-500/12 text-emerald-400 border-emerald-500/25"
-              : sig.aiVerdict === "disagree" ? "bg-red-500/12 text-red-400 border-red-500/25"
-              : sig.aiVerdict === "uncertain" ? "bg-amber-500/12 text-amber-400 border-amber-500/25"
-              : "bg-slate-500/12 text-slate-400 border-slate-500/25"
-            )}>
-              <Brain className="w-3 h-3" />
-              {sig.aiVerdict ? sig.aiVerdict.charAt(0).toUpperCase() + sig.aiVerdict.slice(1) : (!sig.allowedFlag ? "Skipped" : "—")}
-            </span>
-          </div>
-          {sig.aiReasoning && sig.aiVerdict !== "skipped" && (
-            <div className="p-2 rounded-md bg-muted/30 border border-border/30">
-              <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{sig.aiReasoning}</p>
-            </div>
-          )}
-          {!sig.aiReasoning && !sig.allowedFlag && (
-            <p className="text-[10px] text-slate-400/80 italic">Signal blocked before reaching AI verification.</p>
-          )}
-          {sig.aiConfidenceAdj != null && sig.aiConfidenceAdj !== 0 && (
-            <DetailRow label="AI Confidence Adj" value={`${sig.aiConfidenceAdj > 0 ? "+" : ""}${sig.aiConfidenceAdj}`} />
-          )}
-        </div>
-      </div>
-    </div>
+    <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border", cls)}>
+      <Brain className="w-3 h-3" />
+      {verdict.charAt(0).toUpperCase() + verdict.slice(1)}
+    </span>
   );
 }
 
@@ -279,7 +188,232 @@ function FilterSelect({ value, onChange, options, placeholder }: {
   );
 }
 
-const PAGE_SIZE = 50;
+// ── Dimension Bars ────────────────────────────────────────────────────────────
+
+const DIMENSION_LABELS: Record<string, string> = {
+  rangePosition: "Range Position",
+  maDeviation: "MA Deviation",
+  volatilityProfile: "Volatility Profile",
+  rangeExpansion: "Range Expansion",
+  directionalConfirmation: "Directional Confirm",
+};
+
+function DimBar({ label, value }: { label: string; value: number }) {
+  const cls = value >= 80 ? "bg-emerald-500" : value >= 60 ? "bg-amber-500" : "bg-red-500";
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] text-muted-foreground w-28 shrink-0 text-right">{label}</span>
+      <div className="flex-1 h-1.5 bg-muted/40 rounded-full overflow-hidden">
+        <div className={cn("h-full rounded-full", cls)} style={{ width: `${value}%` }} />
+      </div>
+      <span className="text-[10px] tabular-nums text-foreground w-6 text-right">{value}</span>
+    </div>
+  );
+}
+
+// ── Detail Panel ─────────────────────────────────────────────────────────────
+
+function DR({ label, value, highlight }: { label: string; value: string; highlight?: "green" | "red" }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[10px] text-muted-foreground">{label}</span>
+      <span className={cn("text-[11px] tabular-nums font-medium",
+        highlight === "green" ? "text-emerald-400" : highlight === "red" ? "text-red-400" : "text-foreground")}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function DecisionDetailPanel({ sig, state }: { sig: SignalLog; state: DecisionState }) {
+  const tp = sig.suggestedTp != null ? Math.abs(sig.suggestedTp) : null;
+  const sl = sig.suggestedSl != null ? Math.abs(sig.suggestedSl) : null;
+  const rr = sl && sl > 0 && tp ? (tp / sl) : null;
+  const gate = parseBlockingGate(sig.rejectionReason);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -4 }}
+      transition={{ duration: 0.15 }}
+      className="grid grid-cols-1 md:grid-cols-3 gap-4 px-4 py-4 bg-muted/5 border-t border-border/20">
+
+      {/* Column 1: Scoring */}
+      <div className="space-y-3">
+        <h4 className="text-xs font-semibold flex items-center gap-1.5">
+          <BarChart3 className="w-3.5 h-3.5 text-primary" /> Score Breakdown
+        </h4>
+        {sig.scoringDimensions ? (
+          <div className="space-y-1.5">
+            {Object.keys(DIMENSION_LABELS).map(key => {
+              const val = (sig.scoringDimensions as Record<string, number>)[key];
+              if (val == null) return null;
+              return <DimBar key={key} label={DIMENSION_LABELS[key]} value={val} />;
+            })}
+          </div>
+        ) : (
+          <p className="text-[10px] text-muted-foreground">No dimension data available</p>
+        )}
+        <div className="pt-2 border-t border-border/20 space-y-1">
+          <DR label="Composite Score" value={sig.compositeScore != null ? Math.round(sig.compositeScore).toString() : "—"} />
+          <DR label="Raw Score" value={formatNumber(sig.score, 3)} />
+          <DR label="Expected Value" value={formatNumber(sig.expectedValue, 4)} highlight={sig.expectedValue > 0 ? "green" : "red"} />
+        </div>
+      </div>
+
+      {/* Column 2: Engine & Trade Details */}
+      <div className="space-y-3">
+        <h4 className="text-xs font-semibold flex items-center gap-1.5">
+          <Target className="w-3.5 h-3.5 text-primary" /> Engine Outcome
+        </h4>
+        <div className="space-y-1">
+          <DR label="Direction" value={sig.direction?.toUpperCase() ?? "—"} />
+          <DR label="Engine" value={ENGINE_LABELS[sig.strategyFamily ?? ""] ?? sig.strategyFamily ?? "—"} />
+          <DR label="Strategy" value={sig.strategyName ?? "—"} />
+          <DR label="Regime" value={sig.regime ?? "—"} />
+          <DR label="Regime Certainty" value={sig.regimeConfidence != null ? `${(sig.regimeConfidence * 100).toFixed(0)}%` : "—"} />
+          <DR label="Mode" value={sig.mode ?? "—"} />
+          <DR label="Allocation" value={sig.allocationPct != null ? `${sig.allocationPct.toFixed(1)}%` : "—"} />
+        </div>
+        <div className="pt-2 border-t border-border/20 space-y-1">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Trade Plan</p>
+          <DR label="Take Profit (offset)" value={tp != null ? formatNumber(tp, 4) : "—"} highlight="green" />
+          <DR label="Stop Loss (offset)" value={sl != null ? formatNumber(sl, 4) : "—"} highlight="red" />
+          <DR label="R:R Ratio" value={rr != null ? `${rr.toFixed(2)}:1` : "—"} />
+        </div>
+        {(sig.expectedMovePct != null || sig.expectedHoldDays != null || sig.captureRate != null || sig.empiricalWinRate != null) && (
+          <div className="pt-2 border-t border-border/20 space-y-1">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Signal Intelligence</p>
+            {sig.expectedMovePct != null && <DR label="Expected Move %" value={`${(sig.expectedMovePct * 100).toFixed(1)}%`} highlight="green" />}
+            {sig.expectedHoldDays != null && <DR label="Expected Hold" value={`${sig.expectedHoldDays.toFixed(0)} days`} />}
+            {sig.captureRate != null && <DR label="Capture Rate" value={`${(sig.captureRate * 100).toFixed(0)}%`} />}
+            {sig.empiricalWinRate != null && <DR label="Empirical Win Rate" value={`${(sig.empiricalWinRate * 100).toFixed(0)}%`} />}
+          </div>
+        )}
+      </div>
+
+      {/* Column 3: Decision Reasoning & AI */}
+      <div className="space-y-3">
+        <h4 className="text-xs font-semibold flex items-center gap-1.5">
+          <ShieldAlert className="w-3.5 h-3.5 text-primary" /> Decision & AI Verdict
+        </h4>
+
+        {/* Gate result */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-muted-foreground">Decision State</span>
+            <StateChip state={state} />
+          </div>
+
+          {/* Coordinator / Allocator rows */}
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-muted-foreground">Coordinator</span>
+            <span className="text-[11px] font-medium text-foreground">
+              {sig.allowedFlag ? "Passed" : "—"}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-muted-foreground">Allocator</span>
+            <span className="text-[11px] font-medium text-foreground">
+              {sig.executionStatus === "open" ? "Executed" : sig.allowedFlag ? "Pending" : "—"}
+            </span>
+          </div>
+        </div>
+
+        {/* Rejection reason block */}
+        {!sig.allowedFlag && gate && (
+          <div className="rounded-md bg-red-500/6 border border-red-500/20 p-2.5 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold text-red-400/80">Blocking Gate</span>
+              <span className="text-[11px] font-bold text-red-400">{gate.gate}</span>
+            </div>
+            <p className="text-[11px] text-red-400/80">{gate.detail}</p>
+            {gate.raw !== gate.detail && (
+              <p className="text-[10px] text-red-400/50 leading-relaxed font-mono">{gate.raw.slice(0, 200)}</p>
+            )}
+          </div>
+        )}
+
+        {/* Why it passed */}
+        {sig.allowedFlag && (
+          <div className="rounded-md bg-green-500/6 border border-green-500/20 p-2.5">
+            <p className="text-[10px] font-semibold text-green-400/80 mb-1">Why It Passed</p>
+            <div className="space-y-0.5 text-[10px] text-green-400/70">
+              {sig.compositeScore != null && <p>Score {Math.round(sig.compositeScore)} ≥ mode threshold</p>}
+              {sig.expectedValue != null && sig.expectedValue > 0 && <p>Positive expected value: {sig.expectedValue.toFixed(4)}</p>}
+              {rr != null && rr >= 1.5 && <p>R:R ratio {rr.toFixed(2)}:1 ≥ minimum</p>}
+            </div>
+          </div>
+        )}
+
+        {/* AI verdict */}
+        <div className="pt-2 border-t border-border/20 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-muted-foreground">AI Verdict</span>
+            <AiVerdictChip verdict={!sig.allowedFlag ? "skipped" : sig.aiVerdict} />
+          </div>
+          {sig.aiReasoning && sig.aiVerdict !== "skipped" && (
+            <div className="rounded-md bg-muted/20 border border-border/30 p-2">
+              <p className="text-[11px] text-muted-foreground leading-relaxed">{sig.aiReasoning}</p>
+            </div>
+          )}
+          {!sig.aiReasoning && !sig.allowedFlag && (
+            <p className="text-[10px] text-slate-400/70 italic">Signal blocked before reaching AI verification step.</p>
+          )}
+          {sig.aiConfidenceAdj != null && sig.aiConfidenceAdj !== 0 && (
+            <DR label="AI Score Adjustment" value={`${sig.aiConfidenceAdj > 0 ? "+" : ""}${sig.aiConfidenceAdj}`} />
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ── Pending Confirmations Block ───────────────────────────────────────────────
+
+function PendingBlock({ data }: { data: ReturnType<typeof useGetPendingSignals>["data"] }) {
+  if (!data || data.count === 0) return null;
+  return (
+    <div className="rounded-xl border border-amber-500/20 bg-amber-500/3">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-amber-500/15">
+        <Clock className="w-3.5 h-3.5 text-amber-400" />
+        <span className="text-xs font-semibold text-amber-400">Awaiting Confirmation ({data.count})</span>
+      </div>
+      <div className="p-3 space-y-2">
+        {data.signals.map(ps => (
+          <div key={`${ps.symbol}-${ps.strategyName}-${ps.direction}`}
+            className="rounded-lg border border-border/50 bg-card p-3 flex items-center gap-4">
+            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+              <DirectionChip direction={ps.direction} />
+              <span className="font-semibold text-sm">{ps.symbol}</span>
+              <EngineChip family={ps.strategyFamily} />
+              {ps.pyramidLevel > 0 && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/50 text-[10px] text-muted-foreground">
+                  <Layers className="w-3 h-3" />L{ps.pyramidLevel + 1}
+                </span>
+              )}
+            </div>
+            <div className="flex-1 min-w-0 max-w-xs">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] text-muted-foreground">Confirmation</span>
+                <span className="text-xs font-semibold tabular-nums text-amber-400">
+                  {ps.confirmCount}/{ps.requiredConfirmations}
+                </span>
+              </div>
+              <div className="h-1.5 bg-muted/40 rounded-full overflow-hidden">
+                <div className="h-full bg-amber-500 rounded-full" style={{ width: `${ps.progressPct}%` }} />
+              </div>
+            </div>
+            <ScorePill score={ps.lastCompositeScore} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
 
 export default function Decisions() {
   const [symbolFilter, setSymbolFilter] = useState("");
@@ -295,7 +429,7 @@ export default function Decisions() {
     const p: GetLatestSignalsParams = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
     if (symbolFilter) p.symbol = symbolFilter;
     if (engineFilter) p.family = engineFilter;
-    if (statusFilter) p.status = statusFilter;
+    if (statusFilter === "approved" || statusFilter === "blocked") p.status = statusFilter;
     if (aiFilter) p.ai = aiFilter;
     return p;
   }, [symbolFilter, engineFilter, statusFilter, aiFilter, page]);
@@ -309,7 +443,7 @@ export default function Decisions() {
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const hasFilters = !!(symbolFilter || engineFilter || statusFilter || aiFilter || dateFrom || dateTo);
 
-  const dateFilteredSignals = useMemo(() => {
+  const dateFiltered = useMemo(() => {
     if (!dateFrom && !dateTo) return signals;
     return signals.filter(sig => {
       const d = new Date(sig.ts);
@@ -320,250 +454,237 @@ export default function Decisions() {
   }, [signals, dateFrom, dateTo]);
 
   const symbolOptions = useMemo(() => {
-    const s = new Set<string>(); signals.forEach(sig => s.add(sig.symbol)); return Array.from(s).sort();
+    const s = new Set<string>();
+    signals.forEach(sig => s.add(sig.symbol));
+    return Array.from(s).sort();
   }, [signals]);
+
+  // Summary stats
+  const counts = useMemo(() => {
+    const result: Record<DecisionState, number> = { traded: 0, pending: 0, approved: 0, rejected: 0, blocked: 0, suppressed: 0 };
+    for (const sig of dateFiltered) result[classifyDecision(sig)]++;
+    return result;
+  }, [dateFiltered]);
 
   function clearFilters() {
     setSymbolFilter(""); setEngineFilter(""); setStatusFilter(""); setAiFilter("");
     setDateFrom(""); setDateTo(""); setPage(0);
   }
 
-  const passedCount = signals.filter(s => s.allowedFlag).length;
-  const blockedCount = signals.filter(s => !s.allowedFlag).length;
+  function toggleRow(id: number) {
+    setExpandedId(prev => prev === id ? null : id);
+  }
 
   return (
     <div className="space-y-4 max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between">
+
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="page-title flex items-center gap-2">
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Zap className="w-6 h-6 text-primary" /> Engine Decisions
           </h1>
-          <p className="page-subtitle">
-            Every engine decision — why it passed, why it failed, what it expected
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Every signal decision — why it passed, why it failed, what the AI said
           </p>
         </div>
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-green-500/70 inline-block" />
-            {passedCount} approved
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-red-500/70 inline-block" />
-            {blockedCount} blocked
-          </span>
-          <span className="mono-num">{total} total decisions</span>
+        <div className="flex items-center gap-3">
+          <button onClick={() => downloadCSV(dateFiltered.map(s => ({
+            time: new Date(s.ts).toISOString(), symbol: s.symbol,
+            engine: ENGINE_LABELS[s.strategyFamily ?? ""] ?? s.strategyFamily,
+            direction: s.direction, compositeScore: s.compositeScore, score: s.score,
+            expectedValue: s.expectedValue, regime: s.regime, state: classifyDecision(s),
+            rejectionReason: s.rejectionReason, aiVerdict: s.aiVerdict, mode: s.mode,
+          })), "decisions_log")}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
+            <Download className="w-3 h-3" /> CSV
+          </button>
+          <button onClick={() => downloadJSON(dateFiltered as unknown as Record<string, unknown>[], "decisions_log")}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
+            <Download className="w-3 h-3" /> JSON
+          </button>
         </div>
       </div>
 
-      {/* Filter bar */}
-      <Card>
-        <CardContent className="p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-            <FilterSelect value={symbolFilter} onChange={v => { setSymbolFilter(v); setPage(0); }}
-              options={symbolOptions.length > 0 ? symbolOptions : ["BOOM300","CRASH300","R_75","R_100"]} placeholder="All Symbols" />
-            <FilterSelect value={engineFilter} onChange={v => { setEngineFilter(v); setPage(0); }}
-              options={ENGINES} placeholder="All Engines" />
-            <FilterSelect value={statusFilter} onChange={v => { setStatusFilter(v); setPage(0); }}
-              options={STATUSES} placeholder="All States" />
-            <FilterSelect value={aiFilter} onChange={v => { setAiFilter(v); setPage(0); }}
-              options={AI_VERDICTS} placeholder="AI Verdict" />
-            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(0); }}
-              className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground focus:border-primary/50 focus:outline-none" />
-            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(0); }}
-              className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground focus:border-primary/50 focus:outline-none" />
-            {hasFilters && (
-              <button onClick={clearFilters}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground transition-colors">
-                <X className="w-3 h-3" /> Clear
+      {/* State summary bar */}
+      {total > 0 && (
+        <div className="flex flex-wrap gap-3">
+          {(["traded", "approved", "pending", "rejected", "blocked", "suppressed"] as DecisionState[]).map(state => {
+            const n = counts[state];
+            if (n === 0 && state !== "approved") return null;
+            const s = STATE_STYLES[state];
+            return (
+              <button
+                key={state}
+                onClick={() => setStatusFilter(
+                  statusFilter === state ? "" :
+                  state === "blocked" || state === "rejected" || state === "suppressed" ? "blocked" :
+                  state === "approved" || state === "traded" ? "approved" : ""
+                )}
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors",
+                  s.chip, "hover:opacity-80"
+                )}>
+                {n} {s.label}
               </button>
-            )}
-            <div className="ml-auto flex items-center gap-2">
-              <button onClick={() => downloadCSV(dateFilteredSignals.map(s => ({
-                time: new Date(s.ts).toISOString(), symbol: s.symbol,
-                engine: ENGINE_LABELS[s.strategyFamily ?? ""] ?? s.strategyFamily,
-                direction: s.direction, compositeScore: s.compositeScore, score: s.score,
-                expectedValue: s.expectedValue, regime: s.regime, regimeConfidence: s.regimeConfidence,
-                expectedMovePct: s.expectedMovePct, expectedHoldDays: s.expectedHoldDays,
-                captureRate: s.captureRate, empiricalWinRate: s.empiricalWinRate,
-                allocationPct: s.allocationPct, status: s.allowedFlag ? "approved" : "blocked",
-                rejectionReason: s.rejectionReason, aiVerdict: s.aiVerdict, mode: s.mode,
-              })), "decisions_log")}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
-                <Download className="w-3 h-3" /> CSV
-              </button>
-              <button onClick={() => downloadJSON(dateFilteredSignals as unknown as Record<string, unknown>[], "decisions_log")}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground border border-border/50 hover:border-border transition-colors">
-                <Download className="w-3 h-3" /> JSON
-              </button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Pending confirmations */}
-      {pendingData && pendingData.count > 0 && (
-        <Card className="border-amber-500/20">
-          <CardHeader>
-            <CardTitle><Clock className="w-4 h-4 text-amber-400" /> Awaiting Confirmation ({pendingData.count})</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="grid gap-3 p-4">
-              {pendingData.signals.map(ps => (
-                <div key={`${ps.symbol}-${ps.strategyName}-${ps.direction}`}
-                  className="rounded-xl border border-border/60 p-4 bg-muted/15">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2.5">
-                      <DirectionChip direction={ps.direction} />
-                      <span className="font-semibold text-foreground">{ps.symbol}</span>
-                      <span className={cn("inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border",
-                        ENGINE_COLORS[ps.strategyFamily] || "bg-gray-500/12 text-gray-400 border-gray-500/25")}>
-                        {ENGINE_LABELS[ps.strategyFamily] || ps.strategyFamily}
-                      </span>
-                      {ps.pyramidLevel > 0 && (
-                        <Badge variant="outline" className="text-[10px]">
-                          <Layers className="w-3 h-3 mr-1" />Pyramid L{ps.pyramidLevel + 1}
-                        </Badge>
-                      )}
-                    </div>
-                    <ScorePill score={ps.lastCompositeScore} />
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] text-muted-foreground">Confirmation Progress</span>
-                        <span className="text-xs font-semibold mono-num text-amber-400">
-                          {ps.confirmCount}/{ps.requiredConfirmations} windows
-                        </span>
-                      </div>
-                      <div className="h-2 bg-muted/50 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: `${ps.progressPct}%` }} />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 text-xs shrink-0">
-                      <div>
-                        <span className="text-muted-foreground block text-[10px]">EV</span>
-                        <span className={cn("mono-num font-semibold", ps.lastExpectedValue > 0 ? "text-success" : "text-destructive")}>
-                          {formatNumber(ps.lastExpectedValue, 4)}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[10px]">Tracking</span>
-                        <span className="mono-num text-foreground text-[11px]">
-                          {(() => {
-                            const mins = Math.floor((Date.now() - new Date(ps.firstDetectedAt).getTime()) / 60000);
-                            if (mins < 1) return "<1m";
-                            if (mins < 60) return `${mins}m`;
-                            return `${Math.floor(mins / 60)}h ${mins % 60}m`;
-                          })()}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+            );
+          })}
+          <span className="text-xs text-muted-foreground self-center tabular-nums ml-auto">{total} total</span>
+        </div>
       )}
 
-      {/* Decision log */}
-      <Card>
-        <CardHeader>
-          <CardTitle><Zap className="w-4 h-4 text-primary" /> Decision Log</CardTitle>
-          <span className="text-xs text-muted-foreground">
-            Scores above {visThreshold} threshold. Click any row for full details.
+      {/* Pending confirmations */}
+      <PendingBlock data={pendingData} />
+
+      {/* Filter bar */}
+      <div className="rounded-xl border border-border/50 bg-card p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <FilterSelect value={symbolFilter} onChange={v => { setSymbolFilter(v); setPage(0); }}
+            options={symbolOptions.length > 0 ? symbolOptions : ["BOOM300", "CRASH300", "R_75", "R_100"]}
+            placeholder="All Symbols" />
+          <FilterSelect value={engineFilter} onChange={v => { setEngineFilter(v); setPage(0); }}
+            options={ENGINES} placeholder="All Engines" />
+          <FilterSelect value={statusFilter} onChange={v => { setStatusFilter(v); setPage(0); }}
+            options={["approved", "blocked"]} placeholder="All States" />
+          <FilterSelect value={aiFilter} onChange={v => { setAiFilter(v); setPage(0); }}
+            options={["agree", "disagree", "uncertain"]} placeholder="AI Verdict" />
+          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(0); }}
+            className="bg-card border border-border/50 rounded-md px-2 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none" />
+          <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(0); }}
+            className="bg-card border border-border/50 rounded-md px-2 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none" />
+          {hasFilters && (
+            <button onClick={clearFilters}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground transition-colors">
+              <X className="w-3 h-3" /> Clear
+            </button>
+          )}
+          <span className="ml-auto text-[11px] text-muted-foreground">
+            Score visibility threshold: ≥{visThreshold}
           </span>
-        </CardHeader>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">Loading decisions…</div>
-          ) : dateFilteredSignals.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3">
-              <Zap className="w-8 h-8 text-muted-foreground/30" />
-              <p className="text-muted-foreground text-sm">{hasFilters ? "No decisions match these filters" : "No decisions logged yet"}</p>
+        </div>
+      </div>
+
+      {/* Decision table */}
+      <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16">
+            <Activity className="w-6 h-6 text-muted-foreground/30 animate-pulse" />
+            <span className="ml-2 text-sm text-muted-foreground">Loading decisions…</span>
+          </div>
+        ) : dateFiltered.length === 0 ? (
+          <div className="text-center py-16">
+            <Zap className="w-10 h-10 text-muted-foreground/15 mx-auto mb-3" />
+            <p className="text-sm text-muted-foreground">
+              {hasFilters ? "No decisions match the current filters" : "No decisions recorded yet"}
+            </p>
+            <p className="text-xs text-muted-foreground/60 mt-1">
+              {!hasFilters && "Signal scanner runs every ~60 seconds — decisions appear here as they come in"}
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Table header */}
+            <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto] gap-x-4 px-4 py-2.5 border-b border-border/40 bg-muted/10
+              text-[11px] text-muted-foreground uppercase tracking-wide font-medium">
+              <span>Symbol / Engine</span>
+              <span className="w-16 text-center">Dir</span>
+              <span className="w-16 text-right">Score</span>
+              <span className="w-24 text-center">State</span>
+              <span className="w-20 text-center">AI</span>
+              <span className="w-36 text-right">Time</span>
+              <span className="w-5" />
             </div>
-          ) : (
-            <div className="divide-y divide-border/30">
-              {dateFilteredSignals.map(sig => {
+
+            {/* Rows */}
+            <div className="divide-y divide-border/20">
+              {dateFiltered.map(sig => {
+                const state = classifyDecision(sig);
+                const style = STATE_STYLES[state];
                 const isExpanded = expandedId === sig.id;
+                const ts = new Date(sig.ts).toLocaleString(undefined, {
+                  month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+                });
+
                 return (
-                  <div key={sig.id} className="group">
+                  <React.Fragment key={sig.id}>
                     <div
-                      onClick={() => setExpandedId(isExpanded ? null : sig.id)}
                       className={cn(
-                        "flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-muted/20 transition-colors",
-                        isExpanded && "bg-muted/10"
+                        "grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto] gap-x-4 px-4 py-2.5",
+                        "cursor-pointer hover:bg-muted/10 transition-colors items-center",
+                        style.row,
+                        isExpanded && "bg-muted/5"
                       )}
-                    >
-                      <span className="text-[10px] text-muted-foreground/60 mono-num w-20 shrink-0">
-                        {new Date(sig.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                      <DirectionChip direction={sig.direction} />
-                      <span className="font-semibold text-foreground text-sm w-20 shrink-0">{sig.symbol}</span>
-                      <span className={cn(
-                        "inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border shrink-0",
-                        ENGINE_COLORS[sig.strategyFamily ?? ""] || "bg-gray-500/12 text-gray-400 border-gray-500/25"
-                      )}>
-                        {ENGINE_LABELS[sig.strategyFamily ?? ""] ?? sig.strategyFamily ?? "—"}
-                      </span>
+                      onClick={() => toggleRow(sig.id)}>
 
-                      {sig.regime && (
-                        <span className="text-[11px] text-muted-foreground hidden sm:inline truncate max-w-28">
-                          {sig.regime}{sig.regimeConfidence != null ? ` (${(sig.regimeConfidence * 100).toFixed(0)}%)` : ""}
-                        </span>
-                      )}
+                      {/* Symbol + Engine */}
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-bold text-sm font-mono text-foreground shrink-0">{sig.symbol}</span>
+                        <EngineChip family={sig.strategyFamily} />
+                      </div>
 
-                      <div className="ml-auto flex items-center gap-3">
-                        {sig.expectedMovePct != null && (
-                          <span className="text-[11px] text-emerald-400/80 mono-num hidden md:inline">
-                            {(sig.expectedMovePct * 100).toFixed(1)}% move
-                          </span>
-                        )}
+                      {/* Direction */}
+                      <div className="w-16 flex justify-center">
+                        <DirectionChip direction={sig.direction} />
+                      </div>
+
+                      {/* Score */}
+                      <div className="w-16 flex justify-end">
                         <ScorePill score={sig.compositeScore} />
-                        <StateChip sig={sig} />
-                        {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground/50" /> : <ChevronDown className="w-4 h-4 text-muted-foreground/30 group-hover:text-muted-foreground/60" />}
+                      </div>
+
+                      {/* State */}
+                      <div className="w-24 flex justify-center">
+                        <StateChip state={state} />
+                      </div>
+
+                      {/* AI Verdict */}
+                      <div className="w-20 flex justify-center">
+                        <AiVerdictChip verdict={!sig.allowedFlag ? null : sig.aiVerdict} />
+                      </div>
+
+                      {/* Time */}
+                      <div className="w-36 text-right text-[11px] text-muted-foreground tabular-nums">
+                        {ts}
+                      </div>
+
+                      {/* Expand toggle */}
+                      <div className="w-5 flex justify-end">
+                        {isExpanded
+                          ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+                          : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
                       </div>
                     </div>
 
                     <AnimatePresence>
                       {isExpanded && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          transition={{ duration: 0.18 }}
-                        >
-                          <DecisionDetailPanel sig={sig} />
-                        </motion.div>
+                        <DecisionDetailPanel sig={sig} state={state} />
                       )}
                     </AnimatePresence>
-                  </div>
+                  </React.Fragment>
                 );
               })}
             </div>
-          )}
+          </>
+        )}
+      </div>
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t border-border/30">
-              <span className="text-xs text-muted-foreground">
-                Page {page + 1} of {totalPages} ({total} total)
-              </span>
-              <div className="flex items-center gap-2">
-                <button disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}
-                  className="p-1.5 rounded hover:bg-muted/30 disabled:opacity-30 transition-colors">
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <button disabled={page >= totalPages - 1} onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                  className="p-1.5 rounded hover:bg-muted/30 disabled:opacity-30 transition-colors">
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Page {page + 1} of {totalPages} · {total} total decisions</span>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+              className="p-1.5 rounded-md border border-border/50 hover:bg-muted/20 disabled:opacity-30 transition-colors">
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}
+              className="p-1.5 rounded-md border border-border/50 hover:bg-muted/20 disabled:opacity-30 transition-colors">
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

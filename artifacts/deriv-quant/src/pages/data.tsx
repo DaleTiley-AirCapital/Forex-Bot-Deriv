@@ -330,7 +330,7 @@ export default function DataManager() {
                     ))}
 
                   {diagSymbols.length === 0 && (
-                    <tr>
+                    <tr key="__loading__">
                       <td colSpan={4} className="text-center py-8 text-muted-foreground text-sm">
                         Loading symbol diagnostics…
                       </td>

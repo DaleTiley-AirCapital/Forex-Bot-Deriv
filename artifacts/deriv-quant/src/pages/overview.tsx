@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Radio, RadioTower, Zap, Shield, TrendingUp, Activity, AlertTriangle,
   CheckCircle, Clock, BarChart2, Database, Scan, Target, XCircle,
-  ArrowUpRight, ArrowDownRight,
+  ArrowUpRight, ArrowDownRight, Cpu,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL || "/";
@@ -263,6 +263,37 @@ export default function Overview() {
           ))}
         </div>
       )}
+
+      {/* ── System Overview ── */}
+      <div>
+        <SectionHeader icon={Cpu} title="System Overview" sub="Engine and data pipeline metrics" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <KpiCard
+            label="Active Mode"
+            value={ovLoading ? "…" : <span className={mode === "idle" ? "text-muted-foreground" : "text-green-400"}>{mode.toUpperCase()}</span>}
+            sub={ovLoading ? undefined : ov?.scannerRunning ? "Scanner running" : "Scanner stopped"}
+            icon={Activity}
+          />
+          <KpiCard
+            label="Total Scans Run"
+            value={ovLoading ? "…" : (ov?.totalScansRun ?? 0).toLocaleString()}
+            sub={ovLoading ? undefined : `Last: ${scanAge}`}
+            icon={Scan}
+          />
+          <KpiCard
+            label="Total Decisions"
+            value={ovLoading ? "…" : (ov?.totalDecisionsLogged ?? 0).toLocaleString()}
+            sub={ovLoading ? undefined : `Last symbol: ${ov?.lastScanSymbol ?? "—"}`}
+            icon={BarChart2}
+          />
+          <KpiCard
+            label="Streaming Symbols"
+            value={ovLoading ? "…" : <span className={ov?.streamingOnline ? "text-green-400" : "text-muted-foreground"}>{ov?.subscribedSymbolCount ?? 0}</span>}
+            sub={ovLoading ? undefined : ov?.streamingOnline ? "Live feed active" : "Stream offline"}
+            icon={RadioTower}
+          />
+        </div>
+      </div>
 
       {/* ── Section 1: System Status ── */}
       <div className="rounded-xl border border-border/50 bg-card p-4">

@@ -192,7 +192,6 @@ export default function Settings() {
 
   const killSwitch      = bool(data?.["kill_switch"]);
   const aiVerification  = bool(data?.["ai_verification_enabled"]);
-  const streaming       = bool(data?.["streaming"]);
   const withdrawalAlert = bool(data?.["suggest_withdrawal"]);
 
   return (
@@ -257,19 +256,6 @@ export default function Settings() {
                 onUpdate={onUpdate}
                 variant="default"
               />
-              <ToggleRow
-                label="Live Tick Streaming"
-                field="streaming"
-                value={streaming}
-                onUpdate={onUpdate}
-                variant="success"
-              />
-              {data["streaming_symbols"] && (
-                <div className="flex items-center justify-between gap-4 py-0.5">
-                  <span className="text-xs text-muted-foreground">Streaming symbols</span>
-                  <span className="text-xs font-mono text-foreground">{data["streaming_symbols"]}</span>
-                </div>
-              )}
               <div className="h-px bg-border/20" />
               <div className="flex items-center justify-between gap-4 py-0.5">
                 <div>

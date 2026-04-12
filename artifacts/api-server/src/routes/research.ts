@@ -826,6 +826,128 @@ router.post("/research/strategy-ranking", async (req, res): Promise<void> => {
 // Body: { symbol }
 // Query: ?background=true to run async and return immediately
 
+/**
+ * POST /research/clean-canonical
+ *
+ * Unified canonical cleanup pipeline — one button, full run.
+ *
+ * Sequence:
+ *   1. Snapshot state before
+ *   2. Run full data top-up: detect gaps → fetch real API candles → repair interpolated → enrich
+ *   3. Snapshot state after
+ *   4. Return comprehensive before/after summary
+ *
+ * Future runs automatically re-check interpolated candles and replace with real data
+ * if the API now has it. Interpolation is only ever created as last resort.
+ *
+ * Body: { symbol: string }
+ * Query: ?background=true to run async
+ */
+router.post("/research/clean-canonical", async (req, res): Promise<void> => {
+  const { symbol } = req.body ?? {};
+
+  if (!symbol || typeof symbol !== "string") {
+    res.status(400).json({ error: "symbol is required" });
+    return;
+  }
+
+  if (!ALL_SYMBOLS.includes(symbol)) {
+    res.status(400).json({ error: `Unknown symbol: ${symbol}` });
+    return;
+  }
+
+  const background = req.query.background === "true";
+
+  try {
+    const derivClient = await getDerivClientWithDbToken();
+    const { runDataTopUp } = await import("../core/dataIntegrity.js");
+
+    const countRows = async (tf: string, interpOnly = false): Promise<number> => {
+      const cond = interpOnly
+        ? and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, tf), eq(candlesTable.isInterpolated, true))
+        : and(eq(candlesTable.symbol, symbol), eq(candlesTable.timeframe, tf));
+      const [r] = await db.select({ n: count() }).from(candlesTable).where(cond);
+      return Number(r?.n ?? 0);
+    };
+
+    const run = async () => {
+      const before1m     = await countRows("1m");
+      const beforeInterp = await countRows("1m", true);
+
+      console.log(`[CleanCanonical] ${symbol}: before — 1m=${before1m} interpolated=${beforeInterp}`);
+
+      const result = await runDataTopUp(symbol, derivClient);
+
+      const after1m     = await countRows("1m");
+      const afterInterp = await countRows("1m", true);
+
+      return {
+        symbol,
+        before: { rows1m: before1m, interpolated: beforeInterp },
+        after:  { rows1m: after1m,  interpolated: afterInterp  },
+        pipeline: {
+          gapsFound:                 result.gapsFound,
+          gapsRepaired:              result.gapsRepaired,
+          gapsInterpolated:          result.gapsInterpolated,
+          candlesInserted:           result.candlesInserted,
+          interpolatedBefore:        result.interpolatedBefore,
+          interpolatedRecovered:     result.interpolatedRecovered,
+          interpolatedUnrecoverable: result.interpolatedUnrecoverable,
+          enrichedTimeframes:        result.timeframes ?? [],
+          durationMs:                result.durationMs,
+          errors:                    result.errors ?? [],
+        },
+        exportReady: after1m > 0 && afterInterp < after1m * 0.1,
+      };
+    };
+
+    if (background) {
+      run().catch(err =>
+        console.error(`[CleanCanonical] background run failed for ${symbol}:`, err),
+      );
+      res.json({ success: true, message: `Canonical cleanup started in background for ${symbol}` });
+    } else {
+      const result = await run();
+      res.json({ success: true, result });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Canonical cleanup failed" });
+  }
+});
+
+/**
+ * GET /research/coverage-all
+ *
+ * Returns candle counts for all symbols × all timeframes in one query.
+ * Used by the Coverage tab to display the full multi-timeframe matrix.
+ *
+ * Response: { rows: Array<{ symbol, timeframe, count, interpolatedCount }> }
+ */
+router.get("/research/coverage-all", async (_req, res): Promise<void> => {
+  try {
+    const rows = await db
+      .select({
+        symbol:            candlesTable.symbol,
+        timeframe:         candlesTable.timeframe,
+        count:             count(),
+        interpolatedCount: sql<number>`SUM(CASE WHEN ${candlesTable.isInterpolated} = true THEN 1 ELSE 0 END)`,
+      })
+      .from(candlesTable)
+      .groupBy(candlesTable.symbol, candlesTable.timeframe);
+
+    res.json({
+      rows: rows.map(r => ({
+        symbol:            r.symbol,
+        timeframe:         r.timeframe,
+        count:             Number(r.count),
+        interpolatedCount: Number(r.interpolatedCount ?? 0),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Coverage query failed" });
+  }
+});
+
 router.post("/research/repair-interpolated", async (req, res): Promise<void> => {
   const { symbol } = req.body ?? {};
 

@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  useGetDataStatus,
   useGetTicks,
   useGetCandles,
   useGetSpikeEvents,
@@ -10,9 +9,9 @@ import {
 } from "@workspace/api-client-react";
 import { formatNumber, cn } from "@/lib/utils";
 import {
-  Database, Play, RefreshCw, Radio, RadioTower, Activity, Loader2,
+  Database, Play, RefreshCw, Radio, Activity, Loader2,
   TrendingUp, Layers, CheckCircle, XCircle, AlertTriangle, Eye, EyeOff, Wrench,
-  Download, ChevronRight, Shield, Settings2, Cpu,
+  Download, ChevronRight, Cpu, Sparkles, ChevronDown,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL || "/";
@@ -83,7 +82,7 @@ interface ResearchDataStatus {
 }
 
 type OpResult = { ok: boolean; msg: string; detail?: Record<string, string> } | null;
-type ViewTab = "streaming" | "coverage" | "ops" | "topup" | "live" | "export" | "runtime";
+type ViewTab = "runtime" | "streaming" | "coverage" | "ops" | "export" | "live";
 type LiveSubtab = "ticks" | "candles" | "spikes";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -121,6 +120,16 @@ function useResearchDataStatus() {
     queryFn: () => apiFetch("research/data-status"),
     refetchInterval: 30_000,
     staleTime: 15_000,
+  });
+}
+
+interface CoverageRow { symbol: string; timeframe: string; count: number; interpolatedCount: number; }
+function useCoverageAll() {
+  return useQuery<{ rows: CoverageRow[] }>({
+    queryKey: ["research/coverage-all"],
+    queryFn: () => apiFetch("research/coverage-all"),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 }
 
@@ -369,206 +378,202 @@ function IntegritySummary({ data }: { data: ResearchDataStatus }) {
   );
 }
 
-// ── Data Operations Tab ───────────────────────────────────────────────────────
+// ── Data Operations Tab — Unified Canonical Cleanup ───────────────────────────
 
-function OpCard({ title, description, symbol, onSymbolChange, onRun, running, result }: {
-  title: string; description: string;
-  symbol: string; onSymbolChange: (s: string) => void;
-  onRun: () => void; running: boolean; result: OpResult;
-}) {
-  return (
-    <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
-      <div>
-        <h3 className="text-sm font-semibold">{title}</h3>
-        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{description}</p>
-      </div>
-      <div className="flex items-center gap-3 flex-wrap">
-        <SymbolSelectFull value={symbol} onChange={onSymbolChange} />
-        <button onClick={onRun} disabled={running}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-primary/30 bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
-          {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-          {running ? "Running…" : `Run for ${symbol}`}
-        </button>
-      </div>
-      {result && (
-        result.ok ? (
-          <div className="space-y-1.5">
-            <SuccessBox msg={result.msg} />
-            {result.detail && (
-              <div className="rounded bg-muted/20 p-3 space-y-1">
-                {Object.entries(result.detail).map(([k, v]) => (
-                  <div key={k} className="flex items-start gap-3 text-xs">
-                    <span className="text-muted-foreground w-36 shrink-0">{k}</span>
-                    <span className="font-mono text-foreground">{v}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : <ErrorBox msg={result.msg} />
-      )}
-    </div>
-  );
-}
-
-function DataOpsTab() {
-  const [repairSym, setRepairSym] = useState("CRASH300");
-  const [repairRunning, setRepairRunning] = useState(false);
-  const [repairResult, setRepairResult] = useState<OpResult>(null);
-
-  const [reconcileSym, setReconcileSym] = useState("CRASH300");
-  const [reconcileRunning, setReconcileRunning] = useState(false);
-  const [reconcileResult, setReconcileResult] = useState<OpResult>(null);
-
-  const [enrichSym, setEnrichSym] = useState("CRASH300");
-  const [enrichRunning, setEnrichRunning] = useState(false);
-  const [enrichResult, setEnrichResult] = useState<OpResult>(null);
-
-  const runRepair = async () => {
-    setRepairRunning(true); setRepairResult(null);
-    try {
-      const d = await apiFetch("research/repair-interpolated", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: repairSym }),
-      });
-      const s = d.summary ?? {};
-      setRepairResult({
-        ok: true,
-        msg: `Repair complete — recovered ${(s.totalRecovered ?? 0).toLocaleString()} of ${(s.totalBefore ?? 0).toLocaleString()} interpolated candles`,
-        detail: {
-          "Found (before)": (s.totalBefore ?? 0).toLocaleString(),
-          "Recovered": (s.totalRecovered ?? 0).toLocaleString(),
-          "Unrecoverable": (s.totalUnrecoverable ?? 0).toLocaleString(),
-        },
-      });
-    } catch (e: any) { setRepairResult({ ok: false, msg: e.message }); }
-    finally { setRepairRunning(false); }
-  };
-
-  const runReconcile = async () => {
-    setReconcileRunning(true); setReconcileResult(null);
-    try {
-      const d = await apiFetch("research/reconcile", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: reconcileSym }),
-      });
-      setReconcileResult({
-        ok: true,
-        msg: `Reconciliation complete for ${reconcileSym}`,
-        detail: Object.fromEntries(Object.entries(d.summary ?? d).map(([k, v]) => [k, String(v)])),
-      });
-    } catch (e: any) { setReconcileResult({ ok: false, msg: e.message }); }
-    finally { setReconcileRunning(false); }
-  };
-
-  const runEnrich = async () => {
-    setEnrichRunning(true); setEnrichResult(null);
-    try {
-      const d = await apiFetch("research/enrich", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: enrichSym }),
-      });
-      setEnrichResult({
-        ok: true,
-        msg: `Enrichment complete for ${enrichSym}`,
-        detail: Object.fromEntries(Object.entries(d.summary ?? d).map(([k, v]) => [k, String(v)])),
-      });
-    } catch (e: any) { setEnrichResult({ ok: false, msg: e.message }); }
-    finally { setEnrichRunning(false); }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-4 py-3 flex items-start gap-3">
-        <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          Data operations run in the foreground and may take several minutes for large symbol histories.
-          Repair may not recover all candles — data outside API history limits remains interpolated.
-        </p>
-      </div>
-      <OpCard
-        title="Repair Interpolated Candles"
-        description="Scans all isInterpolated=true candles in the 1m and 5m tables and attempts to replace them with real API candles. Candles the API cannot supply remain interpolated (market closures, history limits). May take 2–5 minutes."
-        symbol={repairSym} onSymbolChange={setRepairSym}
-        onRun={runRepair} running={repairRunning} result={repairResult}
-      />
-      <OpCard
-        title="Reconcile Candles"
-        description="Reconciles the stored candle database against the Deriv API to identify gaps, missing bars, and timeframe coverage issues. Fills gaps where possible."
-        symbol={reconcileSym} onSymbolChange={setReconcileSym}
-        onRun={runReconcile} running={reconcileRunning} result={reconcileResult}
-      />
-      <OpCard
-        title="Enrich Candles (Multi-TF)"
-        description="Re-runs the multi-timeframe aggregation pipeline. Derives all higher timeframes (5m, 10m, 20m, 40m, 1h, 2h, 4h, 8h, 1d, 2d, 4d) from the base 1m candle data."
-        symbol={enrichSym} onSymbolChange={setEnrichSym}
-        onRun={runEnrich} running={enrichRunning} result={enrichResult}
-      />
-    </div>
-  );
-}
-
-// ── Top-Up Tab ────────────────────────────────────────────────────────────────
-
-function TopUpTab() {
+function CleanCanonicalTab() {
   const [symbol, setSymbol] = useState("CRASH300");
-  const [days, setDays] = useState(30);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<any | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Advanced individual ops state
+  const [advSym, setAdvSym] = useState("CRASH300");
+  const [advOp, setAdvOp]  = useState<"repair"|"reconcile"|"enrich"|null>(null);
+  const [advResult, setAdvResult] = useState<OpResult>(null);
+  const [advRunning, setAdvRunning] = useState(false);
 
   const run = async () => {
     setRunning(true); setErr(null); setResult(null);
     try {
-      const d = await apiFetch("research/run", {
+      const d = await apiFetch("research/clean-canonical", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, days, type: "topup" }),
+        body: JSON.stringify({ symbol }),
       });
-      setResult(d);
-    } catch (e: any) { setErr(e.message); }
+      setResult(d.result ?? d);
+    } catch (e: any) { setErr((e as Error).message); }
     finally { setRunning(false); }
   };
 
+  const runAdv = async (op: "repair"|"reconcile"|"enrich") => {
+    setAdvRunning(true); setAdvOp(op); setAdvResult(null);
+    const paths: Record<string, string> = {
+      repair:    "research/repair-interpolated",
+      reconcile: "research/reconcile",
+      enrich:    "research/enrich",
+    };
+    try {
+      const d = await apiFetch(paths[op], {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: advSym }),
+      });
+      setAdvResult({
+        ok: true,
+        msg: `${op} complete for ${advSym}`,
+        detail: Object.fromEntries(
+          Object.entries(d.summary ?? d.result ?? d)
+            .filter(([, v]) => typeof v !== "object")
+            .map(([k, v]) => [k, String(v)])
+        ),
+      });
+    } catch (e: any) { setAdvResult({ ok: false, msg: (e as Error).message }); }
+    finally { setAdvRunning(false); }
+  };
+
+  const p = result?.pipeline;
+
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-border/50 bg-card p-4 space-y-4">
-        <div>
-          <h3 className="text-sm font-semibold">Data Top-Up</h3>
-          <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-            Fetches recent candle data from the Deriv API and stores it for the selected symbol.
-            Used to bring symbols up-to-date after a streaming gap or to bootstrap a new symbol.
-          </p>
-        </div>
-        <div className="flex items-center gap-4 flex-wrap">
-          <SymbolSelectFull value={symbol} onChange={setSymbol} />
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">Lookback:</span>
-            {[7, 30, 90, 180].map(d => (
-              <button key={d} onClick={() => setDays(d)}
-                className={cn("px-2 py-1 rounded border text-xs transition-colors",
-                  days === d ? "border-primary/40 bg-primary/10 text-primary" : "border-border/40 text-muted-foreground hover:border-border")}>
-                {d}d
-              </button>
-            ))}
+      {/* Primary Action */}
+      <div className="rounded-xl border border-primary/20 bg-card p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <Sparkles className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold">Clean Canonical Data</h3>
+            <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed max-w-xl">
+              Runs the full pipeline: detect &amp; fill gaps from API → re-check existing interpolated
+              candles and replace with real data → derive all timeframes. Interpolation is only used
+              as last resort when the API has no data.
+            </p>
           </div>
         </div>
-        <button onClick={run} disabled={running}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-primary/30 bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
-          {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-          {running ? "Running top-up…" : `Top-Up ${symbol} (${days}d)`}
-        </button>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <SymbolSelectFull value={symbol} onChange={s => { setSymbol(s); setResult(null); setErr(null); }} />
+          <button onClick={run} disabled={running}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-primary/40 bg-primary/12 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
+            {running
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> Cleaning… (may take 2–5 min)</>
+              : <><Sparkles className="w-4 h-4" /> Clean Canonical Data for {symbol}</>}
+          </button>
+        </div>
+
+        {running && (
+          <div className="rounded-lg bg-muted/20 border border-border/30 px-4 py-3 text-xs text-muted-foreground space-y-1">
+            <p className="font-medium text-foreground">Pipeline running…</p>
+            <p>1. Inspecting current state</p>
+            <p>2. Detecting and filling gaps from API</p>
+            <p>3. Re-checking interpolated candles → replacing with real data</p>
+            <p>4. Running multi-timeframe enrichment</p>
+          </div>
+        )}
+
         {err && <ErrorBox msg={err} />}
-        {result && (
-          <div className="space-y-1.5">
-            <SuccessBox msg="Top-up complete" />
-            <div className="rounded bg-muted/20 p-3 space-y-1">
-              {Object.entries(result.summary ?? result).map(([k, v]) => (
-                <div key={k} className="flex items-start gap-3 text-xs">
-                  <span className="text-muted-foreground w-36 shrink-0">{k}</span>
-                  <span className="font-mono text-foreground">{String(v)}</span>
-                </div>
+
+        {result && !err && (
+          <div className="space-y-3">
+            <SuccessBox msg={`Canonical cleanup complete for ${result.symbol ?? symbol}`} />
+
+            {/* Before/After */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg bg-muted/20 border border-border/30 p-3 space-y-1">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Before</p>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">1m rows</span><span className="font-mono">{(result.before?.rows1m ?? 0).toLocaleString()}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Interpolated</span><span className="font-mono text-amber-400">{(result.before?.interpolated ?? 0).toLocaleString()}</span></div>
+              </div>
+              <div className="rounded-lg bg-green-500/5 border border-green-500/20 p-3 space-y-1">
+                <p className="text-[10px] text-green-400/60 uppercase tracking-wider mb-2">After</p>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">1m rows</span><span className="font-mono text-green-400">{(result.after?.rows1m ?? 0).toLocaleString()}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Interpolated</span><span className="font-mono text-amber-400">{(result.after?.interpolated ?? 0).toLocaleString()}</span></div>
+              </div>
+            </div>
+
+            {/* Pipeline detail */}
+            {p && (
+              <div className="rounded-lg bg-muted/20 p-3 space-y-1">
+                {[
+                  ["Gaps found",            (p.gapsFound ?? 0).toString()],
+                  ["Gaps repaired (API)",   (p.gapsRepaired ?? 0).toString()],
+                  ["Gaps interpolated",     (p.gapsInterpolated ?? 0).toString()],
+                  ["Candles inserted",      (p.candlesInserted ?? 0).toLocaleString()],
+                  ["Interpolated before",   (p.interpolatedBefore ?? 0).toLocaleString()],
+                  ["Recovered (real data)", (p.interpolatedRecovered ?? 0).toLocaleString()],
+                  ["Unrecoverable (kept)",  (p.interpolatedUnrecoverable ?? 0).toLocaleString()],
+                  ["Duration",             `${((p.durationMs ?? 0) / 1000).toFixed(1)}s`],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex items-start gap-3 text-xs">
+                    <span className="text-muted-foreground w-44 shrink-0">{k}</span>
+                    <span className="font-mono text-foreground">{v}</span>
+                  </div>
+                ))}
+                {(p.errors?.length ?? 0) > 0 && (
+                  <div className="pt-1 space-y-1">
+                    {p.errors.map((e: string, i: number) => <ErrorBox key={i} msg={e} />)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className={cn(
+              "flex items-center gap-2 text-xs px-3 py-2 rounded-lg border",
+              result.exportReady
+                ? "bg-green-500/8 border-green-500/20 text-green-400"
+                : "bg-amber-500/8 border-amber-500/20 text-amber-400"
+            )}>
+              <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+              {result.exportReady
+                ? "Export ready — dataset is clean. Go to Export tab to download ZIP."
+                : "Dataset cleaned — some interpolated candles remain (API history limit). Safe to export."}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Advanced / debug ops */}
+      <div className="rounded-xl border border-border/40 overflow-hidden">
+        <button
+          onClick={() => setShowAdvanced(v => !v)}
+          className="w-full flex items-center justify-between px-4 py-3 bg-muted/10 hover:bg-muted/20 transition-colors text-xs font-medium text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <Wrench className="w-3.5 h-3.5" /> Advanced — Individual Operations
+          </span>
+          <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", showAdvanced && "rotate-180")} />
+        </button>
+        {showAdvanced && (
+          <div className="p-4 space-y-3 bg-muted/5">
+            <p className="text-[11px] text-muted-foreground/70 leading-relaxed border-b border-border/20 pb-3">
+              Low-level operations for advanced debugging. Use "Clean Canonical Data" for normal maintenance.
+              These run on the selected symbol only and do not run the full pipeline.
+            </p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <SymbolSelectFull value={advSym} onChange={s => { setAdvSym(s); setAdvResult(null); }} />
+              {(["repair", "reconcile", "enrich"] as const).map(op => (
+                <button key={op} onClick={() => runAdv(op)} disabled={advRunning}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border/50 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  {advRunning && advOp === op ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                  {op.charAt(0).toUpperCase() + op.slice(1)}
+                </button>
               ))}
             </div>
+            {advResult && (
+              advResult.ok ? (
+                <div className="space-y-1.5">
+                  <SuccessBox msg={advResult.msg} />
+                  {advResult.detail && Object.keys(advResult.detail).length > 0 && (
+                    <div className="rounded bg-muted/20 p-3 space-y-1">
+                      {Object.entries(advResult.detail).map(([k, v]) => (
+                        <div key={k} className="flex items-start gap-3 text-xs">
+                          <span className="text-muted-foreground w-36 shrink-0">{k}</span>
+                          <span className="font-mono text-foreground">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : <ErrorBox msg={advResult.msg} />
+            )}
           </div>
         )}
       </div>
@@ -866,25 +871,8 @@ function RuntimePanel({ title, icon: Icon, badge, children }: {
 }
 
 function RuntimeTab() {
-  const [featErr, setFeatErr] = useState<string | null>(null);
   const [features, setFeatures] = useState<Record<string, any>>({});
   const [featLoading, setFeatLoading] = useState<Record<string, boolean>>({});
-
-  const { data: rawData, isLoading, refetch } = useGetOverview({
-    query: { refetchInterval: 5000 },
-  });
-  const ov = rawData as any;
-
-  const toggleKS = async (current: boolean) => {
-    try {
-      await fetch(`${BASE}api/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: "kill_switch", value: current ? "false" : "true" }),
-      });
-      refetch();
-    } catch {}
-  };
 
   const loadFeatures = async (sym: string) => {
     setFeatLoading(f => ({ ...f, [sym]: true }));
@@ -900,68 +888,11 @@ function RuntimeTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <button onClick={() => refetch()}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-border/50 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors">
-          <RefreshCw className="w-3 h-3" /> Refresh
-        </button>
-        {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
-      </div>
-      {featErr && <ErrorBox msg={featErr} />}
-
-      {ov && (
-        <>
-          <RuntimePanel title="System Overview" icon={Settings2}>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
-              <RuntimeKV k="Active Mode"         v={<RuntimePill variant={ov.mode === "idle" ? "default" : "ok"} label={ov.mode?.toUpperCase() ?? "IDLE"} />} />
-              <RuntimeKV k="Tick Streaming"      v={<RuntimePill variant={ov.streamingOnline ? "ok" : "warn"} label={ov.streamingOnline ? "Online" : "Offline"} />} />
-              <RuntimeKV k="Scanner Running"     v={<RuntimePill variant={ov.scannerRunning ? "ok" : "warn"} label={ov.scannerRunning ? "Running" : "Stopped"} />} />
-              <RuntimeKV k="Kill Switch" v={
-                <button onClick={() => toggleKS(ov.killSwitchActive)}
-                  className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold transition-all",
-                    ov.killSwitchActive
-                      ? "bg-red-500/15 text-red-400 border-red-500/25 hover:bg-red-500/25"
-                      : "bg-muted/40 text-muted-foreground border-border/50 hover:bg-muted/60")}>
-                  {ov.killSwitchActive ? "ACTIVE — click to disable" : "OFF — click to enable"}
-                </button>
-              } />
-              <RuntimeKV k="Last Scan Symbol"    v={ov.lastScanSymbol ?? "—"} mono />
-              <RuntimeKV k="Total Scans Run"     v={(ov.totalScansRun ?? 0).toLocaleString()} mono />
-              <RuntimeKV k="Total Decisions"     v={(ov.totalDecisionsLogged ?? 0).toLocaleString()} mono />
-              <RuntimeKV k="Streaming Symbols"   v={String(ov.subscribedSymbolCount ?? "—")} mono />
-            </div>
-          </RuntimePanel>
-
-          {ov.perMode && (
-            <RuntimePanel title="Per-Mode Status" icon={Shield}>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {(["paper","demo","real"] as const).map(m => {
-                  const pm = ov.perMode?.[m] ?? {};
-                  const isActive = (ov.paperModeActive && m === "paper") || (ov.demoModeActive && m === "demo") || (ov.realModeActive && m === "real");
-                  return (
-                    <div key={m} className="space-y-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-xs font-semibold uppercase">{m}</span>
-                        <RuntimePill variant={isActive ? "ok" : "default"} label={isActive ? "ACTIVE" : "OFF"} />
-                      </div>
-                      <RuntimeKV k="Capital"     v={pm.capital ? `$${pm.capital}` : "—"} mono />
-                      <RuntimeKV k="Min Score"   v={String(pm.minScore ?? "—")} mono />
-                      <RuntimeKV k="Open Trades" v={String(pm.openTrades ?? "—")} mono />
-                      <RuntimeKV k="P&L"         v={pm.pnl != null ? `$${Number(pm.pnl).toFixed(2)}` : "—"} mono />
-                    </div>
-                  );
-                })}
-              </div>
-            </RuntimePanel>
-          )}
-        </>
-      )}
-
       <RuntimePanel title="V3 Engine Features — Live State" icon={Cpu}
         badge={<span className="text-[10px] text-muted-foreground">Active symbols only</span>}>
         <div className="space-y-3">
           <p className="text-xs text-muted-foreground bg-muted/20 rounded p-3">
-            Computed feature vectors that the V3 coordinator sees on each scan. Click a symbol to load its latest features.
+            Computed feature vectors that the V3 coordinator sees on each scan cycle. Click a symbol to load its latest features.
           </p>
           <div className="flex flex-wrap gap-2">
             {ACTIVE_SYMBOLS.map(sym => (
@@ -990,8 +921,124 @@ function RuntimeTab() {
               )}
             </div>
           ))}
+          {Object.keys(features).length === 0 && (
+            <p className="text-xs text-muted-foreground/60 text-center py-4">
+              Click a symbol above to load its feature vector
+            </p>
+          )}
         </div>
       </RuntimePanel>
+    </div>
+  );
+}
+
+// ── Coverage All Grid ──────────────────────────────────────────────────────────
+
+const ALL_TIMEFRAMES = ["1m","5m","10m","20m","40m","1h","2h","4h","8h","1d","2d","4d"] as const;
+
+function CoverageAllGrid() {
+  const { data, isLoading, refetch } = useCoverageAll();
+
+  const matrix = useMemo(() => {
+    if (!data?.rows) return {};
+    const m: Record<string, Record<string, { count: number; interpCount: number }>> = {};
+    for (const row of data.rows) {
+      if (!m[row.symbol]) m[row.symbol] = {};
+      m[row.symbol][row.timeframe] = { count: row.count, interpolatedCount: row.interpolatedCount };
+    }
+    return m;
+  }, [data]);
+
+  const symbolsWithData = useMemo(() => {
+    const syms = Object.keys(matrix);
+    const activeFirst = ACTIVE_SYMBOLS.filter(s => syms.includes(s));
+    const rest = syms.filter(s => !ACTIVE_SYMBOLS.includes(s)).sort();
+    return [...activeFirst, ...rest];
+  }, [matrix]);
+
+  const statusCls = (count: number, interpCount: number) => {
+    if (!count) return "bg-muted/10 text-muted-foreground/30 border-border/10";
+    const interpRatio = count > 0 ? interpCount / count : 0;
+    if (interpRatio > 0.3) return "bg-amber-500/10 text-amber-400 border-amber-500/20";
+    return "bg-green-500/10 text-green-400 border-green-500/20";
+  };
+
+  if (isLoading) return <div className="text-center py-12 text-sm text-muted-foreground">Loading multi-timeframe coverage…</div>;
+  if (!data) return <p className="text-sm text-muted-foreground">Coverage data unavailable.</p>;
+
+  return (
+    <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+      <div className="px-4 py-3 border-b border-border/30 flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <Database className="w-4 h-4 text-primary" /> Multi-Timeframe Candle Coverage
+          </h2>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            All {symbolsWithData.length} symbols · {ALL_TIMEFRAMES.length} timeframes ·
+            <span className="ml-1 text-green-400">■</span> present
+            <span className="ml-2 text-amber-400">■</span> &gt;30% interpolated
+            <span className="ml-2 text-muted-foreground/30">■</span> absent
+          </p>
+        </div>
+        <button onClick={() => refetch()}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground border border-border/40 hover:border-border transition-colors">
+          <RefreshCw className="w-3 h-3" /> Refresh
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-[10px] text-muted-foreground uppercase tracking-wide border-b border-border/30 bg-muted/10">
+              <th className="text-left py-2 px-4 font-medium sticky left-0 bg-muted/10 z-10">Symbol</th>
+              {ALL_TIMEFRAMES.map(tf => (
+                <th key={tf} className="text-center py-2 px-2 font-medium whitespace-nowrap">{tf}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {symbolsWithData.map(sym => {
+              const isActive = ACTIVE_SYMBOLS.includes(sym);
+              const symData = matrix[sym] ?? {};
+              return (
+                <tr key={sym} className={cn("border-b border-border/15 hover:bg-muted/10", isActive && "bg-primary/2")}>
+                  <td className={cn("py-2 px-4 sticky left-0 z-10", isActive ? "bg-primary/5" : "bg-card")}>
+                    <div className="flex items-center gap-1.5">
+                      {isActive && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
+                      <span className="font-mono font-semibold whitespace-nowrap">{sym}</span>
+                    </div>
+                  </td>
+                  {ALL_TIMEFRAMES.map(tf => {
+                    const cell = symData[tf];
+                    return (
+                      <td key={tf} className="py-2 px-1 text-center">
+                        {cell ? (
+                          <span className={cn("inline-block px-1.5 py-0.5 rounded border text-[10px] font-mono tabular-nums", statusCls(cell.count, cell.interpCount))}
+                            title={`${cell.count.toLocaleString()} candles${cell.interpCount > 0 ? ` (${cell.interpCount} interp)` : ""}`}>
+                            {cell.count >= 1_000_000
+                              ? `${(cell.count / 1_000_000).toFixed(1)}M`
+                              : cell.count >= 1000
+                                ? `${(cell.count / 1000).toFixed(0)}k`
+                                : cell.count}
+                          </span>
+                        ) : (
+                          <span className="inline-block w-4 h-4 rounded border border-border/15 bg-muted/5" />
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+            {symbolsWithData.length === 0 && (
+              <tr>
+                <td colSpan={ALL_TIMEFRAMES.length + 1} className="text-center py-10 text-muted-foreground">
+                  No candle data found. Run Clean Canonical Data to bootstrap.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1000,14 +1047,12 @@ function RuntimeTab() {
 
 export default function DataManager() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<ViewTab>("streaming");
+  const [tab, setTab] = useState<ViewTab>("runtime");
   const [symbol, setSymbol] = useState("BOOM300");
-  const [coverageTier, setCoverageTier] = useState<"" | "active" | "data" | "research">("");
   const [liveSubtab, setLiveSubtab] = useState<LiveSubtab>("ticks");
 
-  const { data: status } = useGetDataStatus({ query: { refetchInterval: 3000 } });
   const { data: diagData, refetch: refetchDiag } = useSymbolDiagnostics();
-  const { data: researchData, isLoading: researchLoading } = useResearchDataStatus();
+  const { data: researchData } = useResearchDataStatus();
 
   const { data: ticks } = useGetTicks(
     { symbol, limit: 30 },
@@ -1053,13 +1098,12 @@ export default function DataManager() {
   }, [diagSymbols, researchData]);
 
   const tabs: { id: ViewTab; label: string; icon: React.ElementType }[] = [
-    { id: "streaming", label: "Symbol State",    icon: Radio     },
-    { id: "coverage",  label: "Coverage",         icon: Database  },
-    { id: "ops",       label: "Data Operations",  icon: Wrench    },
-    { id: "topup",     label: "Top-Up",           icon: TrendingUp},
-    { id: "live",      label: "Live View",        icon: Activity  },
-    { id: "export",    label: "Export",           icon: Download  },
     { id: "runtime",   label: "Runtime",          icon: Cpu       },
+    { id: "streaming", label: "Symbol State",     icon: Radio     },
+    { id: "coverage",  label: "Coverage",         icon: Database  },
+    { id: "ops",       label: "Data Operations",  icon: Sparkles  },
+    { id: "export",    label: "Export",           icon: Download  },
+    { id: "live",      label: "Live View",        icon: Activity  },
   ];
 
   const liveSubtabs: { id: LiveSubtab; label: string }[] = [
@@ -1079,43 +1123,8 @@ export default function DataManager() {
           <Database className="w-6 h-6 text-primary" /> Data Console
         </h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          All 28 symbols · streaming state · candle coverage · data operations · top-up
+          All 28 symbols · V3 engine features · multi-timeframe coverage · clean canonical data · export
         </p>
-      </div>
-
-      {/* Stream summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-xl border border-border/50 bg-card p-4 flex items-center gap-4">
-          <div className={cn(
-            "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
-            status?.streaming ? "bg-green-500/12 text-green-400" : "bg-muted/30 text-muted-foreground"
-          )}>
-            {status?.streaming ? <RadioTower className="w-5 h-5" /> : <Radio className="w-5 h-5" />}
-          </div>
-          <div>
-            <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-0.5">Global Stream</p>
-            <p className={cn("text-sm font-bold", status?.streaming ? "text-green-400" : "text-muted-foreground")}>
-              {status?.streaming ? "Live" : "Offline"}
-            </p>
-            <p className="text-[10px] text-muted-foreground">Toggle in Settings</p>
-          </div>
-        </div>
-        <div className="rounded-xl border border-border/50 bg-card p-4">
-          <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1">
-            <Activity className="w-3 h-3" /> Streaming Symbols
-          </p>
-          <p className="text-2xl font-bold tabular-nums">{streamingCount}</p>
-          <p className="text-[10px] text-muted-foreground">of {allSymbolRows.length} tracked</p>
-        </div>
-        <div className="rounded-xl border border-border/50 bg-card p-4">
-          <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1">
-            <Layers className="w-3 h-3" /> Total Ticks Ingested
-          </p>
-          <p className="text-2xl font-bold tabular-nums">
-            {status?.tickCount != null ? status.tickCount.toLocaleString() : "—"}
-          </p>
-          <p className="text-[10px] text-muted-foreground">since last stream start</p>
-        </div>
       </div>
 
       {/* Integrity summary */}
@@ -1196,44 +1205,10 @@ export default function DataManager() {
       )}
 
       {/* ── Coverage Tab ── */}
-      {tab === "coverage" && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <label className="text-xs text-muted-foreground font-medium">Filter tier:</label>
-            <select value={coverageTier} onChange={e => setCoverageTier(e.target.value as typeof coverageTier)}
-              className="bg-card border border-border/50 rounded-md px-2.5 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none">
-              <option value="">All tiers</option>
-              <option value="active">Active</option>
-              <option value="data">Data</option>
-              <option value="research">Research</option>
-            </select>
-          </div>
-
-          {researchLoading ? (
-            <div className="text-center py-12 text-sm text-muted-foreground">Loading coverage data…</div>
-          ) : researchData ? (
-            <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
-              <div className="px-4 py-3 border-b border-border/30">
-                <h2 className="text-sm font-semibold flex items-center gap-2">
-                  <Database className="w-4 h-4 text-primary" /> Candle Coverage — All {researchData.symbolCount} Symbols
-                </h2>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {(researchData.totalStorage / 1_000_000).toFixed(2)}M total candles · Active symbols highlighted
-                </p>
-              </div>
-              <CoverageTable data={researchData.symbols} tier={coverageTier || undefined} />
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">Coverage data unavailable.</p>
-          )}
-        </div>
-      )}
+      {tab === "coverage" && <CoverageAllGrid />}
 
       {/* ── Data Operations ── */}
-      {tab === "ops" && <DataOpsTab />}
-
-      {/* ── Top-Up ── */}
-      {tab === "topup" && <TopUpTab />}
+      {tab === "ops" && <CleanCanonicalTab />}
 
       {/* ── Export ── */}
       {tab === "export" && <ExportTab />}

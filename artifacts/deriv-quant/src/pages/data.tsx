@@ -212,17 +212,27 @@ function SymbolStreamRow({ sym, diag, coverage, onToggle }: {
   onToggle: (sym: string, enable: boolean) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [optimisticState, setOptimisticState] = useState<string | null>(null);
   const isActive = ACTIVE_SYMBOLS.includes(sym);
 
-  const effectiveState: string = (() => {
+  const serverState: string = (() => {
     if (diag?.streamingState) return diag.streamingState;
     if (coverage && coverage.totalCandles > 0) return "available";
     return "no_data";
   })();
 
+  const effectiveState = optimisticState ?? serverState;
+
+  useEffect(() => {
+    if (diag?.streamingState) setOptimisticState(null);
+  }, [diag?.streamingState]);
+
   async function toggle() {
+    const wantEnable = effectiveState !== "streaming";
     setBusy(true);
-    try { await onToggle(sym, effectiveState !== "streaming"); }
+    setOptimisticState(wantEnable ? "streaming" : "disabled");
+    try { await onToggle(sym, wantEnable); }
+    catch { setOptimisticState(null); }
     finally { setBusy(false); }
   }
 
@@ -396,11 +406,11 @@ function CleanCanonicalTab() {
   const run = async () => {
     setRunning(true); setErr(null); setResult(null);
     try {
-      const d = await apiFetch("research/clean-canonical", {
+      const d = await apiFetch("research/clean-canonical?background=true", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol }),
       });
-      setResult(d.result ?? d);
+      setResult({ started: true, symbol, message: d.message ?? "Pipeline started in background." });
     } catch (e: any) { setErr((e as Error).message); }
     finally { setRunning(false); }
   };
@@ -429,8 +439,6 @@ function CleanCanonicalTab() {
     } catch (e: any) { setAdvResult({ ok: false, msg: (e as Error).message }); }
     finally { setAdvRunning(false); }
   };
-
-  const p = result?.pipeline;
 
   return (
     <div className="space-y-4">
@@ -462,70 +470,22 @@ function CleanCanonicalTab() {
 
         {running && (
           <div className="rounded-lg bg-muted/20 border border-border/30 px-4 py-3 text-xs text-muted-foreground space-y-1">
-            <p className="font-medium text-foreground">Pipeline running…</p>
-            <p>1. Inspecting current state</p>
-            <p>2. Detecting and filling gaps from API</p>
-            <p>3. Re-checking interpolated candles → replacing with real data</p>
-            <p>4. Running multi-timeframe enrichment</p>
+            <p className="font-medium text-foreground">Starting pipeline…</p>
+            <p>Launching gap repair, interpolation recovery, and enrichment in background</p>
           </div>
         )}
 
         {err && <ErrorBox msg={err} />}
 
-        {result && !err && (
-          <div className="space-y-3">
-            <SuccessBox msg={`Canonical cleanup complete for ${result.symbol ?? symbol}`} />
-
-            {/* Before/After */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg bg-muted/20 border border-border/30 p-3 space-y-1">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Before</p>
-                <div className="flex justify-between text-xs"><span className="text-muted-foreground">1m rows</span><span className="font-mono">{(result.before?.rows1m ?? 0).toLocaleString()}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Interpolated</span><span className="font-mono text-amber-400">{(result.before?.interpolated ?? 0).toLocaleString()}</span></div>
-              </div>
-              <div className="rounded-lg bg-green-500/5 border border-green-500/20 p-3 space-y-1">
-                <p className="text-[10px] text-green-400/60 uppercase tracking-wider mb-2">After</p>
-                <div className="flex justify-between text-xs"><span className="text-muted-foreground">1m rows</span><span className="font-mono text-green-400">{(result.after?.rows1m ?? 0).toLocaleString()}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Interpolated</span><span className="font-mono text-amber-400">{(result.after?.interpolated ?? 0).toLocaleString()}</span></div>
-              </div>
-            </div>
-
-            {/* Pipeline detail */}
-            {p && (
-              <div className="rounded-lg bg-muted/20 p-3 space-y-1">
-                {[
-                  ["Gaps found",            (p.gapsFound ?? 0).toString()],
-                  ["Gaps repaired (API)",   (p.gapsRepaired ?? 0).toString()],
-                  ["Gaps interpolated",     (p.gapsInterpolated ?? 0).toString()],
-                  ["Candles inserted",      (p.candlesInserted ?? 0).toLocaleString()],
-                  ["Interpolated before",   (p.interpolatedBefore ?? 0).toLocaleString()],
-                  ["Recovered (real data)", (p.interpolatedRecovered ?? 0).toLocaleString()],
-                  ["Unrecoverable (kept)",  (p.interpolatedUnrecoverable ?? 0).toLocaleString()],
-                  ["Duration",             `${((p.durationMs ?? 0) / 1000).toFixed(1)}s`],
-                ].map(([k, v]) => (
-                  <div key={k} className="flex items-start gap-3 text-xs">
-                    <span className="text-muted-foreground w-44 shrink-0">{k}</span>
-                    <span className="font-mono text-foreground">{v}</span>
-                  </div>
-                ))}
-                {(p.errors?.length ?? 0) > 0 && (
-                  <div className="pt-1 space-y-1">
-                    {p.errors.map((e: string, i: number) => <ErrorBox key={i} msg={e} />)}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className={cn(
-              "flex items-center gap-2 text-xs px-3 py-2 rounded-lg border",
-              result.exportReady
-                ? "bg-green-500/8 border-green-500/20 text-green-400"
-                : "bg-amber-500/8 border-amber-500/20 text-amber-400"
-            )}>
-              <CheckCircle className="w-3.5 h-3.5 shrink-0" />
-              {result.exportReady
-                ? "Export ready — dataset is clean. Go to Export tab to download ZIP."
-                : "Dataset cleaned — some interpolated candles remain (API history limit). Safe to export."}
+        {result && !err && result.started && (
+          <div className="space-y-2">
+            <SuccessBox msg={`Pipeline launched for ${result.symbol ?? symbol}`} />
+            <div className="rounded-lg bg-muted/20 border border-border/30 px-4 py-3 text-xs text-muted-foreground space-y-1.5">
+              <p className="font-medium text-foreground">Running in background — typically 2–5 min</p>
+              <p>1. Detecting and filling gaps from Deriv API</p>
+              <p>2. Re-checking interpolated candles → replacing with real API data</p>
+              <p>3. Running multi-timeframe enrichment (5m → 1d)</p>
+              <p className="pt-1">Refresh the <span className="font-medium text-foreground">Coverage</span> tab after a few minutes to see updated counts.</p>
             </div>
           </div>
         )}
@@ -941,7 +901,7 @@ function CoverageAllGrid() {
 
   const matrix = useMemo(() => {
     if (!data?.rows) return {};
-    const m: Record<string, Record<string, { count: number; interpCount: number }>> = {};
+    const m: Record<string, Record<string, { count: number; interpolatedCount: number }>> = {};
     for (const row of data.rows) {
       if (!m[row.symbol]) m[row.symbol] = {};
       m[row.symbol][row.timeframe] = { count: row.count, interpolatedCount: row.interpolatedCount };
@@ -1012,8 +972,8 @@ function CoverageAllGrid() {
                     return (
                       <td key={tf} className="py-2 px-1 text-center">
                         {cell ? (
-                          <span className={cn("inline-block px-1.5 py-0.5 rounded border text-[10px] font-mono tabular-nums", statusCls(cell.count, cell.interpCount))}
-                            title={`${cell.count.toLocaleString()} candles${cell.interpCount > 0 ? ` (${cell.interpCount} interp)` : ""}`}>
+                          <span className={cn("inline-block px-1.5 py-0.5 rounded border text-[10px] font-mono tabular-nums", statusCls(cell.count, cell.interpolatedCount))}
+                            title={`${cell.count.toLocaleString()} candles${cell.interpolatedCount > 0 ? ` (${cell.interpolatedCount} interp)` : ""}`}>
                             {cell.count >= 1_000_000
                               ? `${(cell.count / 1_000_000).toFixed(1)}M`
                               : cell.count >= 1000

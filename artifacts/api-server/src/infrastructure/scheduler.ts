@@ -8,9 +8,16 @@ import { ACTIVE_TRADING_SYMBOLS } from "./deriv.js";
 import { scanSymbolV3 } from "../core/engineRouterV3.js";
 import { allocateV3Signal } from "../core/portfolioAllocatorV3.js";
 import { promoteBreakevenSls } from "../core/hybridTradeManager.js";
+import {
+  updateCandidate,
+  markCandidateExecuted,
+  getSymbolsNeedingWatchScan,
+  cleanupStale,
+} from "../core/candidateLifecycle.js";
 
 const DEFAULT_SYMBOLS = ACTIVE_TRADING_SYMBOLS;
-const DEFAULT_SCAN_INTERVAL_MS = 60_000;
+const DEFAULT_SCAN_INTERVAL_MS = 300_000;
+const WATCH_SCAN_INTERVAL_MS = 60_000;
 const DEFAULT_STAGGER_SECONDS = 10;
 
 async function dbWithRetry<T>(fn: () => Promise<T>, label: string, maxAttempts = 3): Promise<T> {
@@ -32,6 +39,7 @@ const POSITION_MGMT_INTERVAL_MS = 10_000;
 
 let schedulerHandle: ReturnType<typeof setInterval> | null = null;
 let positionMgmtHandle: ReturnType<typeof setInterval> | null = null;
+let watchCycleHandle: ReturnType<typeof setInterval> | null = null;
 let currentIntervalMs = DEFAULT_SCAN_INTERVAL_MS;
 
 let staggeredScanActive = false;
@@ -102,47 +110,86 @@ async function scanSingleSymbolV3(symbol: string, stateMap: Record<string, strin
     // ── Allocator decision ───────────────────────────────────────────────────
     const v3Decision = await allocateV3Signal(coordinatorOutput, effectiveMode, stateMap);
 
+    // ── Extract engine-native score and component breakdown ─────────────────
+    const candidateScoringDims = winner.metadata?.["componentScores"] as Record<string, number> | null ?? null;
+    const candidateNativeScore =
+      winner.metadata?.["boom300NativeScore"] != null ? (winner.metadata["boom300NativeScore"] as number)
+      : winner.metadata?.["crash300NativeScore"] != null ? (winner.metadata["crash300NativeScore"] as number)
+      : winner.metadata?.["r75ReversalNativeScore"] != null ? (winner.metadata["r75ReversalNativeScore"] as number)
+      : winner.metadata?.["r75ContinuationNativeScore"] != null ? (winner.metadata["r75ContinuationNativeScore"] as number)
+      : winner.metadata?.["r75BreakoutNativeScore"] != null ? (winner.metadata["r75BreakoutNativeScore"] as number)
+      : winner.metadata?.["r100ReversalNativeScore"] != null ? (winner.metadata["r100ReversalNativeScore"] as number)
+      : winner.metadata?.["r100BreakoutNativeScore"] != null ? (winner.metadata["r100BreakoutNativeScore"] as number)
+      : winner.metadata?.["r100ContinuationNativeScore"] != null ? (winner.metadata["r100ContinuationNativeScore"] as number)
+      : Math.round(coordinatorOutput.coordinatorConfidence * 100);
+
+    // Engine gate passed = the rejection is NOT score-based (score cleared engine gate but something else blocked)
+    const rejReason = v3Decision.rejectionReason ?? "";
+    const isScoreRejection = rejReason.includes("_score_below_mode_threshold") || rejReason.includes("confidence_below_threshold");
+    const engineGatePassed = v3Decision.allowed || !isScoreRejection;
+
     if (!v3Decision.allowed) {
-      console.log(`[V3Scan] ${symbol} | ${effectiveMode} | engine=${winner.engineName} | BLOCKED | ${v3Decision.rejectionReason}`);
-      // Log blocked decisions so Decisions UI can surface them with full gate info
-      // Include engine-native score breakdown in scoringDimensions for BOOM300/CRASH300
-      const blockedScoringDims = winner.metadata?.["componentScores"] ?? null;
-      const blockedNativeScore =
-        winner.metadata?.["boom300NativeScore"] != null ? (winner.metadata["boom300NativeScore"] as number)
-        : winner.metadata?.["crash300NativeScore"] != null ? (winner.metadata["crash300NativeScore"] as number)
-        : winner.metadata?.["r75ReversalNativeScore"] != null ? (winner.metadata["r75ReversalNativeScore"] as number)
-        : winner.metadata?.["r75ContinuationNativeScore"] != null ? (winner.metadata["r75ContinuationNativeScore"] as number)
-        : winner.metadata?.["r75BreakoutNativeScore"] != null ? (winner.metadata["r75BreakoutNativeScore"] as number)
-        : winner.metadata?.["r100ReversalNativeScore"] != null ? (winner.metadata["r100ReversalNativeScore"] as number)
-        : winner.metadata?.["r100BreakoutNativeScore"] != null ? (winner.metadata["r100BreakoutNativeScore"] as number)
-        : winner.metadata?.["r100ContinuationNativeScore"] != null ? (winner.metadata["r100ContinuationNativeScore"] as number)
-        : null;
-      try {
-        await db.insert(signalLogTable).values({
-          symbol,
-          strategyName: winner.engineName,
-          strategyFamily: "v3_engine",
-          direction: coordinatorOutput.resolvedDirection,
-          score: coordinatorOutput.coordinatorConfidence,
-          compositeScore: blockedNativeScore ?? Math.round(coordinatorOutput.coordinatorConfidence * 100),
-          expectedValue: winner.projectedMovePct,
-          allowedFlag: false,
-          rejectionReason: v3Decision.rejectionReason,
-          mode: effectiveMode,
-          aiVerdict: "skipped",
-          aiReasoning: "blocked before AI check",
-          regime: operationalRegime,
-          regimeConfidence,
-          executionStatus: "blocked",
-          scoringDimensions: blockedScoringDims,
-        });
-        totalDecisionsLogged++;
-      } catch (logErr) {
-        console.error(`[V3Scan] Blocked signal log error:`, logErr instanceof Error ? logErr.message : logErr);
+      console.log(`[V3Scan] ${symbol} | ${effectiveMode} | engine=${winner.engineName} | BLOCKED | ${rejReason}`);
+
+      // ── Lifecycle update: only log on material state change ─────────────
+      const lcResult = updateCandidate({
+        symbol,
+        engineName: winner.engineName,
+        direction: coordinatorOutput.resolvedDirection,
+        nativeScore: candidateNativeScore,
+        breakdown: candidateScoringDims,
+        engineGatePassed,
+        allocatorAllowed: false,
+        rejectionReason: rejReason,
+        regime: operationalRegime,
+        regimeConfidence,
+      });
+
+      if (lcResult.shouldLog) {
+        const lcStatus = lcResult.candidate.status;
+        console.log(`[V3Lifecycle] ${symbol} | ${winner.engineName} | ${coordinatorOutput.resolvedDirection} | ${lcResult.logReason} | status=${lcStatus} | score=${candidateNativeScore}`);
+        try {
+          await db.insert(signalLogTable).values({
+            symbol,
+            strategyName: winner.engineName,
+            strategyFamily: "v3_engine",
+            direction: coordinatorOutput.resolvedDirection,
+            score: coordinatorOutput.coordinatorConfidence,
+            compositeScore: candidateNativeScore,
+            expectedValue: winner.projectedMovePct,
+            allowedFlag: false,
+            rejectionReason: rejReason,
+            mode: effectiveMode,
+            aiVerdict: "skipped",
+            aiReasoning: `lifecycle:${lcResult.logReason}`,
+            regime: operationalRegime,
+            regimeConfidence,
+            executionStatus: lcStatus,
+            scoringDimensions: candidateScoringDims,
+          });
+          totalDecisionsLogged++;
+        } catch (logErr) {
+          console.error(`[V3Scan] Lifecycle log error:`, logErr instanceof Error ? logErr.message : logErr);
+        }
       }
+
       if (isIntelOnly) break;
       continue;
     }
+
+    // Allowed path — update lifecycle with allocatorAllowed=true
+    updateCandidate({
+      symbol,
+      engineName: winner.engineName,
+      direction: coordinatorOutput.resolvedDirection,
+      nativeScore: candidateNativeScore,
+      breakdown: candidateScoringDims,
+      engineGatePassed: true,
+      allocatorAllowed: true,
+      rejectionReason: null,
+      regime: operationalRegime,
+      regimeConfidence,
+    });
 
     // ── Optional AI verification ─────────────────────────────────────────────
     let aiVerdict: string | undefined;
@@ -216,19 +263,7 @@ async function scanSingleSymbolV3(symbol: string, stateMap: Record<string, strin
       continue;
     }
 
-    // ── Log to signal_log table ──────────────────────────────────────────────
-    // Include engine-native score breakdown in scoringDimensions for BOOM300/CRASH300
-    const approvedScoringDims = winner.metadata?.["componentScores"] ?? null;
-    const approvedNativeScore =
-      winner.metadata?.["boom300NativeScore"] != null ? (winner.metadata["boom300NativeScore"] as number)
-      : winner.metadata?.["crash300NativeScore"] != null ? (winner.metadata["crash300NativeScore"] as number)
-      : winner.metadata?.["r75ReversalNativeScore"] != null ? (winner.metadata["r75ReversalNativeScore"] as number)
-      : winner.metadata?.["r75ContinuationNativeScore"] != null ? (winner.metadata["r75ContinuationNativeScore"] as number)
-      : winner.metadata?.["r75BreakoutNativeScore"] != null ? (winner.metadata["r75BreakoutNativeScore"] as number)
-      : winner.metadata?.["r100ReversalNativeScore"] != null ? (winner.metadata["r100ReversalNativeScore"] as number)
-      : winner.metadata?.["r100BreakoutNativeScore"] != null ? (winner.metadata["r100BreakoutNativeScore"] as number)
-      : winner.metadata?.["r100ContinuationNativeScore"] != null ? (winner.metadata["r100ContinuationNativeScore"] as number)
-      : null;
+    // ── Log execution to signal_log (uses candidateNativeScore/candidateScoringDims) ──
     try {
       await db.insert(signalLogTable).values({
         symbol,
@@ -236,7 +271,7 @@ async function scanSingleSymbolV3(symbol: string, stateMap: Record<string, strin
         strategyFamily: "v3_engine",
         direction: coordinatorOutput.resolvedDirection,
         score: coordinatorOutput.coordinatorConfidence,
-        compositeScore: approvedNativeScore ?? Math.round(coordinatorOutput.coordinatorConfidence * 100),
+        compositeScore: candidateNativeScore,
         expectedValue: winner.projectedMovePct,
         allowedFlag: true,
         allocationPct: v3Decision.capitalAllocationPct,
@@ -246,7 +281,7 @@ async function scanSingleSymbolV3(symbol: string, stateMap: Record<string, strin
         regime: operationalRegime,
         regimeConfidence,
         executionStatus: "executed",
-        scoringDimensions: approvedScoringDims,
+        scoringDimensions: candidateScoringDims,
       });
       totalDecisionsLogged++;
     } catch (logErr) {
@@ -265,6 +300,7 @@ async function scanSingleSymbolV3(symbol: string, stateMap: Record<string, strin
     });
 
     if (tradeId) {
+      markCandidateExecuted(symbol, winner.engineName, coordinatorOutput.resolvedDirection);
       console.log(`[V3Exec] ${symbol} | ${effectiveMode} | ${coordinatorOutput.resolvedDirection} | engine=${winner.engineName} | alloc=$${v3Decision.capitalAmount.toFixed(2)} | tradeId=${tradeId} | EXECUTED`);
     }
 
@@ -306,7 +342,7 @@ async function scanCycle(): Promise<void> {
     const stateMap: Record<string, string> = {};
     for (const s of states) stateMap[s.key] = s.value;
 
-    const configuredInterval = parseInt(stateMap["scan_interval_seconds"] || "60") * 1000;
+    const configuredInterval = parseInt(stateMap["scan_interval_seconds"] || "300") * 1000;
     if (configuredInterval !== currentIntervalMs && configuredInterval >= 5000) {
       currentIntervalMs = configuredInterval;
       if (schedulerHandle) {
@@ -550,13 +586,51 @@ async function weeklyAnalysisCycle(): Promise<void> {
   }
 }
 
+/**
+ * Watch-mode cycle — runs every 60s.
+ * Re-scans only symbols that have at least one watch/qualified/tradeable candidate.
+ * Per-symbol, not per-candidate, so all engines for that symbol re-evaluate.
+ * Also runs stale-candidate cleanup.
+ */
+async function watchScanCycle(): Promise<void> {
+  cleanupStale();
+
+  const watchSymbols = getSymbolsNeedingWatchScan();
+  if (watchSymbols.length === 0) return;
+
+  try {
+    const states = await dbWithRetry(
+      () => db.select().from(platformStateTable),
+      "platform_state read (watch scan)",
+    );
+    const stateMap: Record<string, string> = {};
+    for (const s of states) stateMap[s.key] = s.value;
+
+    const killSwitch = stateMap["kill_switch"] === "true";
+    if (killSwitch) return;
+
+    for (const sym of watchSymbols) {
+      try {
+        await scanSingleSymbolV3(sym, stateMap);
+      } catch (err) {
+        console.error(`[WatchScan] Error for ${sym}:`, err instanceof Error ? err.message : err);
+      }
+    }
+  } catch (err) {
+    console.error("[WatchScan] Cycle error:", err instanceof Error ? err.message : err);
+  }
+}
+
 export function startScheduler(): void {
   if (schedulerHandle) return;
 
   if (JOB_CONFIG.signalScan.enabled) {
-    console.log(`[Scheduler] Starting signal scan every ${currentIntervalMs / 1000}s`);
+    console.log(`[Scheduler] Starting baseline signal scan every ${currentIntervalMs / 1000}s`);
     schedulerHandle = setInterval(scanCycle, currentIntervalMs);
     setTimeout(scanCycle, 5000);
+
+    console.log(`[Scheduler] Starting watch-mode scan every ${WATCH_SCAN_INTERVAL_MS / 1000}s (candidate-scoped)`);
+    watchCycleHandle = setInterval(watchScanCycle, WATCH_SCAN_INTERVAL_MS);
   }
 
   if (JOB_CONFIG.positionManagement.enabled) {
@@ -577,6 +651,11 @@ export function stopScheduler(): void {
     clearInterval(schedulerHandle);
     schedulerHandle = null;
     console.log("[Scheduler] Signal scanner stopped.");
+  }
+  if (watchCycleHandle) {
+    clearInterval(watchCycleHandle);
+    watchCycleHandle = null;
+    console.log("[Scheduler] Watch-mode scanner stopped.");
   }
   if (positionMgmtHandle) {
     clearInterval(positionMgmtHandle);

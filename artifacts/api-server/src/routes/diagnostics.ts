@@ -19,6 +19,7 @@ import { ALL_SYMBOLS } from "../infrastructure/deriv.js";
 import { db, platformStateTable } from "@workspace/db";
 import { candlesTable } from "@workspace/db";
 import { inArray, and, gte, count, min, max, sql } from "drizzle-orm";
+import { getWatchedCandidates } from "../core/candidateLifecycle.js";
 
 initStreamingStateFromDb().catch(err =>
   console.warn("[Diagnostics] initStreamingStateFromDb failed:", err instanceof Error ? err.message : err)
@@ -336,6 +337,32 @@ router.get("/diagnostics/data-integrity/:symbol/full", async (req, res) => {
 
     const report = await getComprehensiveIntegrityReport(symbol, lookbackDays);
     res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
+  }
+});
+
+/**
+ * GET /api/diagnostics/lifecycle
+ *
+ * Returns current candidate lifecycle state for all watched candidates.
+ * Shows watch/qualified/tradeable/executed/expired candidates with score history,
+ * weak components, and last material change info. Idle candidates are excluded.
+ */
+router.get("/diagnostics/lifecycle", (_req, res) => {
+  try {
+    const watched = getWatchedCandidates();
+    const summary = {
+      totalTracked: watched.length,
+      byStatus: {
+        watch: watched.filter(c => c.status === "watch").length,
+        qualified: watched.filter(c => c.status === "qualified").length,
+        tradeable: watched.filter(c => c.status === "tradeable").length,
+        executed: watched.filter(c => c.status === "executed").length,
+        expired: watched.filter(c => c.status === "expired").length,
+      },
+    };
+    res.json({ summary, candidates: watched });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Unknown error" });
   }

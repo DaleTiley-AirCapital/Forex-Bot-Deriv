@@ -446,6 +446,10 @@ function BacktestTab() {
   const [err, setErr] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  useEffect(() => {
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, []);
+
   const run = async () => {
     setRunning(true);
     setErr(null);

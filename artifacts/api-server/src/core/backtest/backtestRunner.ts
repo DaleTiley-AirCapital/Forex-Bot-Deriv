@@ -170,6 +170,41 @@ interface FeatureSample {
   bbPctB: number;
 }
 
+// ── Per-symbol context for synchronized multi-symbol replay ──────────────────
+
+interface SymCtx {
+  sym: string;
+  instrumentFamily: "crash" | "boom" | "volatility";
+  candles: CandleRow[];
+  idxByTs: Map<number, number>;   // closeTs (epoch seconds) → array index
+  simStart: number;               // first index inside sim range
+
+  // Shared platform state (derived once for all symbols)
+  mode: string;
+  modeGate: number;
+  killSwitchActive: boolean;
+  modeEnabled: boolean;
+  symbolEnabled: boolean;
+  maxOpenTrades: number;
+  totalCapital: number;
+  maxDailyLossPct: number;
+  maxWeeklyLossPct: number;
+  maxDrawdownThresholdPct: number;
+
+  // HTF regime sample buffer (per-symbol; must not be shared)
+  featureHistory: FeatureSample[];
+
+  // Runtime simulation state
+  openTrade: OpenTradeState | null;
+  simEquity: number;
+  simEquityPeak: number;
+  simClosedPnls: Array<{ closeTs: number; pnlUsd: number }>;
+  trades: V3BacktestTrade[];
+  signalsFired: number;
+  signalsBlocked: number;
+  blockedByEngine: Record<string, number>;
+}
+
 // ── Percentile helper ─────────────────────────────────────────────────────────
 
 function percentile(sorted: number[], p: number): number {
@@ -969,7 +1004,24 @@ export async function runV3Backtest(
 }
 
 /**
- * Run V3 backtest across multiple symbols concurrently.
+ * Run V3 backtest across multiple symbols using a time-synchronized event loop.
+ *
+ * ── Synchronization guarantee ────────────────────────────────────────────────
+ * All symbols share a single global bar clock (sorted union of all closeTs values).
+ * At each timestamp T the loop processes two phases in strict order:
+ *
+ *   1. EXIT PHASE  — apply state transitions and check SL/TP/timeout for every
+ *      symbol that has an open position at T.  Positions that close at T are
+ *      removed from the shared ledger before the entry phase begins.
+ *
+ *   2. ENTRY PHASE — evaluate new entries for every symbol that has no open
+ *      position at T.  Admission gates (maxOpenTrades, one-per-symbol) query
+ *      the shared ledger which already reflects all exits at T, so the cross-
+ *      symbol portfolio state is always correct at the moment of evaluation.
+ *
+ * This eliminates the order-bias of sequential-per-symbol replay, where symbol A
+ * was simulated without any knowledge of symbol B's positions, and symbol B then
+ * saw symbol A's complete future history.
  */
 export async function runV3BacktestMulti(
   symbols: string[],
@@ -979,25 +1031,407 @@ export async function runV3BacktestMulti(
   mode?: "paper" | "demo" | "real",
 ): Promise<Record<string, V3BacktestResult>> {
   if (symbols.length <= 1) {
-    // Single-symbol path — no ledger needed
     const result = await runV3Backtest({ symbol: symbols[0] ?? "", startTs, endTs, minScore, mode });
     return symbols[0] ? { [symbols[0]]: result } : {};
   }
 
-  // Multi-symbol path — use a shared portfolio ledger so gates 5 (one-per-symbol),
-  // 6 (maxOpenTrades), and correlated-family checks use real cross-symbol portfolio
-  // state for each bar, matching the live portfolioAllocatorV3 semantics.
-  //
-  // Symbols are replayed sequentially (not in parallel) so the ledger timeline
-  // is populated by earlier symbols before later ones query it. Each symbol's
-  // replay uses bar timestamps to query the ledger — ensuring that a position
-  // from symbol A that was opened at T and closed at T+N is correctly visible
-  // to symbol B when it evaluates bars in the [T, T+N] range.
-  const ledger = new SharedPortfolioLedger();
-  const out: Record<string, V3BacktestResult> = {};
+  // ── Shared platform state (loaded once for all symbols) ──────────────────
+  const now = Math.floor(Date.now() / 1000);
+  const _startTs = startTs ?? (now - 90 * 86400);
+  const _endTs   = endTs   ?? now;
+  const _mode    = mode    ?? "paper";
+  const modePrefix = { paper: "paper", demo: "demo", real: "real" }[_mode] ?? "paper";
 
+  const platformRows = await db.select().from(platformStateTable);
+  const stateMap: Record<string, string> = {};
+  for (const r of platformRows) stateMap[r.key] = r.value;
+
+  const gateFomState   = stateMap[`${modePrefix}_min_composite_score`] || stateMap["min_composite_score"];
+  const sharedModeGate = minScore ?? (gateFomState ? parseFloat(gateFomState) : (MODE_SCORE_GATES[_mode] ?? 60));
+
+  const sharedKillSwitch  = stateMap["kill_switch"] === "true";
+  const sharedModeEnabled =
+    stateMap[`${modePrefix}_mode_active`] === "true" ||
+    stateMap[`${modePrefix}_mode`]        === "active" ||
+    stateMap[`${modePrefix}_enabled`]     === "true";
+  const modeSymbolsRaw = stateMap[`${modePrefix}_enabled_symbols`] || stateMap["enabled_symbols"] || "";
+  const modeSymbols    = modeSymbolsRaw
+    ? modeSymbolsRaw.split(",").map((s: string) => s.trim()).filter(Boolean)
+    : null;
+
+  const sharedMaxOpenTrades = parseInt(
+    stateMap[`${modePrefix}_max_open_trades`] || stateMap["max_open_trades"] || "3", 10,
+  );
+  const capitalKey     = getModeCapitalKey(_mode as "paper" | "demo" | "real");
+  const capitalDefault = getModeCapitalDefault(_mode as "paper" | "demo" | "real");
+  const sharedCapital  = Math.max(1, parseFloat(stateMap[capitalKey] || stateMap["total_capital"] || capitalDefault));
+  const sharedMaxDailyLoss   = parseFloat(stateMap[`${modePrefix}_max_daily_loss_pct`]   || stateMap["max_daily_loss_pct"]   || "5")  / 100;
+  const sharedMaxWeeklyLoss  = parseFloat(stateMap[`${modePrefix}_max_weekly_loss_pct`]  || stateMap["max_weekly_loss_pct"]  || "10") / 100;
+  const sharedMaxDrawdownPct = parseFloat(stateMap[`${modePrefix}_max_drawdown_pct`]     || stateMap["max_drawdown_pct"]     || "20") / 100;
+
+  // ── Load candles for all symbols in parallel ─────────────────────────────
+  const bufferStartTs = _startTs - STRUCTURAL_LOOKBACK * 60;
+  const allCandleArrays = await Promise.all(
+    symbols.map(sym =>
+      db.select({
+        open: candlesTable.open, high: candlesTable.high,
+        low:  candlesTable.low,  close: candlesTable.close,
+        openTs: candlesTable.openTs, closeTs: candlesTable.closeTs,
+      }).from(candlesTable)
+        .where(and(
+          eq(candlesTable.symbol, sym),
+          eq(candlesTable.timeframe, "1m"),
+          gte(candlesTable.openTs, bufferStartTs),
+          lte(candlesTable.openTs, _endTs),
+        ))
+        .orderBy(asc(candlesTable.openTs))
+        .then(rows => rows as CandleRow[]),
+    ),
+  );
+
+  // ── Build per-symbol contexts and global timestamp union ─────────────────
+  const symCtxMap = new Map<string, SymCtx>();
+  const allTs     = new Set<number>();
+
+  for (let si = 0; si < symbols.length; si++) {
+    const sym     = symbols[si]!;
+    const candles = allCandleArrays[si]!;
+    if (candles.length < 60) continue;
+
+    let simStart = candles.findIndex(c => c.openTs >= _startTs);
+    if (simStart < 0) simStart = candles.length - 1;
+    if (simStart < STRUCTURAL_LOOKBACK) simStart = STRUCTURAL_LOOKBACK;
+
+    const idxByTs = new Map<number, number>();
+    for (let i = 0; i < candles.length; i++) {
+      idxByTs.set(candles[i]!.closeTs, i);
+      if (i >= simStart) allTs.add(candles[i]!.closeTs);
+    }
+
+    symCtxMap.set(sym, {
+      sym,
+      instrumentFamily:      getInstrumentFamily(sym),
+      candles,
+      idxByTs,
+      simStart,
+      mode:                   _mode,
+      modeGate:               sharedModeGate,
+      killSwitchActive:       sharedKillSwitch,
+      modeEnabled:            sharedModeEnabled,
+      symbolEnabled:          !modeSymbols || modeSymbols.includes(sym),
+      maxOpenTrades:          sharedMaxOpenTrades,
+      totalCapital:           sharedCapital,
+      maxDailyLossPct:        sharedMaxDailyLoss,
+      maxWeeklyLossPct:       sharedMaxWeeklyLoss,
+      maxDrawdownThresholdPct: sharedMaxDrawdownPct,
+      featureHistory:         [],
+      openTrade:              null,
+      simEquity:              1.0,
+      simEquityPeak:          1.0,
+      simClosedPnls:          [],
+      trades:                 [],
+      signalsFired:           0,
+      signalsBlocked:         0,
+      blockedByEngine:        {},
+    });
+  }
+
+  if (symCtxMap.size === 0) {
+    const out: Record<string, V3BacktestResult> = {};
+    for (const sym of symbols) {
+      out[sym] = {
+        symbol: sym, mode: _mode, startTs: _startTs, endTs: _endTs,
+        totalBars: 0, modeScoreGate: sharedModeGate,
+        signalsFired: 0, signalsBlocked: 0, blockedRate: 0,
+        trades: [], simulationGaps: [], summary: computeSummary([], {}),
+      };
+    }
+    return out;
+  }
+
+  // ── Shared portfolio ledger ───────────────────────────────────────────────
+  const ledger = new SharedPortfolioLedger();
+
+  // ── Global sorted timestamp list ─────────────────────────────────────────
+  const globalTs = Array.from(allTs).sort((a, b) => a - b);
+
+  // ── Time-synchronized event loop ─────────────────────────────────────────
+  for (const ts of globalTs) {
+    const tsMs = ts * 1000;
+
+    // ════════════════════════════════════════════════════════════════════════
+    // EXIT PHASE — apply state transitions + check SL/TP/timeout for all
+    // open positions first.  Ledger updates (close) happen here so the entry
+    // phase sees accurate open-count / symbol-open state.
+    // ════════════════════════════════════════════════════════════════════════
+    for (const ctx of symCtxMap.values()) {
+      if (!ctx.openTrade) continue;
+      const i = ctx.idxByTs.get(ts);
+      if (i === undefined) continue;
+      const bar = ctx.candles[i]!;
+      const ot  = ctx.openTrade;
+      const dir = ot.winner.direction;
+      const ep  = ot.entryPrice;
+      const holdBars    = i - ot.entryBar;
+      const prevPeak    = ot.peakPrice;
+
+      const barState = applyBarStateTransitions({
+        direction: dir, entryPrice: ep, tp: ot.tp,
+        barHigh: bar.high, barLow: bar.low, barClose: bar.close, barOpen: bar.open,
+        stage: ot.stage, sl: ot.sl, peakPrice: ot.peakPrice,
+        mfePct: ot.mfePct, maePct: ot.maePct, adverseCandleCount: ot.adverseCandleCount,
+        atr14AtEntry: ot.atr14AtEntry, instrumentFamily: ot.instrumentFamily,
+        emaSlope: ot.emaSlope, spikeCount4h: ot.spikeCount4h,
+      });
+
+      ot.sl                 = barState.sl;
+      ot.stage              = barState.stage;
+      ot.peakPrice          = barState.peakPrice;
+      ot.mfePct             = barState.mfePct;
+      ot.maePct             = barState.maePct;
+      ot.adverseCandleCount = barState.adverseCandleCount;
+      if (barState.peakPrice !== prevPeak) ot.mfePeakBar = i;
+
+      if (barState.bePromoted) {
+        ot.mfePctAtBreakeven = barState.mfePctAtPromotion;
+        ot.beTriggeredBar    = i;
+        ot.tpProgressAtBe    = barState.tpProgressAtBe;
+        recordBehaviorEvent({
+          eventType: "breakeven_promoted", symbol: ctx.sym,
+          engineName: ot.winner.engineName, direction: dir,
+          holdBarsAtPromotion: holdBars, mfePctAtPromotion: barState.mfePctAtPromotion,
+          tpProgressAtPromotion: barState.tpProgressAtBe, ts: bar.closeTs,
+        });
+      }
+      if (barState.trailingActivated) {
+        recordBehaviorEvent({
+          eventType: "trailing_activated", symbol: ctx.sym,
+          engineName: ot.winner.engineName, direction: dir,
+          holdBarsAtActivation: holdBars, mfePctAtActivation: barState.mfePct,
+          tpProgressAtActivation: barState.tpProgressAtTrailing, ts: bar.closeTs,
+        });
+      }
+
+      const barExit = evaluateBarExits({
+        direction: dir, barHigh: bar.high, barLow: bar.low, barClose: bar.close,
+        tp: ot.tp, sl: ot.sl,
+      });
+      let exitReason: V3BacktestTrade["exitReason"] | null = barExit.exitReason;
+      let exitPrice = barExit.exitPrice;
+      if (!exitReason && holdBars >= MAX_HOLD_MINS) {
+        exitReason = "max_duration";
+        exitPrice  = bar.close;
+      }
+
+      if (exitReason) {
+        const finalPnl      = dir === "buy" ? (exitPrice - ep) / ep : (ep - exitPrice) / ep;
+        const barsToMfe     = ot.mfePeakBar > ot.entryBar ? ot.mfePeakBar - ot.entryBar : holdBars;
+        const barsToBreakeven = ot.beTriggeredBar > 0 ? ot.beTriggeredBar - ot.entryBar : 0;
+
+        ctx.trades.push({
+          entryTs: ot.entryTs, exitTs: bar.closeTs, symbol: ctx.sym,
+          direction: dir, engineName: ot.winner.engineName, entryType: ot.winner.entryType,
+          entryPrice: ep, exitPrice, exitReason, slStage: ot.stage,
+          projectedMovePct: ot.winner.projectedMovePct, nativeScore: ot.nativeScore,
+          regimeAtEntry: ot.regimeAtEntry, regimeConfidence: ot.regimeConfidence,
+          holdBars, barsToMfe, barsToBreakeven, pnlPct: finalPnl,
+          mfePct: ot.mfePct, maePct: ot.maePct, tpPct: ot.tpPct, slPct: ot.slOriginalPct,
+          conflictResolution: ot.conflictResolution, modeGateApplied: ctx.modeGate,
+        });
+        ctx.simClosedPnls.push({ closeTs: tsMs, pnlUsd: finalPnl * SYNTHETIC_SIZE });
+        ctx.simEquity *= (1 + finalPnl);
+        if (ctx.simEquity > ctx.simEquityPeak) ctx.simEquityPeak = ctx.simEquity;
+
+        recordBehaviorEvent({
+          eventType: "closed", symbol: ctx.sym, engineName: ot.winner.engineName,
+          entryType: ot.winner.entryType, direction: dir,
+          regimeAtEntry: ot.regimeAtEntry, regimeConfidence: ot.regimeConfidence,
+          nativeScore: ot.nativeScore, projectedMovePct: ot.winner.projectedMovePct,
+          entryTs: ot.entryTs, exitTs: bar.closeTs, holdBars,
+          pnlPct: finalPnl, mfePct: ot.mfePct, maePct: ot.maePct,
+          mfePctAtBreakeven: ot.mfePctAtBreakeven,
+          barsToMfe, barsToBreakeven, exitReason, slStage: ot.stage,
+          conflictResolution: ot.conflictResolution, source: "backtest",
+        } as ClosedEvent);
+
+        // Ledger close BEFORE entry phase so the released slot is visible
+        ledger.close(ctx.sym, tsMs);
+        ctx.openTrade = null;
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ENTRY PHASE — evaluate new entries now that all exits at T are settled.
+    // The shared ledger reflects the true concurrent portfolio state at T.
+    // ════════════════════════════════════════════════════════════════════════
+    for (const ctx of symCtxMap.values()) {
+      if (ctx.openTrade) continue;
+      const i = ctx.idxByTs.get(ts);
+      if (i === undefined || i < ctx.simStart) continue;
+      const bar = ctx.candles[i]!;
+
+      // Feature slice up to current bar
+      const sliceStart = Math.max(0, i - STRUCTURAL_LOOKBACK + 1);
+      const slice      = ctx.candles.slice(sliceStart, i + 1);
+      const features   = computeFeaturesFromSlice(ctx.sym, slice);
+      if (!features) continue;
+
+      // HTF regime averaging
+      ctx.featureHistory.push({
+        emaSlope: features.emaSlope, rsi14: features.rsi14,
+        bbWidth: features.bbWidth,   bbWidthRoc: features.bbWidthRoc,
+        atr14: features.atr14,       atrRank: features.atrRank,
+        atrAccel: features.atrAccel, zScore: features.zScore,
+        spikeHazardScore: features.spikeHazardScore, bbPctB: features.bbPctB,
+      });
+      if (ctx.featureHistory.length > HTF_AVERAGING_WINDOW) ctx.featureHistory.shift();
+
+      const regimeResult = classifyRegimeFromSamples(features, ctx.featureHistory);
+
+      let engineResults: EngineResult[];
+      let coordinatorOutput: ReturnType<typeof runEnginesAndCoordinate>["coordinatorOutput"];
+      try {
+        const p = runEnginesAndCoordinate({
+          symbol: ctx.sym, features,
+          operationalRegime: regimeResult.regime, regimeConfidence: regimeResult.confidence,
+        });
+        engineResults = p.engineResults;
+        coordinatorOutput = p.coordinatorOutput;
+      } catch { continue; }
+
+      if (engineResults.length === 0 || !coordinatorOutput) continue;
+
+      const { winner, conflictResolution, coordinatorConfidence } = coordinatorOutput;
+      const nativeScore = extractNativeScore(winner, coordinatorConfidence);
+
+      ctx.signalsFired++;
+      recordBehaviorEvent({
+        eventType: "signal_fired", symbol: ctx.sym, engineName: winner.engineName,
+        entryType: winner.entryType, direction: winner.direction,
+        regimeAtEntry: regimeResult.regime, regimeConfidence: regimeResult.confidence,
+        nativeScore, projectedMovePct: winner.projectedMovePct,
+        ts: bar.closeTs, conflictResolution,
+      });
+
+      // Admission — ledger provides true cross-symbol open count / symbol-open state
+      const nowMs        = tsMs;
+      const dayStartTs   = nowMs - 86_400_000;
+      const weekStartTs  = nowMs - 7 * 86_400_000;
+      const dailyLossUsd  = ctx.simClosedPnls.filter(p => p.closeTs >= dayStartTs) .reduce((s, p) => s + p.pnlUsd, 0);
+      const weeklyLossUsd = ctx.simClosedPnls.filter(p => p.closeTs >= weekStartTs).reduce((s, p) => s + p.pnlUsd, 0);
+      const dailyLossLimitBreached  = dailyLossUsd  < 0 && Math.abs(dailyLossUsd)  / ctx.totalCapital >= ctx.maxDailyLossPct;
+      const weeklyLossLimitBreached = weeklyLossUsd < 0 && Math.abs(weeklyLossUsd) / ctx.totalCapital >= ctx.maxWeeklyLossPct;
+      const currentDrawdownPct = ctx.simEquityPeak > 0 ? (ctx.simEquityPeak - ctx.simEquity) / ctx.simEquityPeak : 0;
+      const maxDrawdownBreached = currentDrawdownPct >= ctx.maxDrawdownThresholdPct;
+
+      const allocResult = evaluateSignalAdmission({
+        symbol: ctx.sym, engineName: winner.engineName, direction: winner.direction,
+        nativeScore, confidence: winner.confidence,
+        mode: _mode, minScoreGate: ctx.modeGate,
+        killSwitchActive: ctx.killSwitchActive,
+        modeEnabled:      ctx.modeEnabled,
+        symbolEnabled:    ctx.symbolEnabled,
+        // Cross-symbol portfolio state from shared ledger — true concurrent state at T
+        openTradeForSymbol: ledger.isSymbolOpen(ctx.sym, tsMs),
+        currentOpenCount:   ledger.getOpenCount(tsMs),
+        maxOpenTrades:      ctx.maxOpenTrades,
+        dailyLossLimitBreached, weeklyLossLimitBreached, maxDrawdownBreached,
+        correlatedFamilyCapBreached: false,
+        simulationDefaults: [],   // no parity gaps — ledger covers all cross-symbol gates
+      });
+
+      if (!allocResult.allowed) {
+        const isTradeManagementBlock = allocResult.rejectionStage === 5;
+        if (!isTradeManagementBlock) {
+          ctx.signalsBlocked++;
+          ctx.blockedByEngine[winner.engineName] = (ctx.blockedByEngine[winner.engineName] ?? 0) + 1;
+        }
+        recordBehaviorEvent({
+          eventType: "blocked_by_gate", symbol: ctx.sym, engineName: winner.engineName,
+          direction: winner.direction, regimeAtEntry: regimeResult.regime,
+          nativeScore, modeGate: ctx.modeGate, mode: _mode, ts: bar.closeTs,
+          rejectionStage:   allocResult.rejectionStage   ?? undefined,
+          rejectionReason:  allocResult.rejectionReason  ?? `stage${allocResult.rejectionStage ?? 0}`,
+          isSignalQualityBlock: allocResult.rejectionStage === 4,
+        });
+        continue;
+      }
+
+      // SR/Fib TP — same as single-symbol path
+      const tp = calculateSRFibTP({
+        entryPrice: bar.close, direction: winner.direction,
+        swingHigh: features.swingHigh, swingLow: features.swingLow,
+        majorSwingHigh: features.majorSwingHigh, majorSwingLow: features.majorSwingLow,
+        fibExtensionLevels:     features.fibExtensionLevels     ?? [],
+        fibExtensionLevelsDown: features.fibExtensionLevelsDown ?? [],
+        bbUpper: features.bbUpper, bbLower: features.bbLower, atrPct: features.atr14,
+        pivotLevels: [features.pivotR1, features.pivotR2, features.pivotS1, features.pivotS2]
+          .filter((v): v is number => typeof v === "number"),
+        vwap: features.vwap, psychRound: features.psychRound,
+        prevSessionHigh: features.prevSessionHigh, prevSessionLow: features.prevSessionLow,
+        spikeMagnitude: features.spikeMagnitude,
+      });
+      if (!isFinite(tp) || tp <= 0) continue;
+      if (winner.direction === "buy"  && tp <= bar.close) continue;
+      if (winner.direction === "sell" && tp >= bar.close) continue;
+
+      const sl = calculateSRFibSL({
+        entryPrice: bar.close, direction: winner.direction, tp,
+        positionSize: SYNTHETIC_SIZE, equity: SYNTHETIC_EQUITY,
+      });
+      if (!isFinite(sl) || sl <= 0) continue;
+
+      const tpPct        = Math.abs(tp - bar.close) / bar.close;
+      const slOriginalPct = Math.abs(sl - bar.close) / bar.close;
+
+      recordBehaviorEvent({
+        eventType: "entered", symbol: ctx.sym, engineName: winner.engineName,
+        entryType: winner.entryType, direction: winner.direction,
+        regimeAtEntry: regimeResult.regime, regimeConfidence: regimeResult.confidence,
+        nativeScore, projectedMovePct: winner.projectedMovePct,
+        entryTs: bar.closeTs, tpPct, slPct: slOriginalPct,
+      });
+
+      ctx.openTrade = {
+        winner, entryBar: i, entryPrice: bar.close, entryTs: bar.closeTs,
+        regimeAtEntry: regimeResult.regime, regimeConfidence: regimeResult.confidence,
+        nativeScore, conflictResolution, tp, sl, originalSl: sl,
+        stage: 1, peakPrice: bar.close, mfePct: 0, maePct: 0, mfePeakBar: i,
+        beTriggeredBar: 0, mfePctAtBreakeven: 0,
+        atr14AtEntry: Math.max(features.atr14, 0.001),
+        instrumentFamily: ctx.instrumentFamily,
+        emaSlope: features.emaSlope, spikeCount4h: features.spikeCount4h ?? 0,
+        adverseCandleCount: 0, tpPct, slOriginalPct, tpProgressAtBe: 0,
+      };
+      ledger.open(ctx.sym, ctx.instrumentFamily, tsMs);
+    }
+  }
+
+  // ── Collect results ───────────────────────────────────────────────────────
+  const out: Record<string, V3BacktestResult> = {};
+  for (const [sym, ctx] of symCtxMap.entries()) {
+    const barsInRange = Math.max(0, ctx.candles.length - ctx.simStart);
+    const blockedRate = ctx.signalsFired > 0 ? ctx.signalsBlocked / ctx.signalsFired : 0;
+    out[sym] = {
+      symbol: sym, mode: _mode, startTs: _startTs, endTs: _endTs,
+      totalBars: barsInRange, modeScoreGate: ctx.modeGate,
+      signalsFired: ctx.signalsFired, signalsBlocked: ctx.signalsBlocked, blockedRate,
+      trades: ctx.trades,
+      simulationGaps: [],   // no gaps — synchronized loop uses shared ledger for all gates
+      summary: computeSummary(ctx.trades, ctx.blockedByEngine),
+    };
+  }
+
+  // Fill missing symbols (insufficient candle data) with empty results
   for (const sym of symbols) {
-    out[sym] = await runV3Backtest({ symbol: sym, startTs, endTs, minScore, mode }, ledger);
+    if (!out[sym]) {
+      out[sym] = {
+        symbol: sym, mode: _mode, startTs: _startTs, endTs: _endTs,
+        totalBars: 0, modeScoreGate: sharedModeGate,
+        signalsFired: 0, signalsBlocked: 0, blockedRate: 0,
+        trades: [], simulationGaps: [], summary: computeSummary([], {}),
+      };
+    }
   }
 
   return out;

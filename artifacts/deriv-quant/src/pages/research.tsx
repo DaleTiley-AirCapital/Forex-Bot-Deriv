@@ -919,13 +919,16 @@ function BehaviorModelTab() {
     }
   }
 
-  function exportProfileJson() {
+  async function exportProfileJson() {
     if (!profile) return;
+    if (!profile.engineProfiles.some(ep => ep.engineName === engine)) return;
     const ts = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
-    fetch(`${BASE}api/behavior/export/${symbol}/${engine}`)
-      .then(r => r.json())
-      .then(data => downloadBehaviorJson(data, `behavior-profile-${symbol}-${engine}-${ts}.json`))
-      .catch(() => {});
+    try {
+      const data = await apiFetch(`behavior/export/${symbol}/${engine}`);
+      downloadBehaviorJson(data, `behavior-profile-${symbol}-${engine}-${ts}.json`);
+    } catch {
+      // engine profile unavailable — silently ignore
+    }
   }
 
   function downloadBehaviorJson(data: unknown, filename: string) {
@@ -984,7 +987,7 @@ function BehaviorModelTab() {
             {building ? `Building… ${elapsed}s` : "Run Profile"}
           </button>
 
-          {profile && (
+          {profile && profile.engineProfiles.some(ep => ep.engineName === engine) && (
             <button
               onClick={exportProfileJson}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-border/50 bg-background text-muted-foreground text-xs font-medium hover:text-foreground hover:border-border transition-colors"

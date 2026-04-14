@@ -168,7 +168,7 @@ router.get("/signals/export", async (req, res): Promise<void> => {
         direction:        r.direction,
         score:            r.score,
         composite_score:  r.compositeScore ?? null,
-        native_score:     r.compositeScore ?? null,
+        native_score:     r.score ?? null,
         allowed_flag:     r.allowedFlag,
         rejection_reason: r.rejectionReason ?? null,
         execution_status: r.executionStatus ?? null,

@@ -14,6 +14,7 @@ import diagnosticsRouter from "./diagnostics";
 import researchRouter from "./research";
 import exportRouter from "./export";
 import versionRouter from "./version";
+import behaviorRouter from "./behavior";
 
 const router: IRouter = Router();
 
@@ -32,5 +33,6 @@ router.use(diagnosticsRouter);
 router.use(researchRouter);
 router.use(exportRouter);
 router.use(versionRouter);
+router.use(behaviorRouter);
 
 export default router;

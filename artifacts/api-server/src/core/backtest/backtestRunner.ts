@@ -1,24 +1,29 @@
 /**
- * backtestRunner.ts — V3 Isolated Backtest Simulation Engine
+ * backtestRunner.ts — V3 Unified Runtime Backtest Engine
  *
- * Replays historical candles bar-by-bar, applying V3 engines (via engineRegistry)
- * and a hybrid exit model calibrated for 50-200%+ long-hold swings.
+ * Replays historical candles bar-by-bar using the EXACT same decision path
+ * as the live scanner:
  *
- * Exit model (per signal):
- *   Leg 1 partial TP:  entry × (1 ± projectedMovePct × 0.30)   — take 30% of projected
- *   Hard SL:           entry × (1 ∓ projectedMovePct × 0.40)   — lose 40% of projected
- *   MFE regression:    2×ATR14 adverse reversal from MFE peak
- *   Max duration:      30 calendar days (43,200 1m bars)
+ *   features → HTF regime (averaged) → engines → symbolCoordinator → exit model
  *
- * HTF steps for feature slicing:
- *   CRASH300 → 720m  |  BOOM300 → 480m  |  R_75 / R_100 → 240m
- * These determine how far back to slide the window before aggregation.
+ * Exit model (mirroring live hybridTradeManager + tradeEngine):
+ *   Stage 1: SL at original position (1:5 RR from TP)
+ *   Stage 2: SL promoted to breakeven after 20% of TP distance reached
+ *   Stage 3: Adaptive ATR trailing stop from 30% of TP distance reached
+ *   TP:      SR/Fib TP (calculateSRFibTP) — same function as live
+ *   SL:      calculateSRFibSL (TP/5 = 1:5 RR) — same function as live
+ *   Max:     30 calendar days (43,200 1m bars)
+ *
+ * Divergences from old runner (now eliminated):
+ *   OLD: bare classifyRegime per bar → NEW: HTF-averaged regime
+ *   OLD: highest-score loop → NEW: runSymbolCoordinator
+ *   OLD: Leg1/Hard-SL/MFE exits → NEW: SR/Fib TP + 1:5 SL + BE + ATR trail
  *
  * Design constraints:
  *   - No DB calls inside the hot loop (candles pre-loaded at startup)
- *   - classifyRegime (pure function) called per bar — no hourly accumulator
- *   - featureSlice window: STRUCTURAL_LOOKBACK = 1500 bars (most recent)
- *   - One open trade per symbol at a time (no pyramiding in backtest)
+ *   - HTF regime averaged over last 60 1m feature samples (~1 hour)
+ *   - One open trade per symbol at a time (no pyramiding)
+ *   - Behavior events captured for each trade (exported via /api/behavior)
  */
 
 import { db, candlesTable } from "@workspace/db";
@@ -26,16 +31,22 @@ import { eq, and, gte, lte, asc } from "drizzle-orm";
 import { computeFeaturesFromSlice, type CandleRow } from "./featureSlice.js";
 import { classifyRegime } from "../regimeEngine.js";
 import { getEnginesForSymbol } from "../engineRegistry.js";
+import { runSymbolCoordinator } from "../symbolCoordinator.js";
+import { calculateSRFibTP, calculateSRFibSL, calculateAdaptiveTrailingStop } from "../tradeEngine.js";
 import { getSymbolIndicatorTimeframeMins } from "../features.js";
 import type { EngineResult } from "../engineTypes.js";
+import type { FeatureVector } from "../features.js";
+import { recordBehaviorEvent, type BehaviorEvent } from "./behaviorCapture.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const STRUCTURAL_LOOKBACK = 1500;
-const MAX_HOLD_BARS = 43_200;       // 30 days in 1m bars
-const LEG1_PROJ_RATIO = 0.30;       // partial TP at 30% of projected move
-const HARD_SL_PROJ_RATIO = 0.40;    // hard SL at 40% of projected move (loss)
-const MFE_REVERSAL_ATR_MULT = 2.0;  // exit on 2×ATR14 pullback from MFE
+const MAX_HOLD_BARS = 43_200;             // 30 days in 1m bars
+const STAGE2_BREAKEVEN_THRESHOLD = 0.20;  // 20% of TP distance → promote to breakeven
+const STAGE3_TRAIL_THRESHOLD = 0.30;      // 30% of TP distance → activate adaptive trail
+const SYNTHETIC_EQUITY = 10_000;          // for calculateSRFibSL sizing math
+const SYNTHETIC_SIZE = 1_500;             // 15% of synthetic equity
+const HTF_AVERAGING_WINDOW = 60;          // 60 recent feature samples for HTF avg (≈1 hour)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -48,16 +59,19 @@ export interface V3BacktestTrade {
   entryType: string;
   entryPrice: number;
   exitPrice: number;
-  exitReason: "leg1_tp" | "hard_sl" | "mfe_reversal" | "max_duration";
+  exitReason: "tp_hit" | "sl_hit" | "max_duration";
+  slStage: 1 | 2 | 3;
   projectedMovePct: number;
   nativeScore: number;
   regimeAtEntry: string;
   regimeConfidence: number;
   holdBars: number;
   pnlPct: number;
-  leg1Hit: boolean;
   mfePct: number;
   maePct: number;
+  tpPct: number;
+  slPct: number;
+  conflictResolution: string;
 }
 
 export interface V3BacktestResult {
@@ -78,32 +92,72 @@ export interface V3BacktestResult {
     profitFactor: number;
     maxDrawdownPct: number;
     avgHoldBars: number;
-    leg1HitRate: number;
+    avgMfePct: number;
     byEngine: Record<string, { count: number; wins: number; avgPnlPct: number }>;
     byExitReason: Record<string, number>;
+    bySlStage: Record<string, number>;
+    byRegime: Record<string, { count: number; wins: number }>;
   };
 }
 
 export interface V3BacktestRequest {
   symbol: string;
-  startTs?: number;       // unix seconds; defaults to 90 days ago
-  endTs?: number;         // unix seconds; defaults to now
-  minScore?: number;      // override engine gate minimum (0-100); default = engine native gates
+  startTs?: number;
+  endTs?: number;
+  minScore?: number;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── HTF regime averaging (local, no shared state) ─────────────────────────────
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
+interface FeatureSample {
+  emaSlope: number;
+  rsi14: number;
+  bbWidth: number;
+  bbWidthRoc: number;
+  atr14: number;
+  atrRank: number;
+  atrAccel: number;
+  zScore: number;
+  spikeHazardScore: number;
+  bbPctB: number;
 }
+
+function classifyRegimeHTFLocal(
+  features: FeatureVector,
+  featureHistory: FeatureSample[],
+): ReturnType<typeof classifyRegime> {
+  if (featureHistory.length < 3) {
+    return classifyRegime(features);
+  }
+  const n = featureHistory.length;
+  const avg = (fn: (s: FeatureSample) => number) =>
+    featureHistory.reduce((s, x) => s + fn(x), 0) / n;
+
+  const htfFeatures: FeatureVector = {
+    ...features,
+    emaSlope: avg(s => s.emaSlope),
+    rsi14: avg(s => s.rsi14),
+    bbWidth: avg(s => s.bbWidth),
+    bbWidthRoc: avg(s => s.bbWidthRoc),
+    atr14: avg(s => s.atr14),
+    atrRank: avg(s => s.atrRank),
+    atrAccel: avg(s => s.atrAccel),
+    zScore: avg(s => s.zScore),
+    spikeHazardScore: avg(s => s.spikeHazardScore),
+    bbPctB: avg(s => s.bbPctB),
+  };
+  return classifyRegime(htfFeatures);
+}
+
+// ── Summary builder ───────────────────────────────────────────────────────────
 
 function computeSummary(trades: V3BacktestTrade[]): V3BacktestResult["summary"] {
   if (trades.length === 0) {
     return {
       tradeCount: 0, winCount: 0, lossCount: 0, winRate: 0,
       avgPnlPct: 0, avgWinPct: 0, avgLossPct: 0, totalPnlPct: 0,
-      profitFactor: 0, maxDrawdownPct: 0, avgHoldBars: 0, leg1HitRate: 0,
-      byEngine: {}, byExitReason: {},
+      profitFactor: 0, maxDrawdownPct: 0, avgHoldBars: 0, avgMfePct: 0,
+      byEngine: {}, byExitReason: {}, bySlStage: {}, byRegime: {},
     };
   }
 
@@ -112,7 +166,6 @@ function computeSummary(trades: V3BacktestTrade[]): V3BacktestResult["summary"] 
   const grossProfit = wins.reduce((s, t) => s + t.pnlPct, 0);
   const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnlPct, 0));
 
-  // Equity curve for max drawdown
   let equity = 0;
   let peak = 0;
   let maxDd = 0;
@@ -139,6 +192,19 @@ function computeSummary(trades: V3BacktestTrade[]): V3BacktestResult["summary"] 
     byExitReason[t.exitReason] = (byExitReason[t.exitReason] ?? 0) + 1;
   }
 
+  const bySlStage: Record<string, number> = {};
+  for (const t of trades) {
+    const key = `stage_${t.slStage}`;
+    bySlStage[key] = (bySlStage[key] ?? 0) + 1;
+  }
+
+  const byRegime: Record<string, { count: number; wins: number }> = {};
+  for (const t of trades) {
+    if (!byRegime[t.regimeAtEntry]) byRegime[t.regimeAtEntry] = { count: 0, wins: 0 };
+    byRegime[t.regimeAtEntry].count++;
+    if (t.pnlPct > 0) byRegime[t.regimeAtEntry].wins++;
+  }
+
   return {
     tradeCount: trades.length,
     winCount: wins.length,
@@ -151,26 +217,58 @@ function computeSummary(trades: V3BacktestTrade[]): V3BacktestResult["summary"] 
     profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0,
     maxDrawdownPct: maxDd,
     avgHoldBars: trades.reduce((s, t) => s + t.holdBars, 0) / trades.length,
-    leg1HitRate: trades.filter(t => t.leg1Hit).length / trades.length,
+    avgMfePct: trades.reduce((s, t) => s + t.mfePct, 0) / trades.length,
     byEngine,
     byExitReason,
+    bySlStage,
+    byRegime,
   };
+}
+
+// ── Instrument family helper ───────────────────────────────────────────────────
+
+function getInstrumentFamily(symbol: string): "crash" | "boom" | "volatility" {
+  if (symbol.startsWith("CRASH")) return "crash";
+  if (symbol.startsWith("BOOM")) return "boom";
+  return "volatility";
+}
+
+// ── Open trade state ──────────────────────────────────────────────────────────
+
+interface OpenTradeState {
+  winner: EngineResult;
+  entryBar: number;
+  entryPrice: number;
+  entryTs: number;
+  regimeAtEntry: string;
+  regimeConfidence: number;
+  nativeScore: number;
+  conflictResolution: string;
+  tp: number;
+  sl: number;
+  originalSl: number;
+  stage: 1 | 2 | 3;
+  peakPrice: number;
+  mfePct: number;
+  maePct: number;
+  atr14AtEntry: number;
+  instrumentFamily: "crash" | "boom" | "volatility";
+  emaSlope: number;
+  spikeCount4h: number;
+  adverseCandleCount: number;
+  tpPct: number;
+  slOriginalPct: number;
 }
 
 // ── Core simulation loop ──────────────────────────────────────────────────────
 
-/**
- * Run the V3 backtest for a single symbol.
- * Loads candles from DB, slides a feature window bar-by-bar,
- * runs engines at each bar, simulates the hybrid exit model.
- */
 export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestResult> {
   const now = Math.floor(Date.now() / 1000);
   const startTs = req.startTs ?? (now - 90 * 86400);
   const endTs = req.endTs ?? now;
   const symbol = req.symbol;
+  const minScore = req.minScore;
 
-  // Load all candles for the range plus the lookback buffer
   const bufferStartTs = startTs - STRUCTURAL_LOOKBACK * 60;
 
   const rawCandles = await db.select({
@@ -193,115 +291,144 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
 
   if (rawCandles.length < 60) {
     return {
-      symbol,
-      startTs,
-      endTs,
-      totalBars: 0,
-      trades: [],
+      symbol, startTs, endTs, totalBars: 0, trades: [],
       summary: computeSummary([]),
     };
   }
 
   const candles = rawCandles as CandleRow[];
 
-  // Find the index where the simulation window begins (>= startTs)
   let simStart = candles.findIndex(c => c.openTs >= startTs);
   if (simStart < 0) simStart = candles.length - 1;
-
-  // We need at least STRUCTURAL_LOOKBACK bars before the sim start
   if (simStart < STRUCTURAL_LOOKBACK) simStart = STRUCTURAL_LOOKBACK;
 
   const engines = getEnginesForSymbol(symbol);
-  const minScore = req.minScore;
+  const instrumentFamily = getInstrumentFamily(symbol);
+  const htfMins = getSymbolIndicatorTimeframeMins(symbol);
+  const indicatorLookback = 55 * htfMins;
 
   const trades: V3BacktestTrade[] = [];
-  let openTrade: {
-    engine: EngineResult;
-    entryBar: number;
-    entryPrice: number;
-    entryTs: number;
-    regimeAtEntry: string;
-    regimeConfidence: number;
-    nativeScore: number;
-    mfePct: number;
-    maePct: number;
-    leg1Pct: number;
-    hardSlPct: number;
-    leg1Hit: boolean;
-    atr14AtEntry: number;
-  } | null = null;
+  let openTrade: OpenTradeState | null = null;
 
-  const htfMins = getSymbolIndicatorTimeframeMins(symbol);
-  const indicatorLookback = 55 * htfMins;   // 55 HTF bars in 1m bars
+  // Per-bar local HTF feature history for regime averaging
+  const featureHistory: FeatureSample[] = [];
 
   for (let i = simStart; i < candles.length; i++) {
     const sliceStart = Math.max(0, i - STRUCTURAL_LOOKBACK + 1);
     const slice = candles.slice(sliceStart, i + 1);
+    const bar = candles[i];
 
-    // ── Exit check for open trade ────────────────────────────────────────────
+    // ── Manage open trade ─────────────────────────────────────────────────
     if (openTrade !== null) {
-      const bar = candles[i];
-      const dir = openTrade.engine.direction;
+      const dir = openTrade.winner.direction;
       const ep = openTrade.entryPrice;
 
-      // Raw P&L at current bar
-      const rawPnl = dir === "buy"
-        ? (bar.close - ep) / ep
-        : (ep - bar.close) / ep;
+      // Track peak price for trailing stop
+      const favorable = dir === "buy" ? bar.high : bar.low;
+      if (dir === "buy" && favorable > openTrade.peakPrice) openTrade.peakPrice = favorable;
+      if (dir === "sell" && favorable < openTrade.peakPrice) openTrade.peakPrice = favorable;
 
-      // MFE / MAE tracking
-      const barHigh = dir === "buy"
+      // MFE / MAE tracking (as pct from entry)
+      const barMfe = dir === "buy"
         ? (bar.high - ep) / ep
         : (ep - bar.low) / ep;
-      const barLow = dir === "buy"
+      const barMae = dir === "buy"
         ? (bar.low - ep) / ep
         : (ep - bar.high) / ep;
+      if (barMfe > openTrade.mfePct) openTrade.mfePct = barMfe;
+      if (barMae < openTrade.maePct) openTrade.maePct = barMae;
 
-      if (barHigh > openTrade.mfePct) openTrade.mfePct = barHigh;
-      if (barLow < openTrade.maePct) openTrade.maePct = barLow;
+      // Adverse candle count (consecutive bars moving against trade)
+      const barIsFavorable = dir === "buy"
+        ? bar.close >= bar.open
+        : bar.close <= bar.open;
+      openTrade.adverseCandleCount = barIsFavorable ? 0 : openTrade.adverseCandleCount + 1;
 
+      // ── Stage 1→2: Breakeven promotion ─────────────────────────────────
+      if (openTrade.stage === 1) {
+        const tpDist = Math.abs(openTrade.tp - ep);
+        const currentPnl = dir === "buy"
+          ? (bar.close - ep) / ep
+          : (ep - bar.close) / ep;
+        const currentDist = dir === "buy"
+          ? Math.max(0, bar.close - ep)
+          : Math.max(0, ep - bar.close);
+        const progress = tpDist > 0 ? currentDist / tpDist : 0;
+
+        if (progress >= STAGE2_BREAKEVEN_THRESHOLD) {
+          const buffer = ep * 0.0005;
+          const beSlPrice = dir === "buy" ? ep + buffer : ep - buffer;
+          const slImproved = dir === "buy"
+            ? beSlPrice > openTrade.sl
+            : beSlPrice < openTrade.sl;
+          if (slImproved) {
+            openTrade.sl = beSlPrice;
+            openTrade.stage = 2;
+          }
+        }
+        void currentPnl;
+      }
+
+      // ── Stage 2→3: Adaptive trailing stop ──────────────────────────────
+      if (openTrade.stage >= 2) {
+        const tpDist = Math.abs(openTrade.tp - ep);
+        const currentPnl = dir === "buy"
+          ? (bar.close - ep) / ep
+          : (ep - bar.close) / ep;
+        const tpPctVal = tpDist > 0 ? tpDist / ep : 0;
+        const progress = tpPctVal > 0 ? currentPnl / tpPctVal : 0;
+
+        if (progress >= STAGE3_TRAIL_THRESHOLD) {
+          openTrade.stage = 3;
+          const { newSl, updated } = calculateAdaptiveTrailingStop({
+            entryPrice: ep,
+            currentPrice: bar.close,
+            peakPrice: openTrade.peakPrice,
+            direction: dir,
+            currentSl: openTrade.sl,
+            tpPrice: openTrade.tp,
+            atr14Pct: openTrade.atr14AtEntry,
+            instrumentFamily: openTrade.instrumentFamily,
+            adverseCandleCount: openTrade.adverseCandleCount,
+            emaSlope: openTrade.emaSlope,
+            spikeCountAdverse4h: openTrade.spikeCount4h,
+          });
+          if (updated) {
+            openTrade.sl = newSl;
+          }
+        }
+        void currentPnl;
+      }
+
+      // ── Exit checks ─────────────────────────────────────────────────────
       const holdBars = i - openTrade.entryBar;
       let exitReason: V3BacktestTrade["exitReason"] | null = null;
       let exitPrice = bar.close;
 
-      // Hard SL check (worst-case for bar)
-      const adverseMove = dir === "buy"
-        ? (ep - bar.low) / ep
-        : (bar.high - ep) / ep;
-
-      if (adverseMove >= Math.abs(openTrade.hardSlPct)) {
-        exitReason = "hard_sl";
-        exitPrice = dir === "buy"
-          ? ep * (1 - Math.abs(openTrade.hardSlPct))
-          : ep * (1 + Math.abs(openTrade.hardSlPct));
+      // SL hit (check bar extremes)
+      const slBreached = dir === "buy"
+        ? bar.low <= openTrade.sl
+        : bar.high >= openTrade.sl;
+      if (slBreached) {
+        exitReason = "sl_hit";
+        exitPrice = openTrade.sl;
       }
 
-      // Leg 1 TP check
-      if (!exitReason && !openTrade.leg1Hit) {
-        const favorableMove = dir === "buy"
-          ? (bar.high - ep) / ep
-          : (ep - bar.low) / ep;
-        if (favorableMove >= Math.abs(openTrade.leg1Pct)) {
-          openTrade.leg1Hit = true;
-          exitPrice = dir === "buy"
-            ? ep * (1 + Math.abs(openTrade.leg1Pct))
-            : ep * (1 - Math.abs(openTrade.leg1Pct));
-          exitReason = "leg1_tp";
-        }
-      }
-
-      // MFE regression: 2×ATR14 pullback from peak
-      if (!exitReason && openTrade.mfePct > 0) {
-        const atrBuffer = openTrade.atr14AtEntry * MFE_REVERSAL_ATR_MULT;
-        const pullbackFromMfe = openTrade.mfePct - rawPnl;
-        if (pullbackFromMfe >= atrBuffer && openTrade.mfePct > atrBuffer) {
-          exitReason = "mfe_reversal";
+      // TP hit (check bar extremes, prefer TP over SL if both on same bar)
+      if (!exitReason || exitReason === "sl_hit") {
+        const tpReached = dir === "buy"
+          ? bar.high >= openTrade.tp
+          : bar.low <= openTrade.tp;
+        if (tpReached) {
+          exitReason = "tp_hit";
+          exitPrice = openTrade.tp;
         }
       }
 
       // Max duration
       if (!exitReason && holdBars >= MAX_HOLD_BARS) {
         exitReason = "max_duration";
+        exitPrice = bar.close;
       }
 
       if (exitReason) {
@@ -309,41 +436,84 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
           ? (exitPrice - ep) / ep
           : (ep - exitPrice) / ep;
 
-        trades.push({
+        const trade: V3BacktestTrade = {
           entryTs: openTrade.entryTs,
           exitTs: bar.closeTs,
           symbol,
           direction: dir,
-          engineName: openTrade.engine.engineName,
-          entryType: openTrade.engine.entryType,
+          engineName: openTrade.winner.engineName,
+          entryType: openTrade.winner.entryType,
           entryPrice: ep,
           exitPrice,
           exitReason,
-          projectedMovePct: openTrade.engine.projectedMovePct,
+          slStage: openTrade.stage,
+          projectedMovePct: openTrade.winner.projectedMovePct,
           nativeScore: openTrade.nativeScore,
           regimeAtEntry: openTrade.regimeAtEntry,
           regimeConfidence: openTrade.regimeConfidence,
           holdBars,
           pnlPct: finalPnl,
-          leg1Hit: openTrade.leg1Hit,
           mfePct: openTrade.mfePct,
           maePct: openTrade.maePct,
+          tpPct: openTrade.tpPct,
+          slPct: openTrade.slOriginalPct,
+          conflictResolution: openTrade.conflictResolution,
+        };
+
+        trades.push(trade);
+
+        // Capture behavior event
+        recordBehaviorEvent({
+          symbol,
+          engineName: openTrade.winner.engineName,
+          entryType: openTrade.winner.entryType,
+          direction: dir,
+          regimeAtEntry: openTrade.regimeAtEntry,
+          regimeConfidence: openTrade.regimeConfidence,
+          nativeScore: openTrade.nativeScore,
+          projectedMovePct: openTrade.winner.projectedMovePct,
+          entryTs: openTrade.entryTs,
+          exitTs: bar.closeTs,
+          holdBars,
+          pnlPct: finalPnl,
+          mfePct: openTrade.mfePct,
+          maePct: openTrade.maePct,
+          exitReason,
+          slStage: openTrade.stage,
+          conflictResolution: openTrade.conflictResolution,
         });
+
         openTrade = null;
       }
 
-      // While trade is open, don't evaluate new signals
       if (openTrade !== null) continue;
     }
 
-    // ── Signal scan (only when no open trade) ────────────────────────────────
-    // Require enough data for HTF indicators
-    if (slice.length < Math.max(60, indicatorLookback / 60)) continue;
+    // ── Signal scan (only when no open trade) ─────────────────────────────
+    if (slice.length < Math.max(60, Math.ceil(indicatorLookback / 60))) continue;
 
     const features = computeFeaturesFromSlice(symbol, slice);
     if (!features) continue;
 
-    const regimeResult = classifyRegime(features);
+    // Accumulate feature sample for HTF averaging
+    featureHistory.push({
+      emaSlope: features.emaSlope,
+      rsi14: features.rsi14,
+      bbWidth: features.bbWidth,
+      bbWidthRoc: features.bbWidthRoc,
+      atr14: features.atr14,
+      atrRank: features.atrRank,
+      atrAccel: features.atrAccel,
+      zScore: features.zScore,
+      spikeHazardScore: features.spikeHazardScore,
+      bbPctB: features.bbPctB,
+    });
+    if (featureHistory.length > HTF_AVERAGING_WINDOW) {
+      featureHistory.shift();
+    }
+
+    // HTF-averaged regime classification (matches live path)
+    const regimeResult = classifyRegimeHTFLocal(features, featureHistory);
 
     const ctx = {
       features,
@@ -351,48 +521,114 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
       regimeConfidence: regimeResult.confidence,
     };
 
-    let winner: EngineResult | null = null;
-    let winnerScore = -1;
-
+    // Run all engines and apply score gate
+    const engineResults: EngineResult[] = [];
     for (const engine of engines) {
-      const result = engine(ctx);
-      if (!result || !result.valid) continue;
-
-      const score = Math.round(result.confidence * 100);
-      if (minScore !== undefined && score < minScore) continue;
-
-      if (score > winnerScore) {
-        winnerScore = score;
-        winner = result;
+      try {
+        const result = engine(ctx);
+        if (!result || !result.valid) continue;
+        const score = Math.round(result.confidence * 100);
+        if (minScore !== undefined && score < minScore) continue;
+        engineResults.push(result);
+      } catch {
+        // Silent: engine error in backtest is non-fatal
       }
     }
 
-    if (!winner) continue;
+    if (engineResults.length === 0) continue;
 
-    const entryPrice = candles[i].close;
-    const proj = winner.projectedMovePct;
-    const leg1Pct = proj * LEG1_PROJ_RATIO;
-    const hardSlPct = proj * HARD_SL_PROJ_RATIO;
-    const atr14AtEntry = features.atr14;
+    // Coordinator selection (matches live path)
+    const coordinatorOutput = runSymbolCoordinator(symbol, engineResults);
+    if (!coordinatorOutput) continue;
+
+    const { winner, conflictResolution } = coordinatorOutput;
+    const nativeScore =
+      winner.metadata?.["boom300NativeScore"] != null ? (winner.metadata["boom300NativeScore"] as number)
+      : winner.metadata?.["crash300NativeScore"] != null ? (winner.metadata["crash300NativeScore"] as number)
+      : winner.metadata?.["r75ReversalNativeScore"] != null ? (winner.metadata["r75ReversalNativeScore"] as number)
+      : winner.metadata?.["r75ContinuationNativeScore"] != null ? (winner.metadata["r75ContinuationNativeScore"] as number)
+      : winner.metadata?.["r75BreakoutNativeScore"] != null ? (winner.metadata["r75BreakoutNativeScore"] as number)
+      : winner.metadata?.["r100ReversalNativeScore"] != null ? (winner.metadata["r100ReversalNativeScore"] as number)
+      : winner.metadata?.["r100BreakoutNativeScore"] != null ? (winner.metadata["r100BreakoutNativeScore"] as number)
+      : winner.metadata?.["r100ContinuationNativeScore"] != null ? (winner.metadata["r100ContinuationNativeScore"] as number)
+      : Math.round(coordinatorOutput.coordinatorConfidence * 100);
+
+    // Apply score gate to coordinator winner if minScore specified
+    if (minScore !== undefined && nativeScore < minScore) continue;
+
+    const entryPrice = bar.close;
+    const dir = winner.direction;
+
+    // ── SR/Fib TP (same as live openPositionV3) ─────────────────────────
+    const tp = calculateSRFibTP({
+      entryPrice,
+      direction: dir,
+      swingHigh: features.swingHigh,
+      swingLow: features.swingLow,
+      majorSwingHigh: features.majorSwingHigh,
+      majorSwingLow: features.majorSwingLow,
+      fibExtensionLevels: features.fibExtensionLevels ?? [],
+      fibExtensionLevelsDown: features.fibExtensionLevelsDown ?? [],
+      bbUpper: features.bbUpper,
+      bbLower: features.bbLower,
+      atrPct: features.atr14,
+      pivotLevels: [
+        features.pivotR1, features.pivotR2, features.pivotS1, features.pivotS2,
+      ].filter((v): v is number => typeof v === "number"),
+      vwap: features.vwap,
+      psychRound: features.psychRound,
+      prevSessionHigh: features.prevSessionHigh,
+      prevSessionLow: features.prevSessionLow,
+      spikeMagnitude: features.spikeMagnitude,
+    });
+
+    if (!isFinite(tp) || tp <= 0) continue;
+
+    // ── SR/Fib SL at 1:5 RR (same as live) ─────────────────────────────
+    const sl = calculateSRFibSL({
+      entryPrice,
+      direction: dir,
+      tp,
+      positionSize: SYNTHETIC_SIZE,
+      equity: SYNTHETIC_EQUITY,
+    });
+
+    if (!isFinite(sl) || sl <= 0) continue;
+
+    const tpPct = Math.abs(tp - entryPrice) / entryPrice;
+    const slOriginalPct = Math.abs(sl - entryPrice) / entryPrice;
+
+    // Sanity: TP must be in correct direction
+    if (dir === "buy" && tp <= entryPrice) continue;
+    if (dir === "sell" && tp >= entryPrice) continue;
 
     openTrade = {
-      engine: winner,
+      winner,
       entryBar: i,
       entryPrice,
-      entryTs: candles[i].closeTs,
+      entryTs: bar.closeTs,
       regimeAtEntry: regimeResult.regime,
       regimeConfidence: regimeResult.confidence,
-      nativeScore: winnerScore,
+      nativeScore,
+      conflictResolution,
+      tp,
+      sl,
+      originalSl: sl,
+      stage: 1,
+      peakPrice: entryPrice,
       mfePct: 0,
       maePct: 0,
-      leg1Pct: winner.direction === "buy" ? leg1Pct : -leg1Pct,
-      hardSlPct: winner.direction === "buy" ? -hardSlPct : hardSlPct,
-      leg1Hit: false,
-      atr14AtEntry: Math.max(atr14AtEntry, 0.001),
+      atr14AtEntry: Math.max(features.atr14, 0.001),
+      instrumentFamily,
+      emaSlope: features.emaSlope,
+      spikeCount4h: features.spikeCount4h ?? 0,
+      adverseCandleCount: 0,
+      tpPct,
+      slOriginalPct,
     };
   }
 
-  const barsInRange = clamp(candles.length - simStart, 0, candles.length);
+  const barsInRange = Math.max(0, candles.length - simStart);
 
   return {
     symbol,

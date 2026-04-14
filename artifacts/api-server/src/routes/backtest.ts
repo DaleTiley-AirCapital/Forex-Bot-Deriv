@@ -464,7 +464,7 @@ router.post("/backtest/v3/run", async (req, res): Promise<void> => {
     }
 
     const totalTrades = Object.values(results).reduce(
-      (sum, r) => sum + ((r as { trades: unknown[] }).trades?.length ?? 0), 0
+      (sum: number, r) => sum + ((r as { trades: unknown[] }).trades?.length ?? 0), 0
     );
 
     res.json({

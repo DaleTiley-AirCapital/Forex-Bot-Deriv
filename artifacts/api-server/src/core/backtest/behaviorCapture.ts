@@ -43,6 +43,12 @@ export interface BlockedByGateEvent {
   modeGate: number;
   mode: string;
   ts: number;
+  /** Which allocator stage rejected the signal (1=kill_switch, 2=mode, 3=symbol, 4=score, 5=open, 6=daily_loss, 7=weekly_loss, ...) */
+  rejectionStage?: number;
+  /** Human-readable rejection reason(s) from allocator */
+  rejectionReason?: string;
+  /** True when stage 4 (score gate) — signal-quality block vs platform/risk gate */
+  isSignalQualityBlock?: boolean;
 }
 
 export interface EnteredEvent {

@@ -378,7 +378,6 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
   const endTs = req.endTs ?? now;
   const symbol = req.symbol;
   const mode = req.mode ?? "paper";
-  const modeGate = req.minScore ?? MODE_SCORE_GATES[mode] ?? 60;
 
   const bufferStartTs = startTs - STRUCTURAL_LOOKBACK * 60;
 
@@ -402,7 +401,8 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
 
   if (rawCandles.length < 60) {
     return {
-      symbol, mode, startTs, endTs, totalBars: 0, modeScoreGate: modeGate,
+      symbol, mode, startTs, endTs, totalBars: 0,
+      modeScoreGate: req.minScore ?? MODE_SCORE_GATES[mode] ?? 60,
       signalsFired: 0, signalsBlocked: 0, blockedRate: 0,
       trades: [], summary: computeSummary([], {}),
     };
@@ -425,6 +425,15 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
   // Must use the same key names and same boolean evaluation so that backtest
   // and live can never diverge on mode/symbol/kill-switch admission.
   const modePrefix = { paper: "paper", demo: "demo", real: "real" }[mode] ?? "paper";
+
+  // ── Min score gate — identical precedence to allocateV3Signal ────────────────
+  // Live allocator reads: stateMap[`${prefix}_min_composite_score`] ??
+  //                       stateMap["min_composite_score"] ?? MODE_SCORE_GATES[mode]
+  // req.minScore acts as a caller override (used by tests/UI when specified).
+  const modeDefaultGate = MODE_SCORE_GATES[mode] ?? 60;
+  const gateFomState    = stateMap[`${modePrefix}_min_composite_score`] || stateMap["min_composite_score"];
+  const modeGate        = req.minScore ?? (gateFomState ? parseFloat(gateFomState) : modeDefaultGate);
+
   const killSwitchActive = stateMap["kill_switch"] === "true";
   const modeEnabled =
     stateMap[`${modePrefix}_mode_active`] === "true" ||
@@ -624,8 +633,9 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
         trades.push(trade);
 
         // Track closed trade PnL for daily/weekly loss limit gates
+        // bar.closeTs is unix epoch SECONDS — multiply by 1000 to store as ms
         simClosedPnls.push({
-          closeTs: new Date(bar.closeTs).getTime(),
+          closeTs: bar.closeTs * 1000,
           pnlUsd: finalPnl * SYNTHETIC_SIZE,
         });
 
@@ -731,7 +741,8 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
     // dailyLossLimitBreached and weeklyLossLimitBreached are computed from the
     // simulation's own accumulated closed-trade PnL so that risk gates fire
     // correctly during replay (no longer assumed false).
-    const nowTs = new Date(bar.closeTs).getTime();
+    // bar.closeTs is unix epoch SECONDS — convert to ms for window comparisons
+    const nowTs        = bar.closeTs * 1000;
     const dayStartTs   = nowTs - 86_400_000;
     const weekStartTs  = nowTs - 7 * 86_400_000;
     const dailyLossUsd  = simClosedPnls.filter(p => p.closeTs >= dayStartTs).reduce((s, p) => s + p.pnlUsd, 0);
@@ -765,23 +776,34 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
     });
 
     if (!allocResult.allowed) {
-      // Only count score gate rejections (stage 4) as "blocked by gate"
-      // symbol-already-open (stage 5) = trade management, not signal quality
-      if (allocResult.rejectionStage === 4) {
+      // Record blocked_by_gate event for ALL allocator rejection stages so the
+      // behavior lifecycle profiler has complete signal-blocked coverage.
+      // Stage 4 = score gate (signal quality gate, counted in signalsBlocked)
+      // Stage 5 = symbol already open (trade management gate, not a signal block)
+      // Other stages = platform / risk gates (kill switch, mode, daily/weekly loss, etc.)
+      const isSignalQualityBlock = allocResult.rejectionStage === 4;
+      const isTradeManagementBlock = allocResult.rejectionStage === 5;
+      if (!isTradeManagementBlock) {
+        // Count as "blocked" for all non-symbol-already-open rejections
         signalsBlocked++;
         blockedByEngine[winner.engineName] = (blockedByEngine[winner.engineName] ?? 0) + 1;
-        recordBehaviorEvent({
-          eventType: "blocked_by_gate",
-          symbol,
-          engineName: winner.engineName,
-          direction: winner.direction,
-          regimeAtEntry: regimeResult.regime,
-          nativeScore,
-          modeGate,
-          mode,
-          ts: bar.closeTs,
-        });
       }
+      // Capture behavior event for ALL rejections (incl. platform gates and trade mgmt)
+      // so profiler has full lifecycle visibility
+      recordBehaviorEvent({
+        eventType: "blocked_by_gate",
+        symbol,
+        engineName: winner.engineName,
+        direction: winner.direction,
+        regimeAtEntry: regimeResult.regime,
+        nativeScore,
+        modeGate,
+        mode,
+        ts: bar.closeTs,
+        rejectionStage: allocResult.rejectionStage ?? undefined,
+        rejectionReason: allocResult.rejectionReason ?? `stage${allocResult.rejectionStage ?? 0}`,
+        isSignalQualityBlock,
+      });
       continue;
     }
 

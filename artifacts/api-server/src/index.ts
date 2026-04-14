@@ -194,6 +194,18 @@ async function initDb(): Promise<void> {
       value      TEXT NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS behavior_events (
+      id          SERIAL PRIMARY KEY,
+      symbol      TEXT NOT NULL,
+      engine_name TEXT NOT NULL,
+      event_type  TEXT NOT NULL,
+      source      TEXT NOT NULL DEFAULT 'live',
+      event_data  JSONB NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_behavior_events_symbol ON behavior_events (symbol);
+    CREATE INDEX IF NOT EXISTS idx_behavior_events_source ON behavior_events (source);
   `);
 
   const migrations = [

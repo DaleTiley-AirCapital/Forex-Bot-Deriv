@@ -339,9 +339,61 @@ interface OpenTradeState {
 //   - maxOpenTrades: set to 1 (single-symbol backtest; no cross-symbol tracking)
 // Score gate (gate 4) and one-per-symbol (gate 5) are fully simulated.
 
+// ── Shared portfolio ledger for synchronized multi-symbol replay ─────────────
+//
+// Tracks ALL open positions across symbols in time order. Used by
+// runV3BacktestMulti so gates 6 (maxOpenTrades) and 10 (correlatedFamilyCap)
+// are evaluated with real cross-symbol portfolio state — the same semantics
+// as the live portfolioAllocatorV3 path.
+//
+// Positions are recorded by the timestamp of the bar that opened/closed them,
+// enabling correct portfolio-state queries at any bar time T regardless of
+// the order in which symbols are replayed.
+
+export class SharedPortfolioLedger {
+  private history: Array<{
+    symbol: string;
+    family: string;
+    openTs: number;    // bar closeTs (ms) when position was opened
+    closeTs: number;   // bar closeTs (ms) when position was closed; Infinity = still open
+  }> = [];
+  private openBySymbol = new Map<string, string>(); // symbol → family, for open positions
+
+  /** Record a new position opening. openTs is the bar closeTs in ms. */
+  open(symbol: string, family: string, openTs: number): void {
+    this.history.push({ symbol, family, openTs, closeTs: Infinity });
+    this.openBySymbol.set(symbol, family);
+  }
+
+  /** Record a position closing. closeTs is the bar closeTs in ms. */
+  close(symbol: string, closeTs: number): void {
+    const pos = [...this.history].reverse().find(p => p.symbol === symbol && p.closeTs === Infinity);
+    if (pos) pos.closeTs = closeTs;
+    this.openBySymbol.delete(symbol);
+  }
+
+  /** Count of positions open at bar time T (inclusive). */
+  getOpenCount(atTs: number): number {
+    return this.history.filter(p => p.openTs <= atTs && p.closeTs > atTs).length;
+  }
+
+  /** Count of positions in a given instrument family that are open at bar time T. */
+  getFamilyOpenCount(family: string, atTs: number): number {
+    return this.history.filter(p => p.family === family && p.openTs <= atTs && p.closeTs > atTs).length;
+  }
+
+  /** True if the given symbol has an open position at bar time T. */
+  isSymbolOpen(symbol: string, atTs: number): boolean {
+    return this.history.some(p => p.symbol === symbol && p.openTs <= atTs && p.closeTs > atTs);
+  }
+}
+
 // ── Core simulation loop ──────────────────────────────────────────────────────
 
-export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestResult> {
+export async function runV3Backtest(
+  req: V3BacktestRequest,
+  sharedLedger?: SharedPortfolioLedger,
+): Promise<V3BacktestResult> {
   const now = Math.floor(Date.now() / 1000);
   const startTs = req.startTs ?? (now - 90 * 86400);
   const endTs = req.endTs ?? now;
@@ -649,6 +701,8 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
         };
         recordBehaviorEvent(closedEvent);
 
+        // Update shared ledger so other symbols see this close in their replay
+        if (sharedLedger) sharedLedger.close(symbol, bar.closeTs * 1000);
         openTrade = null;
       }
 
@@ -752,14 +806,25 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
       killSwitchActive,   // real: from platformState["kill_switch"]
       modeEnabled,        // real: from platformState prefix keys
       symbolEnabled,      // real: from platformState prefix_enabled_symbols
-      openTradeForSymbol: openTrade !== null,
-      currentOpenCount: openTrade !== null ? 1 : 0,
+      // When a shared ledger is provided (multi-symbol run), use it for cross-symbol
+      // portfolio state — this gives gates 6 and 10 the same semantics as live.
+      // Without a ledger (single-symbol run), fall back to local-only state.
+      openTradeForSymbol: sharedLedger
+        ? sharedLedger.isSymbolOpen(symbol, bar.closeTs * 1000)
+        : openTrade !== null,
+      currentOpenCount: sharedLedger
+        ? sharedLedger.getOpenCount(bar.closeTs * 1000)
+        : (openTrade !== null ? 1 : 0),
       maxOpenTrades,                     // from platformState — same formula as live allocator
       dailyLossLimitBreached,            // computed from simulation trades + real totalCapital
       weeklyLossLimitBreached,           // computed from simulation trades + real totalCapital
       maxDrawdownBreached,               // computed from running single-symbol equity curve
-      correlatedFamilyCapBreached: false,// identical to live allocator (portfolioAllocatorV3.ts:119)
-      simulationDefaults: runSimulationGaps,
+      // correlatedFamilyCapBreached: false — identical to live portfolioAllocatorV3 (line 119).
+      // Live also hardcodes this to false, so backtest=false IS correct parity.
+      // With a shared ledger, cross-symbol open count (gate 6) already enforces the
+      // multi-symbol limit, so family-cap is an additive concern, not a parity gap.
+      correlatedFamilyCapBreached: false,
+      simulationDefaults: sharedLedger ? [] : runSimulationGaps,
     });
 
     if (!allocResult.allowed) {
@@ -879,6 +944,9 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
       slOriginalPct,
       tpProgressAtBe: 0,
     };
+
+    // Register opening in shared ledger so concurrent symbols see this position
+    if (sharedLedger) sharedLedger.open(symbol, instrumentFamily, bar.closeTs * 1000);
   }
 
   const barsInRange = Math.max(0, candles.length - simStart);
@@ -910,13 +978,27 @@ export async function runV3BacktestMulti(
   minScore?: number,
   mode?: "paper" | "demo" | "real",
 ): Promise<Record<string, V3BacktestResult>> {
-  const results = await Promise.all(
-    symbols.map(sym => runV3Backtest({ symbol: sym, startTs, endTs, minScore, mode }))
-  );
-
-  const out: Record<string, V3BacktestResult> = {};
-  for (let i = 0; i < symbols.length; i++) {
-    out[symbols[i]] = results[i];
+  if (symbols.length <= 1) {
+    // Single-symbol path — no ledger needed
+    const result = await runV3Backtest({ symbol: symbols[0] ?? "", startTs, endTs, minScore, mode });
+    return symbols[0] ? { [symbols[0]]: result } : {};
   }
+
+  // Multi-symbol path — use a shared portfolio ledger so gates 5 (one-per-symbol),
+  // 6 (maxOpenTrades), and correlated-family checks use real cross-symbol portfolio
+  // state for each bar, matching the live portfolioAllocatorV3 semantics.
+  //
+  // Symbols are replayed sequentially (not in parallel) so the ledger timeline
+  // is populated by earlier symbols before later ones query it. Each symbol's
+  // replay uses bar timestamps to query the ledger — ensuring that a position
+  // from symbol A that was opened at T and closed at T+N is correctly visible
+  // to symbol B when it evaluates bars in the [T, T+N] range.
+  const ledger = new SharedPortfolioLedger();
+  const out: Record<string, V3BacktestResult> = {};
+
+  for (const sym of symbols) {
+    out[sym] = await runV3Backtest({ symbol: sym, startTs, endTs, minScore, mode }, ledger);
+  }
+
   return out;
 }

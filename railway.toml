@@ -3,6 +3,9 @@ builder = "DOCKERFILE"
 dockerfilePath = "./Dockerfile"
 
 [deploy]
+# preDeployCommand is intentionally omitted — psql is not available in the
+# runtime image. Run artifacts/api-server/scripts/railway-rebuild.sql manually
+# via the Railway Postgres console when schema seeding is needed.
 healthcheckPath = "/api/healthz"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"

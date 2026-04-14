@@ -12,8 +12,10 @@ import {
   updateCandidate,
   markCandidateExecuted,
   getSymbolsNeedingWatchScan,
+  getWatchedCandidates,
   cleanupStale,
 } from "../core/candidateLifecycle.js";
+import type { BehaviorProfileSummary } from "../core/backtest/behaviorProfiler.js";
 
 const DEFAULT_SYMBOLS = ACTIVE_TRADING_SYMBOLS;
 const DEFAULT_SCAN_INTERVAL_MS = 300_000;
@@ -624,13 +626,53 @@ async function watchScanCycle(): Promise<void> {
     if (killSwitch) return;
 
     const nowMs = Date.now();
+    // Pre-load watched candidates once for the full cycle
+    const allWatchedCandidates = getWatchedCandidates();
+
     for (const sym of watchSymbols) {
-      // Behavior-guided cadence: only re-scan if the behavior-recommended interval has elapsed
+      // ── Gate 1: Behavior-guided cadence throttle ──────────────────────────
+      // Only re-scan once the behavior-recommended interval has elapsed.
       const behaviorCadenceMs = stateMap[`behavior_watch_cadence_${sym}`]
         ? parseInt(stateMap[`behavior_watch_cadence_${sym}`], 10)
         : WATCH_SCAN_INTERVAL_MS;
       const lastScan = watchLastScanMs[sym] ?? 0;
       if (nowMs - lastScan < behaviorCadenceMs) continue;
+
+      // ── Gate 2: Trigger-state maturity check (behavior profile) ──────────
+      // Require watch candidates to have been observed for at least
+      // `recommendedMemoryWindowBars` minutes (= 1 bar per minute convention)
+      // before allowing the execution scan to proceed. This prevents
+      // hair-trigger execution on signals that haven't had time to develop
+      // the pattern strength expected by the historically-derived profile.
+      const profileRaw = stateMap[`behavior_profile_${sym}`];
+      if (profileRaw) {
+        try {
+          const profile = JSON.parse(profileRaw) as BehaviorProfileSummary;
+          const minMaturityMins = profile.recommendedScanCadenceMins
+            ? profile.recommendedScanCadenceMins * 2   // require ≥2 cadence cycles of watch
+            : 0;
+
+          if (minMaturityMins > 0) {
+            const symCandidates = allWatchedCandidates.filter(
+              c => c.symbol === sym && (c.status === "watch" || c.status === "qualified"),
+            );
+            if (symCandidates.length > 0) {
+              const oldestMs = Math.min(...symCandidates.map(c => c.firstSeenAt.getTime()));
+              const watchDurationMins = (nowMs - oldestMs) / 60_000;
+              if (watchDurationMins < minMaturityMins) {
+                console.log(
+                  `[WatchScan] ${sym} | TRIGGER_MATURITY_GATE | ` +
+                  `watchDuration=${watchDurationMins.toFixed(1)}min < ` +
+                  `maturityRequired=${minMaturityMins}min | deferring execution scan`,
+                );
+                continue;
+              }
+            }
+          }
+        } catch {
+          // Profile parse error — allow scan to proceed without maturity gate
+        }
+      }
 
       try {
         await scanSingleSymbolV3(sym, stateMap);

@@ -111,6 +111,13 @@ export interface V3BacktestResult {
   signalsBlocked: number;
   blockedRate: number;
   trades: V3BacktestTrade[];
+  /**
+   * Allocator gates that could NOT be applied with full parity because they
+   * require cross-symbol or live portfolio state unavailable in single-symbol
+   * historical replay. Non-empty = backtest made assumptions for these gates.
+   * Callers should surface these to the user as simulation caveats.
+   */
+  simulationGaps: string[];
   summary: {
     tradeCount: number;
     winCount: number;
@@ -368,7 +375,7 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
       symbol, mode, startTs, endTs, totalBars: 0,
       modeScoreGate: req.minScore ?? MODE_SCORE_GATES[mode] ?? 60,
       signalsFired: 0, signalsBlocked: 0, blockedRate: 0,
-      trades: [], summary: computeSummary([], {}),
+      trades: [], simulationGaps: [], summary: computeSummary([], {}),
     };
   }
 
@@ -425,6 +432,20 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
   const simClosedPnls: Array<{ closeTs: number; pnlUsd: number }> = [];
   const maxDailyLossPct  = parseFloat(stateMap[`${modePrefix}_max_daily_loss_pct`] || stateMap["max_daily_loss_pct"] || "5") / 100;
   const maxWeeklyLossPct = parseFloat(stateMap[`${modePrefix}_max_weekly_loss_pct`] || stateMap["max_weekly_loss_pct"] || "10") / 100;
+
+  // ── Allocator parity gaps — declared once, carried through to the response ─
+  // These gates require cross-symbol live portfolio state that is unavailable
+  // in a single-symbol historical replay. Failing loud: each gap is logged as
+  // a console.warn so callers (CI, logs, UI) can see what was assumed.
+  const runSimulationGaps: string[] = [
+    "maxDrawdownBreached=assumed_false(no_cross_symbol_equity_curve)",
+    "correlatedFamilyCapBreached=assumed_false(no_cross_symbol_positions)",
+    "maxOpenTrades=1(single_symbol_sim_not_actual_platform_limit)",
+  ];
+  console.warn(
+    `[BacktestRunner] SIMULATION PARITY GAPS for ${symbol} (${mode}): ` +
+    runSimulationGaps.join("; ")
+  );
 
   for (let i = simStart; i < candles.length; i++) {
     const sliceStart = Math.max(0, i - STRUCTURAL_LOOKBACK + 1);
@@ -875,6 +896,7 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
     signalsBlocked,
     blockedRate,
     trades,
+    simulationGaps: runSimulationGaps,
     summary: computeSummary(trades, blockedByEngine),
   };
 }

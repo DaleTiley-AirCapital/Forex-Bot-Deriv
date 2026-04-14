@@ -6,8 +6,10 @@
  * POST /api/behavior/profile/:symbol/:engine    — (re)build profile for a specific engine
  * GET  /api/behavior/profile/:symbol            — get cached profile for a symbol
  * GET  /api/behavior/profile/:symbol/:engine    — get single engine profile
- * GET  /api/behavior/export/:symbol             — export raw behavior events as JSON
- * GET  /api/behavior/export/:symbol/:engine     — export per-engine events
+ * GET  /api/behavior/export/:symbol             — export derived behavior profile as JSON (for download)
+ * GET  /api/behavior/export/:symbol/:engine     — export derived engine profile as JSON (for download)
+ * GET  /api/behavior/events/:symbol             — raw behavior events (debug / internal use)
+ * GET  /api/behavior/events/:symbol/:engine     — raw events filtered by engine
  * POST /api/behavior/persist/:symbol            — persist derived profile to platformState
  */
 import { Router, type IRouter } from "express";
@@ -181,16 +183,49 @@ router.get("/behavior/profile/:symbol/:engine", (req, res): void => {
 });
 
 // ── GET /api/behavior/export/:symbol ─────────────────────────────────────────
+// Returns the derived behavior profile (not raw events) for downstream
+// consumption by the frontend and AI suggestion layer.
 
 router.get("/behavior/export/:symbol", (req, res): void => {
+  const { symbol } = req.params;
+  const profile = deriveSymbolBehaviorProfile(symbol);
+  if (!profile) {
+    res.status(404).json({
+      error: `No behavior data for symbol "${symbol}". Run POST /api/behavior/profile first.`,
+    });
+    return;
+  }
+  res.json(profile);
+});
+
+// ── GET /api/behavior/export/:symbol/:engine ──────────────────────────────────
+// Returns the derived engine behavior profile (not raw events).
+
+router.get("/behavior/export/:symbol/:engine", (req, res): void => {
+  const { symbol, engine } = req.params;
+  const profile = deriveEngineProfile(symbol, engine);
+  if (!profile) {
+    res.status(404).json({
+      error: `No behavior data for ${symbol}/${engine}. Run POST /api/behavior/profile first.`,
+    });
+    return;
+  }
+  res.json(profile);
+});
+
+// ── GET /api/behavior/events/:symbol ─────────────────────────────────────────
+// Raw behavior events — for debugging and internal diagnostics only.
+
+router.get("/behavior/events/:symbol", (req, res): void => {
   const { symbol } = req.params;
   const events = getBehaviorEvents(symbol);
   res.json({ symbol, eventCount: events.length, events });
 });
 
-// ── GET /api/behavior/export/:symbol/:engine ──────────────────────────────────
+// ── GET /api/behavior/events/:symbol/:engine ──────────────────────────────────
+// Raw events filtered to a specific engine.
 
-router.get("/behavior/export/:symbol/:engine", (req, res): void => {
+router.get("/behavior/events/:symbol/:engine", (req, res): void => {
   const { symbol, engine } = req.params;
   const events = getBehaviorEvents(symbol, engine);
   res.json({ symbol, engineName: engine, eventCount: events.length, events });

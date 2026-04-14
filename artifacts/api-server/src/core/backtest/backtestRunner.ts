@@ -35,8 +35,6 @@ import { db, candlesTable, platformStateTable } from "@workspace/db";
 import { eq, and, gte, lte, asc } from "drizzle-orm";
 import { computeFeaturesFromSlice, type CandleRow } from "./featureSlice.js";
 import { classifyRegime } from "../regimeEngine.js";
-import { getEnginesForSymbol } from "../engineRegistry.js";
-import { runSymbolCoordinator } from "../symbolCoordinator.js";
 import {
   calculateSRFibTP,
   calculateSRFibSL,
@@ -53,6 +51,7 @@ import {
   evaluateSignalAdmission,
   MODE_SCORE_GATES,
 } from "../allocatorCore.js";
+import { runEnginesAndCoordinate } from "../signalPipeline.js";
 import {
   evaluateBarExits,
   calcTpProgress,
@@ -362,12 +361,12 @@ interface OpenTradeState {
 //   - killSwitchActive: read from platformState["kill_switch"]
 //   - modeEnabled:      read from platformState prefix (same logic as allocateV3Signal)
 //   - symbolEnabled:    read from platformState prefix_enabled_symbols list
-// True simulation gaps (require live portfolio PnL across all symbols, unavailable
-// in single-symbol historical replay):
-//   - dailyLossLimitBreached:  assumed false
-//   - weeklyLossLimitBreached: assumed false
-//   - maxDrawdownBreached:     assumed false
-//   - correlatedFamilyCapBreached: assumed false
+// Computed from simulation state per bar:
+//   - dailyLossLimitBreached:  derived from simClosedPnls (within last 24h of replay ts)
+//   - weeklyLossLimitBreached: derived from simClosedPnls (within last 7d of replay ts)
+// Remaining true simulation gaps (require live cross-symbol PnL, unavailable here):
+//   - maxDrawdownBreached:     assumed false (no cross-symbol equity curve)
+//   - correlatedFamilyCapBreached: assumed false (no cross-symbol state)
 //   - maxOpenTrades: set to 1 (single-symbol backtest; no cross-symbol tracking)
 // Score gate (gate 4) and one-per-symbol (gate 5) are fully simulated.
 
@@ -422,18 +421,19 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
   const stateMap: Record<string, string> = {};
   for (const r of platformRows) stateMap[r.key] = r.value;
 
+  // ── Platform flag derivation — identical logic to portfolioAllocatorV3 ──────
+  // Must use the same key names and same boolean evaluation so that backtest
+  // and live can never diverge on mode/symbol/kill-switch admission.
   const modePrefix = { paper: "paper", demo: "demo", real: "real" }[mode] ?? "paper";
   const killSwitchActive = stateMap["kill_switch"] === "true";
   const modeEnabled =
     stateMap[`${modePrefix}_mode_active`] === "true" ||
     stateMap[`${modePrefix}_mode`] === "active" ||
-    stateMap[`${modePrefix}_enabled`] === "true" ||
-    !stateMap[`${modePrefix}_mode_active`];  // default: mode active if not explicitly disabled
+    stateMap[`${modePrefix}_enabled`] === "true";
   const modeSymbolsRaw = stateMap[`${modePrefix}_enabled_symbols`] || stateMap["enabled_symbols"] || "";
   const modeSymbols = modeSymbolsRaw ? modeSymbolsRaw.split(",").map(s => s.trim()).filter(Boolean) : null;
   const symbolEnabled = !modeSymbols || modeSymbols.includes(symbol);
 
-  const engines = getEnginesForSymbol(symbol);
   const instrumentFamily = getInstrumentFamily(symbol);
   const htfMins = getSymbolIndicatorTimeframeMins(symbol);
   const indicatorLookback = 55 * htfMins;
@@ -444,6 +444,14 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
   let signalsFired = 0;
   let signalsBlocked = 0;
   const blockedByEngine: Record<string, number> = {};
+
+  // ── Simulation PnL state — used to evaluate daily/weekly risk gates ─────────
+  // Tracks closed simulation trades with their close timestamp and $ PnL so
+  // that dailyLossLimitBreached and weeklyLossLimitBreached are computed from
+  // replay state rather than assumed false.
+  const simClosedPnls: Array<{ closeTs: number; pnlUsd: number }> = [];
+  const maxDailyLossPct  = parseFloat(stateMap[`${modePrefix}_max_daily_loss_pct`] || stateMap["max_daily_loss_pct"] || "5") / 100;
+  const maxWeeklyLossPct = parseFloat(stateMap[`${modePrefix}_max_weekly_loss_pct`] || stateMap["max_weekly_loss_pct"] || "10") / 100;
 
   for (let i = simStart; i < candles.length; i++) {
     const sliceStart = Math.max(0, i - STRUCTURAL_LOOKBACK + 1);
@@ -615,6 +623,12 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
 
         trades.push(trade);
 
+        // Track closed trade PnL for daily/weekly loss limit gates
+        simClosedPnls.push({
+          closeTs: new Date(bar.closeTs).getTime(),
+          pnlUsd: finalPnl * SYNTHETIC_SIZE,
+        });
+
         // Closed event for behavior profiler
         const closedEvent: ClosedEvent = {
           eventType: "closed",
@@ -672,28 +686,26 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
     // HTF-averaged regime (matches live classifyRegimeFromHTF)
     const regimeResult = classifyRegimeHTFLocal(features, featureHistory);
 
-    const ctx = {
-      features,
-      operationalRegime: regimeResult.regime,
-      regimeConfidence: regimeResult.confidence,
-    };
-
-    // Run all engines
-    const engineResults: EngineResult[] = [];
-    for (const engine of engines) {
-      try {
-        const result = engine(ctx);
-        if (result?.valid) engineResults.push(result);
-      } catch {
-        // Non-fatal engine error in backtest
-      }
+    // ── Engine evaluation + coordinator — shared pipeline ────────────────────
+    // runEnginesAndCoordinate is the exact same function used by engineRouterV3
+    // (live scanner). Both paths share identical engine logic and coordinator
+    // conflict resolution from this point forward.
+    let engineResults: EngineResult[];
+    let coordinatorOutput: ReturnType<typeof runEnginesAndCoordinate>["coordinatorOutput"];
+    try {
+      const pipelineResult = runEnginesAndCoordinate({
+        symbol,
+        features,
+        operationalRegime: regimeResult.regime,
+        regimeConfidence: regimeResult.confidence,
+      });
+      engineResults = pipelineResult.engineResults;
+      coordinatorOutput = pipelineResult.coordinatorOutput;
+    } catch {
+      continue;
     }
 
-    if (engineResults.length === 0) continue;
-
-    // Symbol coordinator (matches live runSymbolCoordinator)
-    const coordinatorOutput = runSymbolCoordinator(symbol, engineResults);
-    if (!coordinatorOutput) continue;
+    if (engineResults.length === 0 || !coordinatorOutput) continue;
 
     const { winner, conflictResolution, coordinatorConfidence } = coordinatorOutput;
     const nativeScore = extractNativeScore(winner, coordinatorConfidence);
@@ -715,15 +727,20 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
     });
 
     // ── Shared admission evaluator (same logic as portfolioAllocatorV3) ─────
-    // killSwitchActive, modeEnabled, symbolEnabled come from real platformState
-    // fetched once at run start (identical source to live allocateV3Signal).
-    // Portfolio PnL-dependent gates remain simulation gaps (unavailable in
-    // single-symbol isolated replay with no cross-symbol PnL tracking).
+    // killSwitchActive, modeEnabled, symbolEnabled come from real platformState.
+    // dailyLossLimitBreached and weeklyLossLimitBreached are computed from the
+    // simulation's own accumulated closed-trade PnL so that risk gates fire
+    // correctly during replay (no longer assumed false).
+    const nowTs = new Date(bar.closeTs).getTime();
+    const dayStartTs   = nowTs - 86_400_000;
+    const weekStartTs  = nowTs - 7 * 86_400_000;
+    const dailyLossUsd  = simClosedPnls.filter(p => p.closeTs >= dayStartTs).reduce((s, p) => s + p.pnlUsd, 0);
+    const weeklyLossUsd = simClosedPnls.filter(p => p.closeTs >= weekStartTs).reduce((s, p) => s + p.pnlUsd, 0);
+    const dailyLossLimitBreached  = dailyLossUsd  < -(maxDailyLossPct  * SYNTHETIC_SIZE);
+    const weeklyLossLimitBreached = weeklyLossUsd < -(maxWeeklyLossPct * SYNTHETIC_SIZE);
+
     const simulationGaps = [
       "maxOpenTrades=1(single_symbol_sim)",
-      "dailyLossLimitBreached=assumed_false(no_portfolio_pnl_state)",
-      "weeklyLossLimitBreached=assumed_false(no_portfolio_pnl_state)",
-      "maxDrawdownBreached=assumed_false(no_portfolio_pnl_state)",
       "correlatedFamilyCapBreached=assumed_false(no_cross_symbol_state)",
     ];
     const allocResult = evaluateSignalAdmission({
@@ -740,9 +757,9 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
       openTradeForSymbol: openTrade !== null,
       currentOpenCount: openTrade !== null ? 1 : 0,
       maxOpenTrades: 1,                  // gap: single-symbol sim
-      dailyLossLimitBreached: false,     // gap: no portfolio PnL state
-      weeklyLossLimitBreached: false,    // gap: no portfolio PnL state
-      maxDrawdownBreached: false,        // gap: no portfolio PnL state
+      dailyLossLimitBreached,            // computed from simulation trades
+      weeklyLossLimitBreached,           // computed from simulation trades
+      maxDrawdownBreached: false,        // gap: no cross-symbol equity curve
       correlatedFamilyCapBreached: false,// gap: no cross-symbol state
       simulationDefaults: simulationGaps,
     });

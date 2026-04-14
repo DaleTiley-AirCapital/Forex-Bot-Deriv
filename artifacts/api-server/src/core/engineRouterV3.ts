@@ -6,14 +6,17 @@
  *
  * Flow: features → operational regime → engines → coordinator → output
  *
+ * Engine evaluation + coordinator conflict resolution are delegated to the
+ * shared signalPipeline.runEnginesAndCoordinate, which is also used by
+ * backtestRunner to guarantee identical decision logic in both paths.
+ *
  * Loud failure: throws if a symbol has no registered engines.
  * No silent fallback to the V2 family router.
  */
 import { computeFeatures } from "./features.js";
 import { getCachedRegime, classifyRegimeFromHTF, cacheRegime, accumulateHourlyFeatures } from "./regimeEngine.js";
-import { getEnginesForSymbol } from "./engineRegistry.js";
-import { runSymbolCoordinator } from "./symbolCoordinator.js";
-import type { EngineContext, EngineResult, CoordinatorOutput } from "./engineTypes.js";
+import { runEnginesAndCoordinate } from "./signalPipeline.js";
+import type { CoordinatorOutput, EngineResult } from "./engineTypes.js";
 import type { FeatureVector } from "./features.js";
 
 export interface V3ScanResult {
@@ -55,35 +58,25 @@ export async function scanSymbolV3(symbol: string): Promise<V3ScanResult> {
   const operationalRegime = regime.regime;
   const regimeConfidence  = regime.confidence;
 
-  // ── 4. Get symbol-native engines (loud failure if misconfigured) ────────────
-  let engines;
+  // ── 4-5. Engine evaluation + coordinator — shared runtime pipeline ──────────
+  // backtestRunner uses the same runEnginesAndCoordinate function so
+  // both live and historical replay paths are identical from this point.
+  let engineResults: EngineResult[];
+  let coordinatorOutput: CoordinatorOutput | null;
   try {
-    engines = getEnginesForSymbol(symbol);
+    const pipelineResult = runEnginesAndCoordinate({
+      symbol,
+      features,
+      operationalRegime,
+      regimeConfidence,
+    });
+    engineResults = pipelineResult.engineResults;
+    coordinatorOutput = pipelineResult.coordinatorOutput;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[V3Router] LOUD FAILURE — ${msg}`);
     throw err;
   }
-
-  // ── 5. Evaluate each engine ────────────────────────────────────────────────
-  const ctx: EngineContext = {
-    features,
-    operationalRegime,
-    regimeConfidence,
-  };
-
-  const engineResults: EngineResult[] = [];
-  for (const engine of engines) {
-    try {
-      const result = engine(ctx);
-      if (result) engineResults.push(result);
-    } catch (err) {
-      console.error(`[V3Router] Engine error for ${symbol}:`, err instanceof Error ? err.message : err);
-    }
-  }
-
-  // ── 6. Symbol coordinator ──────────────────────────────────────────────────
-  const coordinatorOutput = runSymbolCoordinator(symbol, engineResults);
 
   if (coordinatorOutput) {
     const { winner, suppressedEngines, conflictResolution } = coordinatorOutput;

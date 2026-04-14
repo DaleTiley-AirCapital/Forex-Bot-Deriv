@@ -546,6 +546,7 @@ function BacktestTab() {
   }
 
   async function exportSignals() {
+    setErr(null);
     const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
     const startTs = Math.floor(new Date(startDate + "T00:00:00Z").getTime() / 1000);
     const endTs   = Math.floor(new Date(endDate   + "T23:59:59Z").getTime() / 1000);
@@ -555,9 +556,13 @@ function BacktestTab() {
     if (!isAllSymbols) params.set("symbol", symbol);
     try {
       const data = await apiFetch(`signals/export?${params.toString()}`);
+      const result = data as { truncated?: boolean; count: number; note?: string };
+      if (result.truncated) {
+        setErr(`Signal export capped at ${result.count} rows. ${result.note ?? ""}`);
+      }
       downloadJson(data, `signals-export-${isAllSymbols ? "all" : symbol}-${timestamp}.json`);
-    } catch {
-      // silently ignore — user can retry
+    } catch (e: any) {
+      setErr(`Signal export failed: ${e?.message ?? "Unknown error"}`);
     }
   }
 
@@ -926,8 +931,8 @@ function BehaviorModelTab() {
     try {
       const data = await apiFetch(`behavior/export/${symbol}/${engine}`);
       downloadBehaviorJson(data, `behavior-profile-${symbol}-${engine}-${ts}.json`);
-    } catch {
-      // engine profile unavailable — silently ignore
+    } catch (e: any) {
+      setErr(`Export failed: ${e?.message ?? "Unknown error"}`);
     }
   }
 

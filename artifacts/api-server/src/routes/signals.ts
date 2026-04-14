@@ -131,7 +131,8 @@ router.get("/signals/export", async (req, res): Promise<void> => {
   const symbolParam  = req.query.symbol ? String(req.query.symbol).toUpperCase() : null;
   const startTsParam = req.query.startTs ? Number(req.query.startTs) : null;
   const endTsParam   = req.query.endTs   ? Number(req.query.endTs)   : null;
-  const limitParam   = Math.min(Number(req.query.limit || 2000), 5000);
+  const rawLimit     = Number(req.query.limit);
+  const limitParam   = Math.min(isNaN(rawLimit) || rawLimit <= 0 ? 5000 : rawLimit, 5000);
 
   if (symbolParam && !SYMBOLS.includes(symbolParam)) {
     res.status(400).json({ error: `Unknown symbol. Use one of: ${SYMBOLS.join(", ")}` });
@@ -153,13 +154,17 @@ router.get("/signals/export", async (req, res): Promise<void> => {
       .orderBy(asc(signalLogTable.ts))
       .limit(limitParam);
 
+    const truncated = rows.length === limitParam;
     res.json({
       exported_at: new Date().toISOString(),
       symbol: symbolParam ?? "all",
       startTs: startTsParam,
       endTs: endTsParam,
       count: rows.length,
-      note: "Includes all signal decisions: allowed, blocked, and executed.",
+      truncated,
+      note: truncated
+        ? `Result is capped at ${limitParam} rows — use a narrower date range or add limit= to retrieve more.`
+        : "Includes all signal decisions: allowed, blocked, and executed.",
       signals: rows.map(r => ({
         id:               r.id,
         ts:               r.ts.toISOString(),

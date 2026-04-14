@@ -5,6 +5,7 @@ import type { TradingMode } from "../infrastructure/deriv.js";
 import type { AllocationDecision } from "./signalRouter.js";
 import { checkAndAutoExtract } from "./extractionEngine.js";
 import { recordBehaviorEvent } from "./backtest/behaviorCapture.js";
+import { evaluateBarExits } from "./tradeManagement.js";
 
 const MAX_OPEN_TRADES = 6;
 const MAX_EQUITY_DEPLOYED_PCT = 0.80;
@@ -585,21 +586,25 @@ export async function manageOpenPositions(): Promise<void> {
           .where(eq(tradesTable.id, trade.id));
       }
 
-      const slHit = direction === "buy"
-        ? currentPrice <= activeSl
-        : currentPrice >= activeSl;
+      // evaluateBarExits (SL before TP) — same shared evaluator as backtestRunner.
+      // For live tick management, currentPrice is treated as a degenerate bar
+      // (high=low=close=currentPrice). SL-first priority is preserved.
+      const tickExit = evaluateBarExits({
+        direction,
+        barHigh: currentPrice,
+        barLow: currentPrice,
+        barClose: currentPrice,
+        tp: trade.tp,
+        sl: activeSl,
+      });
 
-      if (slHit) {
-        await closePosition(trade.id, currentPrice, "stop_loss_hit");
+      if (tickExit.exitReason === "sl_hit") {
+        await closePosition(trade.id, tickExit.exitPrice, "stop_loss_hit");
         continue;
       }
 
-      const tpHit = direction === "buy"
-        ? currentPrice >= trade.tp
-        : currentPrice <= trade.tp;
-
-      if (tpHit) {
-        await closePosition(trade.id, currentPrice, "take_profit_hit");
+      if (tickExit.exitReason === "tp_hit") {
+        await closePosition(trade.id, tickExit.exitPrice, "take_profit_hit");
         continue;
       }
 

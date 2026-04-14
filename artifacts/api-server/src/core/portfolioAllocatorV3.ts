@@ -123,230 +123,230 @@ export async function allocateV3Signal(
     if (admissionResult.rejectionStage === 4) {
       const minConfidence = minScore / 100;
       if (winner.confidence < minConfidence) {
-    // Build engine-specific rejection reason for BOOM300
-    const isBoom300 = winner.engineName === "boom_expansion_engine";
-    if (isBoom300 && winner.metadata) {
-      const nativeScore = winner.metadata["boom300NativeScore"] as number | undefined;
-      const blockReasons = winner.metadata["boom300BlockReasons"] as string[] | undefined;
-      const gateThreshold = winner.metadata["boom300GateThreshold"] as number | undefined;
-      const componentScores = winner.metadata["componentScores"] as Record<string, number> | undefined;
-      const cs = componentScores ?? {};
-      const breakdown = componentScores
-        ? `spike=${cs.spikeClusterPressure?.toFixed(0)},disp=${cs.upsideDisplacement?.toFixed(0)},exhaust=${cs.exhaustionEvidence?.toFixed(0)},drift=${cs.driftResumption?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
-        : "";
-      const weakParts = blockReasons && blockReasons.length > 0 ? ` | weak=[${blockReasons.join("; ")}]` : "";
-      return deny(
-        `boom300_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
-        (breakdown ? ` | breakdown:[${breakdown}]` : "") +
-        weakParts
-      );
-    }
+        // Build engine-specific rejection reason for BOOM300
+        const isBoom300 = winner.engineName === "boom_expansion_engine";
+        if (isBoom300 && winner.metadata) {
+          const nativeScore = winner.metadata["boom300NativeScore"] as number | undefined;
+          const blockReasons = winner.metadata["boom300BlockReasons"] as string[] | undefined;
+          const gateThreshold = winner.metadata["boom300GateThreshold"] as number | undefined;
+          const componentScores = winner.metadata["componentScores"] as Record<string, number> | undefined;
+          const cs = componentScores ?? {};
+          const breakdown = componentScores
+            ? `spike=${cs.spikeClusterPressure?.toFixed(0)},disp=${cs.upsideDisplacement?.toFixed(0)},exhaust=${cs.exhaustionEvidence?.toFixed(0)},drift=${cs.driftResumption?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
+            : "";
+          const weakParts = blockReasons && blockReasons.length > 0 ? ` | weak=[${blockReasons.join("; ")}]` : "";
+          return deny(
+            `boom300_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
+            (breakdown ? ` | breakdown:[${breakdown}]` : "") +
+            weakParts
+          );
+        }
 
-    // Build engine-specific rejection reason for CRASH300
-    const isCrash300 = winner.engineName === "crash_expansion_engine";
-    if (isCrash300 && winner.metadata) {
-      const nativeScore = winner.metadata["crash300NativeScore"] as number | undefined;
-      const blockReasons = winner.metadata["crash300BlockReasons"] as string[] | undefined;
-      const gateThreshold = winner.metadata["crash300GateThreshold"] as number | undefined;
-      const componentScores = winner.metadata["componentScores"] as Record<string, number> | undefined;
-      const cs = componentScores ?? {};
-      const breakdown = componentScores
-        ? `cluster=${cs.crashSpikeClusterPressure?.toFixed(0)},disp=${cs.downsideDisplacement?.toFixed(0)},exhaust=${cs.exhaustionReversalEvidence?.toFixed(0)},recovery=${cs.recoveryQuality?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
-        : "";
-      const weakParts = blockReasons && blockReasons.length > 0 ? ` | weak=[${blockReasons.join("; ")}]` : "";
-      return deny(
-        `crash300_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
-        (breakdown ? ` | breakdown:[${breakdown}]` : "") +
-        weakParts
-      );
-    }
+        // Build engine-specific rejection reason for CRASH300
+        const isCrash300 = winner.engineName === "crash_expansion_engine";
+        if (isCrash300 && winner.metadata) {
+          const nativeScore = winner.metadata["crash300NativeScore"] as number | undefined;
+          const blockReasons = winner.metadata["crash300BlockReasons"] as string[] | undefined;
+          const gateThreshold = winner.metadata["crash300GateThreshold"] as number | undefined;
+          const componentScores = winner.metadata["componentScores"] as Record<string, number> | undefined;
+          const cs = componentScores ?? {};
+          const breakdown = componentScores
+            ? `cluster=${cs.crashSpikeClusterPressure?.toFixed(0)},disp=${cs.downsideDisplacement?.toFixed(0)},exhaust=${cs.exhaustionReversalEvidence?.toFixed(0)},recovery=${cs.recoveryQuality?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
+            : "";
+          const weakParts = blockReasons && blockReasons.length > 0 ? ` | weak=[${blockReasons.join("; ")}]` : "";
+          return deny(
+            `crash300_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
+            (breakdown ? ` | breakdown:[${breakdown}]` : "") +
+            weakParts
+          );
+        }
 
-    // Build engine-specific rejection reason for R_75 Reversal
-    const isR75Reversal = winner.engineName === "r75_reversal_engine";
-    if (isR75Reversal && winner.metadata) {
-      const nativeScore    = winner.metadata["r75ReversalNativeScore"] as number | undefined;
-      const gateThreshold  = winner.metadata["r75ReversalGateThreshold"] as number | undefined;
-      const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
-      const cs = componentScores ?? {};
-      const breakdown = componentScores
-        ? `extreme=${cs.rangeExtremity?.toFixed(0)},reversal=${cs.reversalConfirmation?.toFixed(0)},stretch=${cs.stretchDeviationQuality?.toFixed(0)},structure=${cs.structureQuality?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
-        : "";
-      const weakComponents = componentScores
-        ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
-            const label: Record<string, string> = {
-              rangeExtremity: "insufficient_range_extremity",
-              reversalConfirmation: "insufficient_reversal_confirmation",
-              stretchDeviationQuality: "insufficient_stretch_deviation",
-              structureQuality: "weak_structure_quality",
-              entryEfficiency: "poor_entry_efficiency",
-              expectedMoveSufficiency: "insufficient_expected_move",
-            };
-            return `${label[k] ?? k}(${v}/100)`;
-          })
-        : [];
-      return deny(
-        `r75_reversal_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
-        (breakdown ? ` | breakdown:[${breakdown}]` : "") +
-        (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
-      );
-    }
+        // Build engine-specific rejection reason for R_75 Reversal
+        const isR75Reversal = winner.engineName === "r75_reversal_engine";
+        if (isR75Reversal && winner.metadata) {
+          const nativeScore    = winner.metadata["r75ReversalNativeScore"] as number | undefined;
+          const gateThreshold  = winner.metadata["r75ReversalGateThreshold"] as number | undefined;
+          const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
+          const cs = componentScores ?? {};
+          const breakdown = componentScores
+            ? `extreme=${cs.rangeExtremity?.toFixed(0)},reversal=${cs.reversalConfirmation?.toFixed(0)},stretch=${cs.stretchDeviationQuality?.toFixed(0)},structure=${cs.structureQuality?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
+            : "";
+          const weakComponents = componentScores
+            ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
+                const label: Record<string, string> = {
+                  rangeExtremity:          "insufficient_range_extremity",
+                  reversalConfirmation:    "insufficient_reversal_confirmation",
+                  stretchDeviationQuality: "insufficient_stretch_deviation",
+                  structureQuality:        "weak_structure_quality",
+                  entryEfficiency:         "poor_entry_efficiency",
+                  expectedMoveSufficiency: "insufficient_expected_move",
+                };
+                return `${label[k] ?? k}(${v}/100)`;
+              })
+            : [];
+          return deny(
+            `r75_reversal_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
+            (breakdown ? ` | breakdown:[${breakdown}]` : "") +
+            (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
+          );
+        }
 
-    // Build engine-specific rejection reason for R_75 Continuation
-    const isR75Continuation = winner.engineName === "r75_continuation_engine";
-    if (isR75Continuation && winner.metadata) {
-      const nativeScore    = winner.metadata["r75ContinuationNativeScore"] as number | undefined;
-      const gateThreshold  = winner.metadata["r75ContinuationGateThreshold"] as number | undefined;
-      const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
-      const cs = componentScores ?? {};
-      const breakdown = componentScores
-        ? `trend=${cs.trendQuality?.toFixed(0)},pullback=${cs.pullbackQuality?.toFixed(0)},slope=${cs.slopeAlignment?.toFixed(0)},structure=${cs.structureContinuity?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
-        : "";
-      const weakComponents = componentScores
-        ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
-            const label: Record<string, string> = {
-              trendQuality: "weak_trend_quality",
-              pullbackQuality: "weak_pullback_quality",
-              slopeAlignment: "poor_slope_alignment",
-              structureContinuity: "poor_structure_continuity",
-              entryEfficiency: "poor_entry_efficiency",
-              expectedMoveSufficiency: "insufficient_expected_move",
-            };
-            return `${label[k] ?? k}(${v}/100)`;
-          })
-        : [];
-      return deny(
-        `r75_continuation_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
-        (breakdown ? ` | breakdown:[${breakdown}]` : "") +
-        (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
-      );
-    }
+        // Build engine-specific rejection reason for R_75 Continuation
+        const isR75Continuation = winner.engineName === "r75_continuation_engine";
+        if (isR75Continuation && winner.metadata) {
+          const nativeScore    = winner.metadata["r75ContinuationNativeScore"] as number | undefined;
+          const gateThreshold  = winner.metadata["r75ContinuationGateThreshold"] as number | undefined;
+          const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
+          const cs = componentScores ?? {};
+          const breakdown = componentScores
+            ? `trend=${cs.trendQuality?.toFixed(0)},pullback=${cs.pullbackQuality?.toFixed(0)},slope=${cs.slopeAlignment?.toFixed(0)},structure=${cs.structureContinuity?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
+            : "";
+          const weakComponents = componentScores
+            ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
+                const label: Record<string, string> = {
+                  trendQuality:            "weak_trend_quality",
+                  pullbackQuality:         "weak_pullback_quality",
+                  slopeAlignment:          "poor_slope_alignment",
+                  structureContinuity:     "poor_structure_continuity",
+                  entryEfficiency:         "poor_entry_efficiency",
+                  expectedMoveSufficiency: "insufficient_expected_move",
+                };
+                return `${label[k] ?? k}(${v}/100)`;
+              })
+            : [];
+          return deny(
+            `r75_continuation_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
+            (breakdown ? ` | breakdown:[${breakdown}]` : "") +
+            (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
+          );
+        }
 
-    // Build engine-specific rejection reason for R_75 Breakout
-    const isR75Breakout = winner.engineName === "r75_breakout_engine";
-    if (isR75Breakout && winner.metadata) {
-      const nativeScore    = winner.metadata["r75BreakoutNativeScore"] as number | undefined;
-      const gateThreshold  = winner.metadata["r75BreakoutGateThreshold"] as number | undefined;
-      const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
-      const cs = componentScores ?? {};
-      const breakdown = componentScores
-        ? `pressure=${cs.boundaryPressure?.toFixed(0)},break=${cs.breakStrength?.toFixed(0)},expand=${cs.expansionQuality?.toFixed(0)},retest=${cs.retestAcceptanceQuality?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
-        : "";
-      const weakComponents = componentScores
-        ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
-            const label: Record<string, string> = {
-              boundaryPressure: "weak_boundary_pressure",
-              breakStrength: "insufficient_break_strength",
-              expansionQuality: "insufficient_expansion_quality",
-              retestAcceptanceQuality: "weak_retest_acceptance",
-              entryEfficiency: "poor_entry_efficiency",
-              expectedMoveSufficiency: "insufficient_expected_move",
-            };
-            return `${label[k] ?? k}(${v}/100)`;
-          })
-        : [];
-      return deny(
-        `r75_breakout_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
-        (breakdown ? ` | breakdown:[${breakdown}]` : "") +
-        (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
-      );
-    }
+        // Build engine-specific rejection reason for R_75 Breakout
+        const isR75Breakout = winner.engineName === "r75_breakout_engine";
+        if (isR75Breakout && winner.metadata) {
+          const nativeScore    = winner.metadata["r75BreakoutNativeScore"] as number | undefined;
+          const gateThreshold  = winner.metadata["r75BreakoutGateThreshold"] as number | undefined;
+          const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
+          const cs = componentScores ?? {};
+          const breakdown = componentScores
+            ? `pressure=${cs.boundaryPressure?.toFixed(0)},break=${cs.breakStrength?.toFixed(0)},expand=${cs.expansionQuality?.toFixed(0)},retest=${cs.retestAcceptanceQuality?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
+            : "";
+          const weakComponents = componentScores
+            ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
+                const label: Record<string, string> = {
+                  boundaryPressure:        "weak_boundary_pressure",
+                  breakStrength:           "insufficient_break_strength",
+                  expansionQuality:        "insufficient_expansion_quality",
+                  retestAcceptanceQuality: "weak_retest_acceptance",
+                  entryEfficiency:         "poor_entry_efficiency",
+                  expectedMoveSufficiency: "insufficient_expected_move",
+                };
+                return `${label[k] ?? k}(${v}/100)`;
+              })
+            : [];
+          return deny(
+            `r75_breakout_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
+            (breakdown ? ` | breakdown:[${breakdown}]` : "") +
+            (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
+          );
+        }
 
-    // Build engine-specific rejection reason for R_100 Reversal
-    const isR100Reversal = winner.engineName === "r100_reversal_engine";
-    if (isR100Reversal && winner.metadata) {
-      const nativeScore    = winner.metadata["r100ReversalNativeScore"] as number | undefined;
-      const gateThreshold  = winner.metadata["r100ReversalGateThreshold"] as number | undefined;
-      const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
-      const cs = componentScores ?? {};
-      const breakdown = componentScores
-        ? `extreme=${cs.rangeExtremity?.toFixed(0)},reversal=${cs.reversalConfirmation?.toFixed(0)},stretch=${cs.stretchDeviation?.toFixed(0)},structure=${cs.structureQuality?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
-        : "";
-      const weakComponents = componentScores
-        ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
-            const label: Record<string, string> = {
-              rangeExtremity:          "insufficient_range_extremity",
-              reversalConfirmation:    "insufficient_reversal_confirmation",
-              stretchDeviation:        "insufficient_stretch_deviation",
-              structureQuality:        "weak_structure_quality",
-              entryEfficiency:         "poor_entry_efficiency",
-              expectedMoveSufficiency: "insufficient_expected_move",
-            };
-            return `${label[k] ?? k}(${v}/100)`;
-          })
-        : [];
-      return deny(
-        `r100_reversal_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
-        (breakdown ? ` | breakdown:[${breakdown}]` : "") +
-        (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
-      );
-    }
+        // Build engine-specific rejection reason for R_100 Reversal
+        const isR100Reversal = winner.engineName === "r100_reversal_engine";
+        if (isR100Reversal && winner.metadata) {
+          const nativeScore    = winner.metadata["r100ReversalNativeScore"] as number | undefined;
+          const gateThreshold  = winner.metadata["r100ReversalGateThreshold"] as number | undefined;
+          const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
+          const cs = componentScores ?? {};
+          const breakdown = componentScores
+            ? `extreme=${cs.rangeExtremity?.toFixed(0)},reversal=${cs.reversalConfirmation?.toFixed(0)},stretch=${cs.stretchDeviation?.toFixed(0)},structure=${cs.structureQuality?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
+            : "";
+          const weakComponents = componentScores
+            ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
+                const label: Record<string, string> = {
+                  rangeExtremity:          "insufficient_range_extremity",
+                  reversalConfirmation:    "insufficient_reversal_confirmation",
+                  stretchDeviation:        "insufficient_stretch_deviation",
+                  structureQuality:        "weak_structure_quality",
+                  entryEfficiency:         "poor_entry_efficiency",
+                  expectedMoveSufficiency: "insufficient_expected_move",
+                };
+                return `${label[k] ?? k}(${v}/100)`;
+              })
+            : [];
+          return deny(
+            `r100_reversal_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
+            (breakdown ? ` | breakdown:[${breakdown}]` : "") +
+            (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
+          );
+        }
 
-    // Build engine-specific rejection reason for R_100 Breakout
-    const isR100Breakout = winner.engineName === "r100_breakout_engine";
-    if (isR100Breakout && winner.metadata) {
-      const nativeScore    = winner.metadata["r100BreakoutNativeScore"] as number | undefined;
-      const gateThreshold  = winner.metadata["r100BreakoutGateThreshold"] as number | undefined;
-      const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
-      const cs = componentScores ?? {};
-      const breakdown = componentScores
-        ? `pressure=${cs.boundaryPressure?.toFixed(0)},break=${cs.breakStrength?.toFixed(0)},expand=${cs.expansionQuality?.toFixed(0)},accept=${cs.acceptanceQuality?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
-        : "";
-      const weakComponents = componentScores
-        ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
-            const label: Record<string, string> = {
-              boundaryPressure:        "weak_boundary_pressure",
-              breakStrength:           "insufficient_break_strength",
-              expansionQuality:        "insufficient_expansion_quality",
-              acceptanceQuality:       "weak_acceptance_quality",
-              entryEfficiency:         "poor_entry_efficiency",
-              expectedMoveSufficiency: "insufficient_expected_move",
-            };
-            return `${label[k] ?? k}(${v}/100)`;
-          })
-        : [];
-      return deny(
-        `r100_breakout_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
-        (breakdown ? ` | breakdown:[${breakdown}]` : "") +
-        (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
-      );
-    }
+        // Build engine-specific rejection reason for R_100 Breakout
+        const isR100Breakout = winner.engineName === "r100_breakout_engine";
+        if (isR100Breakout && winner.metadata) {
+          const nativeScore    = winner.metadata["r100BreakoutNativeScore"] as number | undefined;
+          const gateThreshold  = winner.metadata["r100BreakoutGateThreshold"] as number | undefined;
+          const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
+          const cs = componentScores ?? {};
+          const breakdown = componentScores
+            ? `pressure=${cs.boundaryPressure?.toFixed(0)},break=${cs.breakStrength?.toFixed(0)},expand=${cs.expansionQuality?.toFixed(0)},accept=${cs.acceptanceQuality?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
+            : "";
+          const weakComponents = componentScores
+            ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
+                const label: Record<string, string> = {
+                  boundaryPressure:        "weak_boundary_pressure",
+                  breakStrength:           "insufficient_break_strength",
+                  expansionQuality:        "insufficient_expansion_quality",
+                  acceptanceQuality:       "weak_acceptance_quality",
+                  entryEfficiency:         "poor_entry_efficiency",
+                  expectedMoveSufficiency: "insufficient_expected_move",
+                };
+                return `${label[k] ?? k}(${v}/100)`;
+              })
+            : [];
+          return deny(
+            `r100_breakout_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
+            (breakdown ? ` | breakdown:[${breakdown}]` : "") +
+            (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
+          );
+        }
 
-    // Build engine-specific rejection reason for R_100 Continuation
-    const isR100Continuation = winner.engineName === "r100_continuation_engine";
-    if (isR100Continuation && winner.metadata) {
-      const nativeScore    = winner.metadata["r100ContinuationNativeScore"] as number | undefined;
-      const gateThreshold  = winner.metadata["r100ContinuationGateThreshold"] as number | undefined;
-      const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
-      const cs = componentScores ?? {};
-      const breakdown = componentScores
-        ? `trend=${cs.trendStrength?.toFixed(0)},pullback=${cs.pullbackQuality?.toFixed(0)},slope=${cs.slopeAlignment?.toFixed(0)},structure=${cs.structureContinuity?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
-        : "";
-      const weakComponents = componentScores
-        ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
-            const label: Record<string, string> = {
-              trendStrength:           "weak_trend_strength",
-              pullbackQuality:         "weak_pullback_quality",
-              slopeAlignment:          "poor_slope_alignment",
-              structureContinuity:     "poor_structure_continuity",
-              entryEfficiency:         "poor_entry_efficiency",
-              expectedMoveSufficiency: "insufficient_expected_move",
-            };
-            return `${label[k] ?? k}(${v}/100)`;
-          })
-        : [];
-      return deny(
-        `r100_continuation_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
-        (breakdown ? ` | breakdown:[${breakdown}]` : "") +
-        (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
-      );
-    }
+        // Build engine-specific rejection reason for R_100 Continuation
+        const isR100Continuation = winner.engineName === "r100_continuation_engine";
+        if (isR100Continuation && winner.metadata) {
+          const nativeScore    = winner.metadata["r100ContinuationNativeScore"] as number | undefined;
+          const gateThreshold  = winner.metadata["r100ContinuationGateThreshold"] as number | undefined;
+          const componentScores= winner.metadata["componentScores"] as Record<string, number> | undefined;
+          const cs = componentScores ?? {};
+          const breakdown = componentScores
+            ? `trend=${cs.trendStrength?.toFixed(0)},pullback=${cs.pullbackQuality?.toFixed(0)},slope=${cs.slopeAlignment?.toFixed(0)},structure=${cs.structureContinuity?.toFixed(0)},entry=${cs.entryEfficiency?.toFixed(0)},move=${cs.expectedMoveSufficiency?.toFixed(0)}`
+            : "";
+          const weakComponents = componentScores
+            ? Object.entries(cs).filter(([, v]) => v < 55).map(([k, v]) => {
+                const label: Record<string, string> = {
+                  trendStrength:           "weak_trend_strength",
+                  pullbackQuality:         "weak_pullback_quality",
+                  slopeAlignment:          "poor_slope_alignment",
+                  structureContinuity:     "poor_structure_continuity",
+                  entryEfficiency:         "poor_entry_efficiency",
+                  expectedMoveSufficiency: "insufficient_expected_move",
+                };
+                return `${label[k] ?? k}(${v}/100)`;
+              })
+            : [];
+          return deny(
+            `r100_continuation_score_below_mode_threshold:native=${nativeScore ?? "?"}/100,engine_gate=${gateThreshold ?? "?"},mode_min=${minScore}` +
+            (breakdown ? ` | breakdown:[${breakdown}]` : "") +
+            (weakComponents.length > 0 ? ` | weak=[${weakComponents.join("; ")}]` : "")
+          );
+        }
 
-      return deny(`confidence_below_threshold:${winner.confidence.toFixed(3)}<${minConfidence.toFixed(3)}`);
-      }  // closes: if (winner.confidence < minConfidence)
-    }  // closes: if (admissionResult.rejectionStage === 4)
+        return deny(`confidence_below_threshold:${winner.confidence.toFixed(3)}<${minConfidence.toFixed(3)}`);
+      }
+    }
     // Gates 1-3, 5-10: use the shared evaluator rejection reason directly
     return deny(admissionResult.rejectionReason ?? "rejected_by_allocator");
-  }  // closes: if (!admissionResult.allowed)
+  }
 
   // ── Capital sizing ─────────────────────────────────────────────────────────
   // Base on equity_pct_per_trade, scaled by engine confidence

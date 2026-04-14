@@ -31,7 +31,7 @@
  *     are portfolio-state-dependent and inapplicable in isolated bar-by-bar replay)
  */
 
-import { db, candlesTable } from "@workspace/db";
+import { db, candlesTable, platformStateTable } from "@workspace/db";
 import { eq, and, gte, lte, asc } from "drizzle-orm";
 import { computeFeaturesFromSlice, type CandleRow } from "./featureSlice.js";
 import { classifyRegime } from "../regimeEngine.js";
@@ -65,7 +65,8 @@ import {
 const STRUCTURAL_LOOKBACK = 1500;
 const MAX_HOLD_BARS = 43_200;  // 30 days in 1m bars
 const SYNTHETIC_EQUITY = 10_000;
-const SYNTHETIC_SIZE   = 1_500;          // 15% of synthetic equity (matches live default)
+const DEFAULT_ALLOCATION_PCT = 0.15;     // matches live portfolioAllocatorV3 default
+const SYNTHETIC_SIZE = SYNTHETIC_EQUITY * DEFAULT_ALLOCATION_PCT; // = 1500
 const HTF_AVERAGING_WINDOW = 60;         // 60 feature samples ≈ 1 hour (matches live)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -357,17 +358,17 @@ interface OpenTradeState {
 }
 
 // ── Simulation gap documentation ──────────────────────────────────────────────
-// The following gates from portfolioAllocatorV3 cannot be replicated without
-// live portfolio state (DB access) and are set to assumed-safe defaults:
-//   - modeEnabled:      assumed true (can't verify mode is active without DB)
-//   - symbolEnabled:    assumed true (can't verify symbol enablement without DB)
-//   - maxOpenTrades:    set to 1 (single-symbol backtest; no cross-symbol tracking)
-//   - dailyLossLimitBreached:  assumed false (no cross-symbol portfolio PnL state)
+// Flags fetched from DB at run start (same source as live allocator):
+//   - killSwitchActive: read from platformState["kill_switch"]
+//   - modeEnabled:      read from platformState prefix (same logic as allocateV3Signal)
+//   - symbolEnabled:    read from platformState prefix_enabled_symbols list
+// True simulation gaps (require live portfolio PnL across all symbols, unavailable
+// in single-symbol historical replay):
+//   - dailyLossLimitBreached:  assumed false
 //   - weeklyLossLimitBreached: assumed false
 //   - maxDrawdownBreached:     assumed false
 //   - correlatedFamilyCapBreached: assumed false
-//   - killSwitchActive: assumed false
-// These are documented via simulationDefaults passed to evaluateSignalAdmission.
+//   - maxOpenTrades: set to 1 (single-symbol backtest; no cross-symbol tracking)
 // Score gate (gate 4) and one-per-symbol (gate 5) are fully simulated.
 
 // ── Core simulation loop ──────────────────────────────────────────────────────
@@ -413,6 +414,24 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
   let simStart = candles.findIndex(c => c.openTs >= startTs);
   if (simStart < 0) simStart = candles.length - 1;
   if (simStart < STRUCTURAL_LOOKBACK) simStart = STRUCTURAL_LOOKBACK;
+
+  // ── Fetch platformState flags (same source as live allocator) ─────────────
+  // Reads the exact same keys that portfolioAllocatorV3.allocateV3Signal reads.
+  // Kill switch, mode-enabled, and symbol-enabled flags are NOT hardcoded.
+  const platformRows = await db.select().from(platformStateTable);
+  const stateMap: Record<string, string> = {};
+  for (const r of platformRows) stateMap[r.key] = r.value;
+
+  const modePrefix = { paper: "paper", demo: "demo", real: "real" }[mode] ?? "paper";
+  const killSwitchActive = stateMap["kill_switch"] === "true";
+  const modeEnabled =
+    stateMap[`${modePrefix}_mode_active`] === "true" ||
+    stateMap[`${modePrefix}_mode`] === "active" ||
+    stateMap[`${modePrefix}_enabled`] === "true" ||
+    !stateMap[`${modePrefix}_mode_active`];  // default: mode active if not explicitly disabled
+  const modeSymbolsRaw = stateMap[`${modePrefix}_enabled_symbols`] || stateMap["enabled_symbols"] || "";
+  const modeSymbols = modeSymbolsRaw ? modeSymbolsRaw.split(",").map(s => s.trim()).filter(Boolean) : null;
+  const symbolEnabled = !modeSymbols || modeSymbols.includes(symbol);
 
   const engines = getEnginesForSymbol(symbol);
   const instrumentFamily = getInstrumentFamily(symbol);
@@ -696,18 +715,16 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
     });
 
     // ── Shared admission evaluator (same logic as portfolioAllocatorV3) ─────
-    // Calls evaluateSignalAdmission from allocatorCore — the exact same function
-    // that live allocateV3Signal calls. Portfolio-state-dependent gates that
-    // cannot be computed without DB are set to assumed-safe defaults and
-    // listed in simulationGaps for full transparency.
+    // killSwitchActive, modeEnabled, symbolEnabled come from real platformState
+    // fetched once at run start (identical source to live allocateV3Signal).
+    // Portfolio PnL-dependent gates remain simulation gaps (unavailable in
+    // single-symbol isolated replay with no cross-symbol PnL tracking).
     const simulationGaps = [
-      "modeEnabled=assumed_true",
-      "symbolEnabled=assumed_true",
       "maxOpenTrades=1(single_symbol_sim)",
-      "dailyLossLimitBreached=assumed_false",
-      "weeklyLossLimitBreached=assumed_false",
-      "maxDrawdownBreached=assumed_false",
-      "correlatedFamilyCapBreached=assumed_false",
+      "dailyLossLimitBreached=assumed_false(no_portfolio_pnl_state)",
+      "weeklyLossLimitBreached=assumed_false(no_portfolio_pnl_state)",
+      "maxDrawdownBreached=assumed_false(no_portfolio_pnl_state)",
+      "correlatedFamilyCapBreached=assumed_false(no_cross_symbol_state)",
     ];
     const allocResult = evaluateSignalAdmission({
       symbol,
@@ -717,9 +734,9 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
       confidence: winner.confidence,
       mode,
       minScoreGate: modeGate,
-      killSwitchActive: false,           // gap: can't verify without DB
-      modeEnabled: true,                 // gap: assumed active
-      symbolEnabled: true,               // gap: assumed enabled
+      killSwitchActive,   // real: from platformState["kill_switch"]
+      modeEnabled,        // real: from platformState prefix keys
+      symbolEnabled,      // real: from platformState prefix_enabled_symbols
       openTradeForSymbol: openTrade !== null,
       currentOpenCount: openTrade !== null ? 1 : 0,
       maxOpenTrades: 1,                  // gap: single-symbol sim

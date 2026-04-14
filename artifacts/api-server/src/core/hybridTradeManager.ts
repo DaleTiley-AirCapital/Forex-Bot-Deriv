@@ -5,8 +5,11 @@
  *
  * Stage model:
  *   Stage 1 — entry: SL at original position (below/above entry)
- *   Stage 2 — protection: SL moved to breakeven after 20% of TP distance reached
- *   Stage 3 — runner: adaptive trailing stop from 30% of TP (handled by tradeEngine)
+ *   Stage 2 — protection: SL moved to breakeven after BREAKEVEN_THRESHOLD_PCT of TP distance
+ *   Stage 3 — runner: adaptive trailing stop from TRAILING_ACTIVATION_THRESHOLD_PCT of TP
+ *
+ * Thresholds are sourced from the shared tradeManagement module so backtest and live
+ * always use identical values (single source of truth).
  *
  * This module handles ONLY Stage 1→2 SL promotion.
  * Stage 2→3 trailing stop activation is handled by the existing tradeEngine.
@@ -19,11 +22,8 @@
  * No DB schema changes required.
  */
 import { db, tradesTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
-import type { TradingMode } from "../infrastructure/deriv.js";
-
-// Stage 2 activates when trade profit reaches 20% of the TP distance
-const STAGE2_BREAKEVEN_THRESHOLD_PCT = 0.20;
+import { eq } from "drizzle-orm";
+import { BREAKEVEN_THRESHOLD_PCT, calcTpProgress } from "./tradeManagement.js";
 
 function inferHybridStage(
   entryPrice: number,
@@ -42,14 +42,16 @@ function inferHybridStage(
 }
 
 function calcBreakevenSl(entryPrice: number, direction: "buy" | "sell"): number {
-  // Small buffer above/below entry to avoid immediate stop-out due to spread
   const buffer = entryPrice * 0.0005;
   return direction === "buy" ? entryPrice + buffer : entryPrice - buffer;
 }
 
 /**
  * Promotes stage-1 trades to stage-2 (breakeven SL) when price has moved
- * 20%+ of the TP distance in favor.
+ * BREAKEVEN_THRESHOLD_PCT+ of the TP distance in favor.
+ *
+ * Uses calcTpProgress() from the shared tradeManagement module so the
+ * progression formula is identical to what backtestRunner uses.
  *
  * Only updates SL. Does not close trades. Closes are handled by manageOpenPositions.
  */
@@ -67,25 +69,20 @@ export async function promoteBreakevenSls(): Promise<void> {
       const currentSl = trade.sl;
       const currentPrice = trade.currentPrice ?? entryPrice;
 
-      // Only promote stage-1 trades
       const stage = inferHybridStage(entryPrice, currentSl, direction);
       if (stage !== 1) continue;
 
-      // Calculate progress toward TP
-      const tpDist = Math.abs(tp - entryPrice);
-      if (tpDist <= 0) continue;
+      const progress = calcTpProgress({
+        direction,
+        entryPrice,
+        currentPrice,
+        tpPrice: tp,
+      });
 
-      const currentDist = direction === "buy"
-        ? Math.max(0, currentPrice - entryPrice)
-        : Math.max(0, entryPrice - currentPrice);
-
-      const progress = currentDist / tpDist;
-
-      if (progress < STAGE2_BREAKEVEN_THRESHOLD_PCT) continue;
+      if (progress < BREAKEVEN_THRESHOLD_PCT) continue;
 
       const beSl = calcBreakevenSl(entryPrice, direction);
 
-      // Only update if the breakeven SL is better than the current SL
       const slImproved = direction === "buy"
         ? beSl > currentSl
         : beSl < currentSl;

@@ -123,23 +123,47 @@ export function getHourlyAveragedFeatures(symbol: string): Partial<FeatureVector
   };
 }
 
+/**
+ * Shared pure HTF averaging classifier — used by BOTH live and backtest.
+ *
+ * Takes a pre-built sample array (live: hourlyAccumulators[sym].samples;
+ * backtest: featureHistory) and averages the regime-sensitive fields before
+ * calling classifyRegime. This eliminates the separate classifyRegimeHTFLocal
+ * function that previously existed only in backtestRunner.
+ *
+ * Falls back to classifyRegime(features) when samples.length < 3.
+ */
+export function classifyRegimeFromSamples(
+  features: FeatureVector,
+  samples: Array<{
+    emaSlope: number; rsi14: number; bbWidth: number; bbWidthRoc: number;
+    atr14: number; atrRank: number; atrAccel: number; zScore: number;
+    spikeHazardScore: number; bbPctB: number;
+  }>,
+): RegimeClassification {
+  if (samples.length < 3) return classifyRegime(features);
+  const n = samples.length;
+  const avg = (fn: (s: typeof samples[0]) => number) =>
+    samples.reduce((sum, x) => sum + fn(x), 0) / n;
+  return classifyRegime({
+    ...features,
+    emaSlope:        avg(s => s.emaSlope),
+    rsi14:           avg(s => s.rsi14),
+    bbWidth:         avg(s => s.bbWidth),
+    bbWidthRoc:      avg(s => s.bbWidthRoc),
+    atr14:           avg(s => s.atr14),
+    atrRank:         avg(s => s.atrRank),
+    atrAccel:        avg(s => s.atrAccel),
+    zScore:          avg(s => s.zScore),
+    spikeHazardScore:avg(s => s.spikeHazardScore),
+    bbPctB:          avg(s => s.bbPctB),
+  });
+}
+
 export function classifyRegimeFromHTF(features: FeatureVector): RegimeClassification {
-  const hourly = getHourlyAveragedFeatures(features.symbol);
-  if (hourly) {
-    const htfFeatures: FeatureVector = {
-      ...features,
-      emaSlope: hourly.emaSlope ?? features.emaSlope,
-      rsi14: hourly.rsi14 ?? features.rsi14,
-      bbWidth: hourly.bbWidth ?? features.bbWidth,
-      bbWidthRoc: hourly.bbWidthRoc ?? features.bbWidthRoc,
-      atr14: hourly.atr14 ?? features.atr14,
-      atrRank: hourly.atrRank ?? features.atrRank,
-      atrAccel: hourly.atrAccel ?? features.atrAccel,
-      zScore: hourly.zScore ?? features.zScore,
-      spikeHazardScore: hourly.spikeHazardScore ?? features.spikeHazardScore,
-      bbPctB: hourly.bbPctB ?? features.bbPctB,
-    };
-    return classifyRegime(htfFeatures);
+  const acc = hourlyAccumulators[features.symbol];
+  if (acc && acc.samples.length >= 3) {
+    return classifyRegimeFromSamples(features, acc.samples);
   }
   return classifyRegime(features);
 }

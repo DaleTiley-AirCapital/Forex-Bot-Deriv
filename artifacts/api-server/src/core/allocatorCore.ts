@@ -126,3 +126,33 @@ export function evaluateSignalAdmission(input: AllocatorCoreInput): AllocatorCor
 
   return { allowed: true, rejectionReason: null, rejectionStage: null, simulationGaps: gaps };
 }
+
+// ── Native score extraction — shared between live and backtest ────────────────
+
+/**
+ * Extract the engine's native composite score (0-100) from `winner.metadata`.
+ * Falls back to `Math.round(coordinatorConfidence * 100)` when no engine metadata
+ * score is present (forward-compatible: new engines only need to publish their
+ * composite score under a well-known metadata key to be picked up automatically).
+ *
+ * This is the SINGLE canonical extractor used by BOTH:
+ *  - portfolioAllocatorV3.allocateV3Signal (live scanner)
+ *  - backtestRunner (historical replay)
+ * so gate-4 score comparisons are identical in both paths.
+ */
+export function extractNativeScore(
+  winner: { metadata?: Record<string, unknown>; confidence: number },
+  coordinatorConfidence: number,
+): number {
+  const m = winner.metadata;
+  if (!m) return Math.round(coordinatorConfidence * 100);
+  const candidates: Array<unknown> = [
+    m["boom300NativeScore"], m["crash300NativeScore"],
+    m["r75ReversalNativeScore"], m["r75ContinuationNativeScore"], m["r75BreakoutNativeScore"],
+    m["r100ReversalNativeScore"], m["r100ContinuationNativeScore"], m["r100BreakoutNativeScore"],
+  ];
+  for (const v of candidates) {
+    if (typeof v === "number") return v;
+  }
+  return Math.round(coordinatorConfidence * 100);
+}

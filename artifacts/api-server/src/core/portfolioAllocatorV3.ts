@@ -13,7 +13,7 @@ import { eq, and } from "drizzle-orm";
 import type { CoordinatorOutput } from "./engineTypes.js";
 import type { TradingMode } from "../infrastructure/deriv.js";
 import { getModeCapitalKey, getModeCapitalDefault } from "../infrastructure/deriv.js";
-import { evaluateSignalAdmission, MODE_SCORE_GATES } from "./allocatorCore.js";
+import { evaluateSignalAdmission, MODE_SCORE_GATES, extractNativeScore } from "./allocatorCore.js";
 
 export interface V3AllocationDecision {
   coordinatorOutput: CoordinatorOutput;
@@ -92,7 +92,9 @@ export async function allocateV3Signal(
   // Use mode-specific gate from allocatorCore (single source of truth) or platformState override
   const modeDefaultGate = MODE_SCORE_GATES[mode as string] ?? 60;
   const minScore = parseFloat(stateMap[`${prefix}_min_composite_score`] || stateMap["min_composite_score"] || String(modeDefaultGate));
-  const nativeScore = Math.round(winner.confidence * 100);
+  // extractNativeScore is the shared extractor used by both live and backtest so
+  // gate-4 score comparisons are identical in both paths.
+  const nativeScore = extractNativeScore(winner, coordinatorOutput.coordinatorConfidence);
 
   // ── Stage 2: Core admission check via shared evaluator ────────────────────
   // evaluateSignalAdmission enforces the same gate order as the live allocator.

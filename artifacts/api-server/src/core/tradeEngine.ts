@@ -5,7 +5,7 @@ import type { TradingMode } from "../infrastructure/deriv.js";
 import type { AllocationDecision } from "./signalRouter.js";
 import { checkAndAutoExtract } from "./extractionEngine.js";
 import { recordBehaviorEvent } from "./backtest/behaviorCapture.js";
-import { evaluateBarExits } from "./tradeManagement.js";
+import { evaluateBarExits, MAX_HOLD_MINS } from "./tradeManagement.js";
 
 const MAX_OPEN_TRADES = 6;
 const MAX_EQUITY_DEPLOYED_PCT = 0.80;
@@ -608,6 +608,17 @@ export async function manageOpenPositions(): Promise<void> {
         continue;
       }
 
+      // ── Max-duration expiry (shared constant from tradeManagement.ts) ─────
+      // Mirrors the MAX_HOLD_BARS check in backtestRunner so both paths
+      // have the same hard expiry ceiling.
+      const holdMins = trade.createdAt
+        ? Math.floor((Date.now() - trade.createdAt.getTime()) / 60_000)
+        : 0;
+      if (holdMins >= MAX_HOLD_MINS) {
+        console.log(`[TradeEngine] Trade #${trade.id} ${trade.symbol} expired after ${holdMins}m (MAX_HOLD_MINS=${MAX_HOLD_MINS})`);
+        await closePosition(trade.id, currentPrice, "max_duration");
+        continue;
+      }
 
     } catch (err) {
       console.error(`[TradeEngine] Error managing trade #${trade.id}:`, err instanceof Error ? err.message : err);

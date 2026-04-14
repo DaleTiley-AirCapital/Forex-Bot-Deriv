@@ -66,6 +66,15 @@ export const BREAKEVEN_THRESHOLD_PCT = 0.20;
 /** Progress toward TP at which adaptive trailing stop activates (matches live) */
 export const TRAILING_ACTIVATION_THRESHOLD_PCT = 0.30;
 
+// ── Maximum hold duration ─────────────────────────────────────────────────────
+
+/**
+ * Maximum time (in minutes) a trade may be held before forced expiry.
+ * Applies to both live (hybridTradeManager) and historical replay (backtestRunner).
+ * 43,200 min = 30 days.
+ */
+export const MAX_HOLD_MINS = 43_200;
+
 /**
  * Calculate progress toward TP.
  * Returns a 0-1 value; 1.0 = TP reached.

@@ -34,7 +34,7 @@
 import { db, candlesTable, platformStateTable } from "@workspace/db";
 import { eq, and, gte, lte, asc } from "drizzle-orm";
 import { computeFeaturesFromSlice, type CandleRow } from "./featureSlice.js";
-import { classifyRegime } from "../regimeEngine.js";
+import { classifyRegimeFromSamples } from "../regimeEngine.js";
 import {
   calculateSRFibTP,
   calculateSRFibSL,
@@ -50,6 +50,7 @@ import {
 import {
   evaluateSignalAdmission,
   MODE_SCORE_GATES,
+  extractNativeScore,
 } from "../allocatorCore.js";
 import { runEnginesAndCoordinate } from "../signalPipeline.js";
 import {
@@ -57,12 +58,14 @@ import {
   calcTpProgress,
   BREAKEVEN_THRESHOLD_PCT,
   TRAILING_ACTIVATION_THRESHOLD_PCT,
+  MAX_HOLD_MINS,
 } from "../tradeManagement.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const STRUCTURAL_LOOKBACK = 1500;
-const MAX_HOLD_BARS = 43_200;  // 30 days in 1m bars
+// MAX_HOLD_MINS is shared from tradeManagement.ts (also used by live tradeEngine)
+// For 1m bars: 1 bar = 1 minute, so MAX_HOLD_BARS === MAX_HOLD_MINS
 const SYNTHETIC_EQUITY = 10_000;
 const DEFAULT_ALLOCATION_PCT = 0.15;     // matches live portfolioAllocatorV3 default
 const SYNTHETIC_SIZE = SYNTHETIC_EQUITY * DEFAULT_ALLOCATION_PCT; // = 1500
@@ -160,29 +163,6 @@ interface FeatureSample {
   zScore: number;
   spikeHazardScore: number;
   bbPctB: number;
-}
-
-function classifyRegimeHTFLocal(
-  features: FeatureVector,
-  featureHistory: FeatureSample[],
-): ReturnType<typeof classifyRegime> {
-  if (featureHistory.length < 3) return classifyRegime(features);
-  const n = featureHistory.length;
-  const avg = (fn: (s: FeatureSample) => number) =>
-    featureHistory.reduce((s, x) => s + fn(x), 0) / n;
-  return classifyRegime({
-    ...features,
-    emaSlope: avg(s => s.emaSlope),
-    rsi14: avg(s => s.rsi14),
-    bbWidth: avg(s => s.bbWidth),
-    bbWidthRoc: avg(s => s.bbWidthRoc),
-    atr14: avg(s => s.atr14),
-    atrRank: avg(s => s.atrRank),
-    atrAccel: avg(s => s.atrAccel),
-    zScore: avg(s => s.zScore),
-    spikeHazardScore: avg(s => s.spikeHazardScore),
-    bbPctB: avg(s => s.bbPctB),
-  });
 }
 
 // ── Percentile helper ─────────────────────────────────────────────────────────
@@ -307,22 +287,6 @@ function getInstrumentFamily(symbol: string): "crash" | "boom" | "volatility" {
   if (symbol.startsWith("CRASH")) return "crash";
   if (symbol.startsWith("BOOM")) return "boom";
   return "volatility";
-}
-
-// ── Native score extraction (matches live scheduler logic) ────────────────────
-
-function extractNativeScore(winner: EngineResult, coordinatorConfidence: number): number {
-  const m = winner.metadata;
-  if (!m) return Math.round(coordinatorConfidence * 100);
-  const candidates = [
-    m["boom300NativeScore"], m["crash300NativeScore"],
-    m["r75ReversalNativeScore"], m["r75ContinuationNativeScore"], m["r75BreakoutNativeScore"],
-    m["r100ReversalNativeScore"], m["r100ContinuationNativeScore"], m["r100BreakoutNativeScore"],
-  ];
-  for (const v of candidates) {
-    if (typeof v === "number") return v;
-  }
-  return Math.round(coordinatorConfidence * 100);
 }
 
 // ── Open trade state ──────────────────────────────────────────────────────────
@@ -585,8 +549,9 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
       let exitReason: V3BacktestTrade["exitReason"] | null = barExit.exitReason;
       let exitPrice = barExit.exitPrice;
 
-      // Max duration (applies when barExit returns null)
-      if (!exitReason && holdBars >= MAX_HOLD_BARS) {
+      // Max duration — shared MAX_HOLD_MINS from tradeManagement.ts
+      // For 1m bars holdBars === holdMins; MAX_HOLD_MINS applies directly
+      if (!exitReason && holdBars >= MAX_HOLD_MINS) {
         exitReason = "max_duration";
         exitPrice = bar.close;
       }
@@ -693,8 +658,10 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
     });
     if (featureHistory.length > HTF_AVERAGING_WINDOW) featureHistory.shift();
 
-    // HTF-averaged regime (matches live classifyRegimeFromHTF)
-    const regimeResult = classifyRegimeHTFLocal(features, featureHistory);
+    // HTF-averaged regime — uses shared classifyRegimeFromSamples from regimeEngine.ts
+    // This is the SAME function classifyRegimeFromHTF uses internally (live path).
+    // Both paths now share identical averaging logic over their respective sample buffers.
+    const regimeResult = classifyRegimeFromSamples(features, featureHistory);
 
     // ── Engine evaluation + coordinator — shared pipeline ────────────────────
     // runEnginesAndCoordinate is the exact same function used by engineRouterV3

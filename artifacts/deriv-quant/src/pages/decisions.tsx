@@ -246,8 +246,8 @@ function DirectionChip({ direction }: { direction: string | null | undefined }) 
 
 function ScorePill({ score }: { score: number | null | undefined }) {
   if (score == null) return <span className="text-xs text-muted-foreground/40">—</span>;
-  const cls = score >= 85 ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25"
-    : score >= 70 ? "text-amber-400 bg-amber-500/10 border-amber-500/25"
+  const cls = score >= 70 ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25"
+    : score >= 55 ? "text-amber-400 bg-amber-500/10 border-amber-500/25"
     : "text-red-400 bg-red-500/10 border-red-500/25";
   return (
     <span className={cn("inline-flex items-center px-2 py-0.5 rounded text-sm font-bold border tabular-nums", cls)}>

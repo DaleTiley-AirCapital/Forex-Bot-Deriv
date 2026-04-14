@@ -37,7 +37,7 @@ const R100_CONTINUATION_PROJECTED_PCT = 0.22;   // continuation captures mid-leg
 
 // ── Engine-native gates (primary) ────────────────────────────────────────────
 // These are the PRIMARY pass thresholds for each R_100 engine.
-// The allocator's mode-level confidence check (paper≥0.85/demo≥0.90/real≥0.92)
+// The allocator's mode-level confidence check (paper≥0.60/demo≥0.65/real≥0.70)
 // remains as the SECONDARY gate applied after engine acceptance.
 const R100_REVERSAL_MIN_GATE     = 58;
 const R100_BREAKOUT_MIN_GATE     = 60;

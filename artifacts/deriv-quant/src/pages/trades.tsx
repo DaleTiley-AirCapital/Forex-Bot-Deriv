@@ -662,7 +662,7 @@ export default function Trades() {
               <CircleSlash className="w-10 h-10 text-muted-foreground/15 mx-auto mb-3" />
               <p className="text-sm text-muted-foreground">No open positions</p>
               <p className="text-xs text-muted-foreground/60 mt-1">
-                Paper requires score ≥85 · Demo ≥90 · Real ≥92
+                Paper requires score ≥60 · Demo ≥65 · Real ≥70
               </p>
             </div>
           ) : (

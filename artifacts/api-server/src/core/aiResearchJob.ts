@@ -11,7 +11,7 @@
  *   - Only 4 active trading symbols: CRASH300, BOOM300, R_75, R_100
  *   - Strategy families: Trend Continuation, Mean Reversion,
  *     Spike Cluster Recovery, Swing Exhaustion, Trendline Breakout
- *   - Scoring thresholds: Paper≥80, Demo≥85, Real≥90
+ *   - Scoring thresholds: Paper≥60, Demo≥65, Real≥70 (current safe-mode gates)
  *   - Trade frequency: ~8-9 swing trades/month across all 4 symbols
  *   - Average hold: 3–44 days; no time-based forced exits
  *
@@ -391,7 +391,7 @@ INSTRUMENT-SPECIFIC BEHAVIOR (Volatility):
 - Active trading symbols: CRASH300, BOOM300, R_75, R_100 ONLY
 - Expected trade frequency: ~8–9 swing trades/month across all 4 active symbols
 - Average hold duration: 3–44 days. NO time-based forced exits.
-- Scoring thresholds: Paper≥80, Demo≥85, Real≥90 composite score
+- Scoring thresholds: Paper≥60, Demo≥65, Real≥70 (current safe-mode operating gates)
 
 STRATEGY FAMILIES IN USE:
 1. Trend Continuation — ride the new trend after confirmed swing reversal

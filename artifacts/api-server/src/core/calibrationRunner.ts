@@ -32,7 +32,7 @@ export interface CalibrationReport {
   reportGeneratedAt: string;
   enginesAnalyzed: number;
   totalHTFBarsAnalyzed: number;
-  oldThresholds: { paper: number; demo: number; real: number };
+  currentGates: { paper: number; demo: number; real: number };
   newThresholds: { paper: number; demo: number; real: number };
   perEngineDistributions: EngineCalibrationSummary[];
   recommendations: ThresholdRecommendations;
@@ -44,7 +44,7 @@ interface ThresholdRecommendations {
   demo: number;
   real: number;
   rationale: string;
-  mandatoryMinimums: { paper: 85; demo: 90; real: 92 };
+  currentGates: { paper: 60; demo: 65; real: 70 };
 }
 
 interface EngineCalibrationSummary {
@@ -826,7 +826,7 @@ function buildEngineSummary(
 // ── Main calibration function ─────────────────────────────────────────────────
 
 const WARMUP = 55;
-const OLD_THRESHOLDS = { paper:85, demo:90, real:92 };
+const CURRENT_GATES = { paper:60, demo:65, real:70 };
 
 const ENGINE_GATES: Record<string, Record<string, number>> = {
   BOOM300:  { sell:55, buy:50 },
@@ -1006,15 +1006,15 @@ export async function runNativeScoreCalibration(
   const recDemo  = Math.max(recPaper+2, medOf(p92vals));
   const recReal  = Math.max(recDemo+2, medOf(p95vals));
 
-  const passAtCurrent = primaryEngines.map(e=>`${e.symbol}(${e.direction})@85=${e.passRatesPct["85"]}%`).join(", ");
+  const passAtCurrent = primaryEngines.map(e=>`${e.symbol}(${e.direction})@60=${e.passRatesPct["60"]}%`).join(", ");
 
   const recommendations: ThresholdRecommendations = {
     paper: recPaper, demo: recDemo, real: recReal,
     rationale: `Data-driven: ${totalHTFBars} HTF bars across 4 symbols. Primary engine p90/p92/p95 medians: ${recPaper}/${recDemo}/${recReal}. ` +
-      `Current pass rates at 85: [${passAtCurrent}]. ` +
-      `Recommended thresholds derived from actual score distributions without enforcing minimum floors. ` +
-      `If these are below the mandatory minimums (85/90/92), the engines need component recalibration — not threshold lowering.`,
-    mandatoryMinimums: { paper:85, demo:90, real:92 },
+      `Current pass rates at 60: [${passAtCurrent}]. ` +
+      `Recommended thresholds derived from actual score distributions. ` +
+      `Current operating gates are paper≥60/demo≥65/real≥70. If evidence thresholds exceed the current gates, raise them in platform_state.`,
+    currentGates: { paper:60, demo:65, real:70 },
   };
 
   let platformStateUpdateApplied = false;
@@ -1034,7 +1034,7 @@ export async function runNativeScoreCalibration(
     reportGeneratedAt: new Date().toISOString(),
     enginesAnalyzed: 8,
     totalHTFBarsAnalyzed: totalHTFBars,
-    oldThresholds: OLD_THRESHOLDS,
+    currentGates: CURRENT_GATES,
     newThresholds: { paper:recPaper, demo:recDemo, real:recReal },
     perEngineDistributions: allEngines,
     recommendations,

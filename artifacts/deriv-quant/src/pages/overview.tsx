@@ -440,17 +440,17 @@ export default function Overview() {
                 </div>
                 {m === "paper" && isActive && (
                   <div className="mt-2.5 pt-2 border-t border-border/20 text-[10px] text-muted-foreground/70">
-                    Score threshold: ≥85 for approval
+                    Score threshold: ≥60 for approval
                   </div>
                 )}
                 {m === "demo" && isActive && (
                   <div className="mt-2.5 pt-2 border-t border-border/20 text-[10px] text-muted-foreground/70">
-                    Score threshold: ≥90 for approval
+                    Score threshold: ≥65 for approval
                   </div>
                 )}
                 {m === "real" && isActive && (
                   <div className="mt-2.5 pt-2 border-t border-border/20 text-[10px] text-muted-foreground/70">
-                    Score threshold: ≥92 for approval
+                    Score threshold: ≥70 for approval
                   </div>
                 )}
               </div>
@@ -541,9 +541,9 @@ export default function Overview() {
         </div>
         <div className="mt-3 pt-3 border-t border-border/20 flex flex-wrap gap-4 text-[11px] text-muted-foreground">
           <span>Active strategies: <span className="text-foreground font-medium">{ov?.activeStrategies ?? 8}</span></span>
-          <span>Paper threshold: <span className="text-amber-400 font-medium">≥85</span></span>
-          <span>Demo threshold: <span className="text-blue-400 font-medium">≥90</span></span>
-          <span>Real threshold: <span className="text-green-400 font-medium">≥92</span></span>
+          <span>Paper threshold: <span className="text-amber-400 font-medium">≥60</span></span>
+          <span>Demo threshold: <span className="text-blue-400 font-medium">≥65</span></span>
+          <span>Real threshold: <span className="text-green-400 font-medium">≥70</span></span>
           <span>Target: <span className="text-foreground font-medium">50–200%+ moves, long hold</span></span>
         </div>
       </div>

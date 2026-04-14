@@ -111,7 +111,7 @@ REGIME:
 - Regime Gate: Active (strategy must match regime permissions)
 
 SCORES:
-- Composite Score: ${ctx.compositeScore.toFixed(0)}/100 (min thresholds: paper≥85, demo≥90, real≥92)
+- Composite Score: ${ctx.compositeScore.toFixed(0)}/100 (current gate: paper≥60, demo≥65, real≥70)
 - Model Score: ${(ctx.score * 100).toFixed(1)}% (min: 0.58-0.65 depending on family)
 - Confidence: ${(ctx.confidence * 100).toFixed(1)}%
 - Expected Value: ${(ctx.expectedValue * 100).toFixed(3)}%

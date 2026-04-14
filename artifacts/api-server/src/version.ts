@@ -1,6 +1,6 @@
-export const APP_VERSION = "2.0.0";
-export const APP_NAME = "Deriv Trading - Long Hold";
-export const LAST_UPDATED = "2026-03-29";
+export const APP_VERSION = "3.0.0";
+export const APP_NAME = "Deriv Trading - Long Hold V3";
+export const LAST_UPDATED = "2026-04-14";
 
 export interface ReleaseEntry {
   version: string;
@@ -11,6 +11,21 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "3.0.0",
+    date: "2026-04-14",
+    title: "V3 Symbol-Native Engine System — Live Path Rewrite",
+    changes: [
+      "8 symbol-native engines replace all V2 shared-scoring: boom_expansion, crash_expansion, r75×3 (continuation/reversal/breakout), r100×3",
+      "Per-engine 6-component native scores (0–100) — no shared generic composite scoring path in live system",
+      "Symbol Coordinator resolves multi-engine conflicts (R_75, R_100): priority breakout>continuation>reversal",
+      "3-stage hybrid trade manager: entry SL, breakeven promotion at 20% TP, ATR trailing from 30% TP",
+      "Current score gates: Paper≥60, Demo≥65, Real≥70 — will raise as calibration data supports higher values",
+      "Signal visibility threshold set to 50, blocked/rejected signals surfaced in Engine Decisions",
+      "V3 Isolated Backtest Engine in Research tab with JSON export",
+      "Railway rebuild script for deterministic clean deploys",
+    ],
+  },
+  {
     version: "2.0.0",
     date: "2026-03-29",
     title: "V2 Empirical Big Move Readiness Scoring",
@@ -18,7 +33,7 @@ export const RELEASES: ReleaseEntry[] = [
       "Replaced logistic regression with empirical 5-dimension Big Move Readiness Score",
       "New scoring dimensions: Range Position (25%), MA Deviation (20%), Volatility Profile (20%), Range Expansion (15%), Directional Confirmation (20%)",
       "Research-driven thresholds from actual 50-200%+ move analysis",
-      "Scoring thresholds enforced: Paper 85, Demo 90, Real 92",
+      "V2 scoring thresholds (superseded by V3 calibrated gates): Paper 85 / Demo 90 / Real 92",
       "AI suggestion floors prevent threshold drift below V2 minimums",
       "Startup migration enforces minimum thresholds on every boot",
       "Updated OpenAPI spec, generated types, and frontend for new dimensions",

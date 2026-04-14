@@ -23,7 +23,7 @@
  * BOOM300_SELL_MIN_GATE: engine-native minimum before forwarding to allocator
  * BOOM300_BUY_MIN_GATE:  engine-native minimum for buy setups
  * These replace the inherited generic V2 composite threshold as the PRIMARY gate.
- * The allocator's mode-level confidence check (paper≥0.85 / demo≥0.90 / real≥0.92)
+ * The allocator's mode-level confidence check (paper≥0.60 / demo≥0.65 / real≥0.70)
  * remains as the SECONDARY gate applied after engine acceptance.
  *
  * ── Calibration ──────────────────────────────────────────────────────────────
@@ -472,8 +472,8 @@ export function boom300Engine(ctx: EngineContext): EngineResult | null {
 
   // ── Final confidence: BOOM300 native score maps 1:1 to confidence ──────────
   // confidence = nativeScore / 100 (direct mapping)
-  // The allocator's mode-level gate (paper≥0.85 / demo≥0.90 / real≥0.92) maps
-  // cleanly to the native score (paper needs native≥85, demo≥90, real≥92).
+  // The allocator's mode-level gate (paper≥0.60 / demo≥0.65 / real≥0.70) is
+  // applied as the SECONDARY gate after the engine's own native gate passes.
   // Regime fit is used only for direction selection and reason logging — it does
   // NOT reduce confidence here (it was already the engine gate criteria above).
   const confidence = clamp(nativeScore / 100, 0, 0.98);

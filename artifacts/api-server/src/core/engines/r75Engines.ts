@@ -37,7 +37,7 @@ const R75_BREAKOUT_PROJECTED_PCT     = 0.25;   // breakout can extend beyond ran
 
 // ── Engine-native gates (primary) ────────────────────────────────────────────
 // These are the PRIMARY pass thresholds for each R_75 engine.
-// The allocator's mode-level confidence check (paper≥0.85/demo≥0.90/real≥0.92)
+// The allocator's mode-level confidence check (paper≥0.60/demo≥0.65/real≥0.70)
 // remains as the SECONDARY gate applied after engine acceptance.
 const R75_REVERSAL_MIN_GATE     = 55;
 const R75_CONTINUATION_MIN_GATE = 58;

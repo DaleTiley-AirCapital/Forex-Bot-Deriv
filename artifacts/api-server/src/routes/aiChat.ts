@@ -85,9 +85,9 @@ All other symbols have data downloaded for research/backtesting but do NOT gener
 Each mode has its own capital, settings, and trades. They run simultaneously and independently.
 | Mode | Monthly Target | Risk Profile | Min Composite Score |
 |------|---------------|-------------|-------------------|
-| **Paper** | 120% | Aggressive | 85 |
-| **Demo** | 80% | Balanced | 90 |
-| **Real** | 50% | Conservative | 92 |
+| **Paper** | 120% | Aggressive | 60 |
+| **Demo** | 80% | Balanced | 65 |
+| **Real** | 50% | Conservative | 70 |
 
 ## 2. The Five Strategy Families
 Each family is a distinct trading approach, activated only when its matching market regime is detected.
@@ -158,7 +158,7 @@ TP is the PRIMARY exit. Trailing stop is SAFETY NET ONLY. No ATR-based TP/SL eve
 4. **Strategy Evaluation** → Only matching strategies run per regime
 5. **Big Move Readiness** → Empirical 5-dimension readiness score (0-100):
    - Range Position (25%), MA Deviation (20%), Volatility Profile (20%), Range Expansion (15%), Directional Confirmation (20%)
-6. **Composite Threshold** → readiness score ≥ min_composite_score (85/90/92), EV ≥ 0.001, R:R ≥ 1.5
+6. **Composite Threshold** → readiness score ≥ min_composite_score (60/65/70), EV ≥ 0.001, R:R ≥ 1.5
 8. **AI Verification** (optional) → OpenAI reviews signal with strict multi-day breakout confirmation
 9. **Portfolio Allocation** → Risk checks: daily/weekly loss limits, max drawdown, max open trades, correlated exposure cap
 10. **Position Sizing** → equity × equity_pct_per_trade × confidence factor (up to 2 entries per symbol)
@@ -180,7 +180,7 @@ TP is the PRIMARY exit. Trailing stop is SAFETY NET ONLY. No ATR-based TP/SL eve
 ### Global Settings
 | Setting | What it means | Default |
 |---------|--------------|---------|
-| min_composite_score | Minimum quality score (0-100) for trading | 85/90/92 (paper/demo/real) |
+| min_composite_score | Minimum quality score (0-100) for trading | 60/65/70 (paper/demo/real) |
 | min_ev_threshold | Minimum expected value | 0.001 |
 | min_rr_ratio | Minimum reward-to-risk ratio | 1.5 |
 | scoring_weight_* | Six dimension weights for composite scoring | See §4 |
@@ -228,7 +228,7 @@ TP is the PRIMARY exit. Trailing stop is SAFETY NET ONLY. No ATR-based TP/SL eve
 
 ## 10. Core Trading Philosophy
 - LARGE CAPITAL PER TRADE: Deploy 15-25% equity per position
-- HIGHEST-QUALITY SIGNALS ONLY: Composite score ≥ 85 (paper), ≥ 90 (demo), ≥ 92 (real)
+- HIGHEST-QUALITY SIGNALS ONLY: Composite score ≥ 60 (paper), ≥ 65 (demo), ≥ 70 (real)
 - LONG HOLD: Trades hold 9-44 days until TP, SL, or trailing stop
 - DYNAMIC TP/SL: Spike-magnitude-aware (Boom/Crash) + structural S/R confluence (Volatility). TP is PRIMARY exit; trailing stop is SAFETY NET ONLY.
 - 30% PEAK-PROFIT TRAILING: Lock in gains from peak unrealised profit (safety net only)

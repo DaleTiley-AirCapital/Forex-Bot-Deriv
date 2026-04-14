@@ -115,12 +115,12 @@ function ModeSection({
 }) {
   const isActive = bool(data[`${mode}_mode_active`]);
   const capital   = data[`${mode}_capital`] ?? "600";
-  const minScore  = data[`${mode}_min_composite_score`] ?? (mode === "paper" ? "85" : mode === "demo" ? "90" : "92");
+  const minScore  = data[`${mode}_min_composite_score`] ?? (mode === "paper" ? "60" : mode === "demo" ? "65" : "70");
   const eqPct     = data[`${mode}_equity_pct_per_trade`] ?? "20";
   const maxTrades = data[`${mode}_max_open_trades`] ?? "3";
   const maxDd     = data[`${mode}_max_drawdown_pct`] ?? "15";
 
-  const thresholdNote = mode === "paper" ? "≥85 required" : mode === "demo" ? "≥90 required" : "≥92 required";
+  const thresholdNote = mode === "paper" ? "≥60 required" : mode === "demo" ? "≥65 required" : "≥70 required";
 
   const borderColor = isActive
     ? mode === "paper" ? "border-amber-500/40" : mode === "demo" ? "border-blue-500/40" : "border-green-500/40"
@@ -280,7 +280,7 @@ export default function Settings() {
               <div>
                 <p className="text-sm font-semibold text-primary">Score Thresholds — Non-Negotiable</p>
                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                  Paper ≥ 85 · Demo ≥ 90 · Real ≥ 92 · TP target 50–200%+
+                  Paper ≥ 60 · Demo ≥ 65 · Real ≥ 70 · TP target 50–200%+
                 </p>
                 <p className="text-[10px] text-muted-foreground/60 mt-1">
                   Do not lower these thresholds. They are calibrated for high-confidence entries only.

@@ -36,10 +36,9 @@ The platform is built as a pnpm workspace monorepo using TypeScript, featuring a
 - R_75 — `r75_reversal_engine`, `r75_continuation_engine`, `r75_breakout_engine` (coordinator resolves)
 - R_100 — `r100_reversal_engine`, `r100_breakout_engine`, `r100_continuation_engine` (coordinator resolves)
 
-**Mode Thresholds:**
-- Production targets (non-negotiable): Paper ≥ 85, Demo ≥ 90, Real ≥ 92
-- Safe-mode (current operating gates, enforced at startup): Paper ≥ 60, Demo ≥ 65, Real ≥ 70
-- Safe-mode is temporary: active while calibration data accumulates. Production targets are enforced once engine scores consistently reach them.
+**Mode Thresholds (current):**
+- Paper: native score ≥ 60, Demo: native score ≥ 65, Real: native score ≥ 70
+- Gates are enforced at startup via unconditional upsert and will be raised as engine calibration data accumulates.
 - `signal_visibility_threshold`: 50 (startup upsert ensures existing environments are not locked at old 75 default)
 
 **Native Scoring (all 4 symbols):**

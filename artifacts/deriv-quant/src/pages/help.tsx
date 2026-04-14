@@ -37,9 +37,9 @@ const ENGINES: {
 ];
 
 const SCORE_GATES = [
-  { mode: "Paper", threshold: 85, safeMode: 60, color: "text-amber-400", note: "Simulated orders against paper capital" },
-  { mode: "Demo",  threshold: 90, safeMode: 65, color: "text-blue-400",  note: "Real orders against Deriv virtual account" },
-  { mode: "Real",  threshold: 92, safeMode: 70, color: "text-red-400",   note: "Live orders with real capital" },
+  { mode: "Paper", threshold: 60, color: "text-amber-400", note: "Simulated orders against paper capital" },
+  { mode: "Demo",  threshold: 65, color: "text-blue-400",  note: "Real orders against Deriv virtual account" },
+  { mode: "Real",  threshold: 70, color: "text-red-400",   note: "Live orders with real capital" },
 ];
 
 const FAQ_ITEMS: { q: string; a: string; icon: React.ReactNode }[] = [
@@ -50,7 +50,7 @@ const FAQ_ITEMS: { q: string; a: string; icon: React.ReactNode }[] = [
   },
   {
     q: "What is the difference between Paper, Demo, and Real modes?",
-    a: "Paper mode uses simulated orders against paper capital — no Deriv account required. Positions are tracked internally with floating PnL, no real money changes hands. Demo mode sends real orders to Deriv's virtual account (VRTC prefix). Real mode sends live orders using real capital. Production score targets: Paper ≥ 85, Demo ≥ 90, Real ≥ 92. Safe-mode currently active: Paper ≥ 60, Demo ≥ 65, Real ≥ 70. The production targets are non-negotiable and will be enforced once engine calibration data supports them.",
+    a: "Paper mode uses simulated orders against paper capital — no Deriv account required. Positions are tracked internally with floating PnL, no real money changes hands. Demo mode sends real orders to Deriv's virtual account (VRTC prefix). Real mode sends live orders using real capital. Each mode has its own score gate: Paper ≥ 60, Demo ≥ 65, Real ≥ 70. These gates will be raised as engine calibration data accumulates.",
     icon: <Shield className="w-4 h-4 text-primary" />,
   },
   {
@@ -193,7 +193,7 @@ export default function Help() {
               </div>
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-2">Production Targets</p>
+              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-2">Score Gates</p>
               <div className="space-y-1">
                 {SCORE_GATES.map(g => (
                   <div key={g.mode} className="flex items-center justify-between text-xs">
@@ -203,11 +203,6 @@ export default function Help() {
                 ))}
               </div>
             </div>
-          </div>
-          <div className="rounded-md bg-amber-500/5 border border-amber-500/20 px-3 py-2.5">
-            <p className="text-xs text-muted-foreground/90 leading-relaxed">
-              <strong className="text-amber-400">Safe-mode active:</strong> Engines are currently operating at Paper≥60 / Demo≥65 / Real≥70 while calibration data accumulates. The production targets (85/90/92) are non-negotiable and will be enforced once engine scores consistently reach them.
-            </p>
           </div>
           <div className="rounded-md bg-primary/5 border border-primary/15 px-3 py-2.5">
             <p className="text-xs text-muted-foreground/90 leading-relaxed">
@@ -225,14 +220,13 @@ export default function Help() {
             <div key={g.mode} className="rounded-lg border border-border/40 bg-card p-4">
               <p className={cn("text-sm font-bold", g.color)}>{g.mode}</p>
               <p className={cn("text-2xl font-bold tabular-nums mt-1", g.color)}>≥ {g.threshold}</p>
-              <p className="text-[11px] text-amber-400/80 font-mono mt-0.5">safe-mode: ≥ {g.safeMode}</p>
               <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">{g.note}</p>
             </div>
           ))}
         </div>
         <p className="text-xs text-muted-foreground/70 mt-2">
-          Production targets (85/90/92) are non-negotiable minimums — enforced once engine calibration scores reach them.
-          Safe-mode values (60/65/70) are current operating gates while calibration accumulates.
+          Current score gates: Paper ≥ 60, Demo ≥ 65, Real ≥ 70.
+          Gates will be raised as engine calibration data accumulates.
           See Research → Backtest for engine score distributions.
         </p>
       </Section>

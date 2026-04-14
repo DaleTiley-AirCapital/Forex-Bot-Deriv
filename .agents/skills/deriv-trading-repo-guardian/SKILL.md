@@ -75,11 +75,11 @@ positionManagementCycle:
 - `signalLogTable.strategyFamily` = `"v3_engine"` for V3 signals.
 
 ### Score Thresholds (current state as of Task #106)
-- **Production targets (non-negotiable):** Paper ≥ 85, Demo ≥ 90, Real ≥ 92
-- **Safe-mode (current operating gates):** Paper ≥ 60, Demo ≥ 65, Real ≥ 70
-- Safe-mode is enforced in `index.ts` startup SQL via unconditional upsert. Do NOT change these startup upserts.
-- Safe-mode is temporary — production targets enforced once engine calibration scores consistently reach them.
+- **Current operating gates:** Paper ≥ 60, Demo ≥ 65, Real ≥ 70
+- Enforced in `index.ts` startup SQL via unconditional upsert. Do NOT lower these startup upserts.
+- Gates will be raised as engine calibration data supports higher thresholds — raise them in platform_state directly.
 - Max observed engine scores (calibration): BOOM300/sell≈58, CRASH300/buy≈56, R_75≈83, R_100≈81.
+- Do NOT add aspirational threshold targets in code, docs, or AI prompts. Only current operating gates belong in active V3 guidance.
 
 ### Signal Visibility (Engine Decisions page)
 - `signal_visibility_threshold` = 50 (platform_state, seeded at startup via upsert using `LEAST(current, 50)`).

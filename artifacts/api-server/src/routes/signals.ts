@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, eq, gte, lte, and, sql } from "drizzle-orm";
+import { desc, asc, eq, gte, lte, and, sql } from "drizzle-orm";
 import { db, signalLogTable, platformStateTable } from "@workspace/db";
 import { computeFeatures } from "../core/features.js";
 import { getPendingSignalStatus } from "../core/pendingSignals.js";
@@ -119,6 +119,76 @@ router.get("/signals/pending", async (_req, res): Promise<void> => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     res.status(500).json({ error: `Failed to get pending signals: ${message}` });
+  }
+});
+
+// ── GET /api/signals/export ───────────────────────────────────────────────────
+// Exports signal_log rows for a symbol/time range as JSON.
+// Includes ALL signal decisions: allowed, blocked, and executed.
+// Query params: symbol (optional), startTs (unix s), endTs (unix s), limit (max 5000)
+
+router.get("/signals/export", async (req, res): Promise<void> => {
+  const symbolParam  = req.query.symbol ? String(req.query.symbol).toUpperCase() : null;
+  const startTsParam = req.query.startTs ? Number(req.query.startTs) : null;
+  const endTsParam   = req.query.endTs   ? Number(req.query.endTs)   : null;
+  const limitParam   = Math.min(Number(req.query.limit || 2000), 5000);
+
+  if (symbolParam && !SYMBOLS.includes(symbolParam)) {
+    res.status(400).json({ error: `Unknown symbol. Use one of: ${SYMBOLS.join(", ")}` });
+    return;
+  }
+
+  try {
+    const conditions = [];
+    if (symbolParam)  conditions.push(eq(signalLogTable.symbol, symbolParam));
+    if (startTsParam !== null && !isNaN(startTsParam)) {
+      conditions.push(gte(signalLogTable.ts, new Date(startTsParam * 1000)));
+    }
+    if (endTsParam !== null && !isNaN(endTsParam)) {
+      conditions.push(lte(signalLogTable.ts, new Date(endTsParam * 1000)));
+    }
+
+    const rows = await db.select().from(signalLogTable)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(asc(signalLogTable.ts))
+      .limit(limitParam);
+
+    res.json({
+      exported_at: new Date().toISOString(),
+      symbol: symbolParam ?? "all",
+      startTs: startTsParam,
+      endTs: endTsParam,
+      count: rows.length,
+      note: "Includes all signal decisions: allowed, blocked, and executed.",
+      signals: rows.map(r => ({
+        id:               r.id,
+        ts:               r.ts.toISOString(),
+        symbol:           r.symbol,
+        strategy:         r.strategyName,
+        direction:        r.direction,
+        score:            r.score,
+        composite_score:  r.compositeScore ?? null,
+        native_score:     r.compositeScore ?? null,
+        allowed_flag:     r.allowedFlag,
+        rejection_reason: r.rejectionReason ?? null,
+        execution_status: r.executionStatus ?? null,
+        mode:             r.mode ?? null,
+        ai_verdict:       r.aiVerdict ?? null,
+        ai_reasoning:     r.aiReasoning ?? null,
+        regime:           r.regime ?? null,
+        regime_confidence: r.regimeConfidence ?? null,
+        expected_move_pct: r.expectedMovePct ?? null,
+        suggested_tp:     r.suggestedTp ?? null,
+        suggested_sl:     r.suggestedSl ?? null,
+        allocation_pct:   r.allocationPct ?? null,
+        expected_hold_days: r.expectedHoldDays ?? null,
+        capture_rate:     r.captureRate ?? null,
+        empirical_win_rate: r.empiricalWinRate ?? null,
+      })),
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Signal export failed";
+    res.status(500).json({ error: message });
   }
 });
 

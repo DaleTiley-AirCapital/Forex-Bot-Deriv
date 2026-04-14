@@ -69,6 +69,11 @@ export const trades = pgTable("trades", {
         maxExitTs: timestamp("max_exit_ts", { withTimezone: true, mode: 'string' }),
         exitReason: text("exit_reason"),
         currentPrice: doublePrecision("current_price"),
+        // Unified lifecycle state machine fields — kept in sync by both live (tick)
+        // and backtest (bar) paths via applyBarStateTransitions().
+        tradeStage: integer("trade_stage").default(1).notNull(),     // 1=initial, 2=breakeven, 3=trailing
+        mfePct: doublePrecision("mfe_pct").default(0).notNull(),     // max favourable excursion %
+        maePct: doublePrecision("mae_pct").default(0).notNull(),     // max adverse excursion %
 });
 
 export const platformState = pgTable("platform_state", {

@@ -7,7 +7,6 @@ import type { TradingMode } from "./deriv.js";
 import { ACTIVE_TRADING_SYMBOLS } from "./deriv.js";
 import { scanSymbolV3 } from "../core/engineRouterV3.js";
 import { allocateV3Signal } from "../core/portfolioAllocatorV3.js";
-import { promoteBreakevenSls } from "../core/hybridTradeManager.js";
 import {
   updateCandidate,
   markCandidateExecuted,
@@ -418,9 +417,9 @@ async function positionManagementCycle(): Promise<void> {
     const legacyMode = stateMap["mode"] || "idle";
     if (!anyActive && legacyMode === "idle") return;
 
-    // Stage 1→2 SL promotion (breakeven at 20% TP progress) — V3 hybrid manager
-    await promoteBreakevenSls();
-    // Stage 2→3 trailing stop + closes — existing trade engine
+    // Unified lifecycle state machine: manageOpenPositions handles all stages
+    // (BE promotion 1→2, trailing activation 2→3, exits) via applyBarStateTransitions.
+    // promoteBreakevenSls is superseded — breakeven is now embedded in the shared state machine.
     await manageOpenPositions();
   } catch (err) {
     console.error("[Scheduler] Position management error:", err instanceof Error ? err.message : err);

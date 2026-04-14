@@ -457,18 +457,24 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
     );
   }
 
-  // ── Simulation parity gaps carried in the response ────────────────────────
-  // maxDrawdownBreached: now computed from running single-symbol equity (not assumed false)
-  // correlatedFamilyCapBreached: provably false in single-symbol replay (no other symbols)
-  // maxOpenTrades: single-symbol sim always uses 1 — real setting may differ
-  const runSimulationGaps: string[] = [
-    "correlatedFamilyCapBreached=always_false(single_symbol_no_correlated_positions)",
-    "maxOpenTrades=1(single_symbol_sim_not_actual_platform_limit)",
-  ];
-  console.warn(
-    `[BacktestRunner] SIMULATION PARITY GAPS for ${symbol} (${mode}): ` +
-    runSimulationGaps.join("; ")
+  // maxOpenTrades: read from platformState (same key/default as live portfolioAllocatorV3).
+  // In a single-symbol replay, currentOpenCount is 0 or 1 — this gate only fires if the
+  // platform is configured for maxOpenTrades=1, which is a deliberate operator choice.
+  const maxOpenTrades = parseInt(
+    stateMap[`${modePrefix}_max_open_trades`] || stateMap["max_open_trades"] || "3"
   );
+
+  // ── Simulation parity gaps carried in the response ────────────────────────
+  // - maxDrawdownBreached: computed from running single-symbol equity (not assumed false)
+  // - dailyLossLimitBreached/weeklyLossLimitBreached: computed from sim PnLs w/ real totalCapital
+  // - maxOpenTrades: read from platformState (same formula as live allocator)
+  // - correlatedFamilyCapBreached: always false — IDENTICAL to live allocator (portfolioAllocatorV3.ts:119)
+  //   The live path also hardcodes this to false; no gap exists between live and backtest here.
+  // REMAINING TRUE GAP: single-symbol replay cannot model cross-symbol portfolio state.
+  // (multi-symbol concurrent positions, correlated family exposure from other symbols)
+  const runSimulationGaps: string[] = [
+    "cross_symbol_portfolio_state_unavailable(single_symbol_replay_cannot_model_concurrent_positions_in_other_symbols)",
+  ];
 
   for (let i = simStart; i < candles.length; i++) {
     const sliceStart = Math.max(0, i - STRUCTURAL_LOOKBACK + 1);
@@ -735,10 +741,6 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
     const currentDrawdownPct = simEquityPeak > 0 ? (simEquityPeak - simEquity) / simEquityPeak : 0;
     const maxDrawdownBreached = currentDrawdownPct >= maxDrawdownThresholdPct;
 
-    const simulationGaps = [
-      "maxOpenTrades=1(single_symbol_sim)",
-      "correlatedFamilyCapBreached=always_false(single_symbol_no_correlated_positions)",
-    ];
     const allocResult = evaluateSignalAdmission({
       symbol,
       engineName: winner.engineName,
@@ -752,12 +754,12 @@ export async function runV3Backtest(req: V3BacktestRequest): Promise<V3BacktestR
       symbolEnabled,      // real: from platformState prefix_enabled_symbols
       openTradeForSymbol: openTrade !== null,
       currentOpenCount: openTrade !== null ? 1 : 0,
-      maxOpenTrades: 1,                  // gap: single-symbol sim
-      dailyLossLimitBreached,            // computed from simulation trades
-      weeklyLossLimitBreached,           // computed from simulation trades
+      maxOpenTrades,                     // from platformState — same formula as live allocator
+      dailyLossLimitBreached,            // computed from simulation trades + real totalCapital
+      weeklyLossLimitBreached,           // computed from simulation trades + real totalCapital
       maxDrawdownBreached,               // computed from running single-symbol equity curve
-      correlatedFamilyCapBreached: false,// provably false: no correlated symbols in single-symbol sim
-      simulationDefaults: simulationGaps,
+      correlatedFamilyCapBreached: false,// identical to live allocator (portfolioAllocatorV3.ts:119)
+      simulationDefaults: runSimulationGaps,
     });
 
     if (!allocResult.allowed) {

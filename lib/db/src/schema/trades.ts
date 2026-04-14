@@ -1,4 +1,4 @@
-import { pgTable, serial, text, doublePrecision, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, doublePrecision, timestamp, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -26,6 +26,10 @@ export const tradesTable = pgTable("trades", {
   exitReason: text("exit_reason"),
   currentPrice: doublePrecision("current_price"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // Unified lifecycle state machine fields (set by applyBarStateTransitions in both live + backtest)
+  tradeStage: integer("trade_stage").notNull().default(1),   // 1=initial, 2=breakeven, 3=trailing
+  mfePct: doublePrecision("mfe_pct").notNull().default(0),   // max favourable excursion %
+  maePct: doublePrecision("mae_pct").notNull().default(0),   // max adverse excursion %
 });
 
 export const insertTradeSchema = createInsertSchema(tradesTable).omit({ id: true, createdAt: true });

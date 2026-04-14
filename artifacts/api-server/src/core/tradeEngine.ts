@@ -5,7 +5,7 @@ import type { TradingMode } from "../infrastructure/deriv.js";
 import type { AllocationDecision } from "./signalRouter.js";
 import { checkAndAutoExtract } from "./extractionEngine.js";
 import { recordBehaviorEvent } from "./backtest/behaviorCapture.js";
-import { evaluateBarExits, MAX_HOLD_MINS, calculateAdaptiveTrailingStop } from "./tradeManagement.js";
+import { evaluateBarExits, MAX_HOLD_MINS, applyBarStateTransitions } from "./tradeManagement.js";
 
 const MAX_OPEN_TRADES = 6;
 const MAX_EQUITY_DEPLOYED_PCT = 0.80;
@@ -490,44 +490,64 @@ export async function manageOpenPositions(): Promise<void> {
       const emaSlope = parseFloat(scanContextMap[`${trade.symbol}_scan_ema_slope`] || "0");
       const spikeCount4h = parseInt(scanContextMap[`${trade.symbol}_scan_spike_count_4h`] || "0", 10);
 
-      const newPeak = direction === "buy"
-        ? Math.max(trade.peakPrice ?? trade.entryPrice, currentPrice)
-        : Math.min(trade.peakPrice ?? trade.entryPrice, currentPrice);
-
       const instrumentFamily = classifyInstrumentFamily(trade.symbol);
       const atr14Pct = getDefaultAtr14Pct(trade.symbol);
 
-      const trailingResult = calculateAdaptiveTrailingStop({
-        entryPrice: trade.entryPrice,
-        currentPrice,
-        peakPrice: newPeak,
+      // ── Unified lifecycle state machine ───────────────────────────────────
+      // applyBarStateTransitions owns: peak tracking, MFE/MAE, BE promotion
+      // (stage 1→2), trailing activation (stage 2→3), and adaptive SL update.
+      // Same pure function used in backtestRunner per-bar loop — single truth.
+      //
+      // Tick approximation: currentPrice acts as the degenerate bar where
+      // barOpen = barHigh = barLow = barClose = currentPrice.
+      // This preserves stage-machine fidelity across both paths.
+      const barState = applyBarStateTransitions({
         direction,
-        currentSl: trade.sl,
-        tpPrice: trade.tp,
-        atr14Pct,
-        instrumentFamily,
+        entryPrice: trade.entryPrice,
+        tp: trade.tp,
+        barHigh: currentPrice,
+        barLow: currentPrice,
+        barClose: currentPrice,
+        barOpen: currentPrice,
+        stage: ((trade.tradeStage ?? 1) as 1 | 2 | 3),
+        sl: trade.sl,
+        peakPrice: trade.peakPrice ?? trade.entryPrice,
+        mfePct: trade.mfePct ?? 0,
+        maePct: trade.maePct ?? 0,
         adverseCandleCount: adverseCount,
+        atr14AtEntry: atr14Pct,
+        instrumentFamily,
         emaSlope,
-        spikeCountAdverse4h: spikeCount4h,
+        spikeCount4h,
       });
 
-      let activeSl = trade.sl;
+      const slChanged = barState.sl !== trade.sl;
 
-      if (trailingResult.updated) {
-        activeSl = trailingResult.newSl;
-        await db.update(tradesTable)
-          .set({ sl: trailingResult.newSl, peakPrice: newPeak })
-          .where(eq(tradesTable.id, trade.id));
+      // Persist full lifecycle state on every tick so DB is authoritative
+      await db.update(tradesTable)
+        .set({
+          sl: barState.sl,
+          peakPrice: barState.peakPrice,
+          tradeStage: barState.stage,
+          mfePct: barState.mfePct,
+          maePct: barState.maePct,
+        })
+        .where(eq(tradesTable.id, trade.id));
 
+      if (slChanged) {
         if ((tradeMode === "demo" || tradeMode === "real") && trade.brokerTradeId && modeClient) {
-          await modeClient.updateStopLoss(parseInt(trade.brokerTradeId), Math.abs(trailingResult.newSl - trade.entryPrice));
+          await modeClient.updateStopLoss(parseInt(trade.brokerTradeId), Math.abs(barState.sl - trade.entryPrice));
         }
-        console.log(`[TradeEngine] Updated adaptive trailing SL for trade #${trade.id}: ${trailingResult.newSl.toFixed(4)} (${trailingResult.reason ?? "ATR trail"})`);
-      } else {
-        await db.update(tradesTable)
-          .set({ peakPrice: newPeak })
-          .where(eq(tradesTable.id, trade.id));
+        console.log(`[TradeEngine] Updated SL for trade #${trade.id} → ${barState.sl.toFixed(4)} (stage=${barState.stage})`);
       }
+      if (barState.bePromoted) {
+        console.log(`[TradeEngine] Trade #${trade.id} ${trade.symbol} breakeven promoted (stage 1→2, MFE=${(barState.mfePctAtPromotion * 100).toFixed(2)}%)`);
+      }
+      if (barState.trailingActivated) {
+        console.log(`[TradeEngine] Trade #${trade.id} ${trade.symbol} trailing activated (stage 2→3)`);
+      }
+
+      const activeSl = barState.sl;
 
       // evaluateBarExits (SL before TP) — same shared evaluator as backtestRunner.
       // For live tick management, currentPrice is treated as a degenerate bar

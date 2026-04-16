@@ -45,14 +45,6 @@ const VALID_PASS_NAMES: PassName[] = ["precursor", "trigger", "behavior", "extra
 const VALID_TIERS = ["A", "B", "C", "D"];
 const VALID_MOVE_TYPES = ["breakout", "continuation", "reversal", "unknown", "all"];
 
-function validateSymbol(symbol: string, res: ReturnType<typeof router.get extends (...args: infer A) => unknown ? (...args: A) => unknown : never>): boolean {
-  if (!VALID_SYMBOLS.includes(symbol as typeof ACTIVE_SYMBOLS[number])) {
-    (res as unknown as import("express").Response).status(400).json({ error: `Invalid symbol. Valid: ${VALID_SYMBOLS.join(", ")}` });
-    return false;
-  }
-  return true;
-}
-
 // ── POST /api/calibration/detect-moves/:symbol ────────────────────────────────
 
 router.post("/calibration/detect-moves/:symbol", async (req, res): Promise<void> => {

@@ -68,15 +68,35 @@ export async function runExtractionPass(
   const byType: Record<string, number> = {};
   for (const m of moves) byType[m.moveType] = (byType[m.moveType] ?? 0) + 1;
 
-  const missReasons: Array<{ reason: string; count: number }> = [];
+  // Comprehensive miss-reason aggregation across three paths:
+  //   1. Precursor miss: engine would NOT fire (missedReason from precursor pass)
+  //   2. Trigger gap: precursor fired but no trigger row ran (trigger pass never executed)
+  //   3. Trigger failure: trigger ran but captureablePct == 0 (move was not capturable)
   const reasonMap: Record<string, number> = {};
+
+  // Path 1 — Precursor-level misses (explicit missedReason from AI)
   for (const p of precursorRows) {
-    if (p.missedReason) reasonMap[p.missedReason] = (reasonMap[p.missedReason] ?? 0) + 1;
+    if (!p.engineWouldFire && p.missedReason) {
+      reasonMap[p.missedReason] = (reasonMap[p.missedReason] ?? 0) + 1;
+    }
   }
-  for (const [reason, count] of Object.entries(reasonMap)) {
-    missReasons.push({ reason, count });
+
+  // Path 2 — Precursor fired but no trigger row exists → trigger pass was never run
+  const precursorFiredMoveIds = new Set(precursorRows.filter(r => r.engineWouldFire).map(r => r.moveId));
+  const triggerGapCount = [...precursorFiredMoveIds].filter(mid => !triggerMoveIdSet.has(mid)).length;
+  if (triggerGapCount > 0) {
+    reasonMap["trigger_pass_not_run"] = (reasonMap["trigger_pass_not_run"] ?? 0) + triggerGapCount;
   }
-  missReasons.sort((a, b) => b.count - a.count);
+
+  // Path 3 — Trigger ran but captureablePct == 0 (move was technically unreachable)
+  const triggerFailCount = triggerOnlyRows.filter(r => precursorFiredMoveIds.has(r.moveId) && r.captureablePct === 0).length;
+  if (triggerFailCount > 0) {
+    reasonMap["trigger_zero_captureable"] = (reasonMap["trigger_zero_captureable"] ?? 0) + triggerFailCount;
+  }
+
+  const missReasons: Array<{ reason: string; count: number }> = Object.entries(reasonMap)
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count);
 
   const behaviorPatterns: Record<string, number> = {};
   for (const r of behaviorRows) {

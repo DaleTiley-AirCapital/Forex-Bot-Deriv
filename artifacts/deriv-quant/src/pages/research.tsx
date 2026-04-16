@@ -1198,10 +1198,13 @@ function MoveCalibrationTab() {
     if (scope === "detect") {
       await detectMoves();
     } else if (scope === "passes") {
-      await runPasses();
+      // Scope "Run All Passes" always forces passName="all" regardless of the pass selector,
+      // so the selector only affects explicit single-pass reruns from run history.
+      await runPasses("all");
     } else {
+      // Full Calibration: detect first, then run all passes
       const ok = await detectMoves();
-      if (ok) await runPasses();
+      if (ok) await runPasses("all");
     }
   };
 

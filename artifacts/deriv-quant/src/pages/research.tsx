@@ -1309,10 +1309,14 @@ function MoveCalibrationTab() {
               className="text-xs bg-background border border-border/50 rounded px-2 py-1.5 text-foreground focus:outline-none focus:border-primary/50"
             >
               <option value="all">All families</option>
-              <option value="reversal">Reversal</option>
-              <option value="continuation">Continuation</option>
+              {symbol === "BOOM300" && <option value="boom_expansion">Boom Expansion</option>}
+              {symbol === "CRASH300" && <option value="crash_expansion">Crash Expansion</option>}
               {(symbol === "R_75" || symbol === "R_100") && (
-                <option value="breakout">Breakout</option>
+                <>
+                  <option value="reversal">Reversal</option>
+                  <option value="continuation">Continuation</option>
+                  <option value="breakout">Breakout</option>
+                </>
               )}
             </select>
           </div>
@@ -1505,8 +1509,8 @@ function MoveCalibrationTab() {
                     onClick={async () => {
                       setBuildingProfile(true);
                       try {
-                        await apiFetch(`behavior/profile/${symbol}`, { method: "POST" });
-                        const beh = await apiFetch(`behavior/profile/${symbol}`).catch(() => null);
+                        const buildRes = await apiFetch(`behavior/build/${symbol}`, { method: "POST" }).catch(() => null);
+                        const beh = buildRes ?? await apiFetch(`behavior/profile/${symbol}`).catch(() => null);
                         setBehaviorProfile(beh ?? null);
                       } catch (err) {
                         console.error("[BehaviorProfile] Build failed:", err);
@@ -1517,7 +1521,7 @@ function MoveCalibrationTab() {
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border/50 text-muted-foreground text-[11px] hover:border-border hover:bg-muted/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {buildingProfile ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                    {buildingProfile ? "Building…" : "Build Profile"}
+                    {buildingProfile ? "Building…" : "Build Behavior Profile"}
                   </button>
                 </div>
               ) : (

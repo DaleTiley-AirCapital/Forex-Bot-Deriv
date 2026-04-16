@@ -122,6 +122,39 @@ router.post("/behavior/profile/:symbol", async (req, res): Promise<void> => {
   }
 });
 
+// ── POST /api/behavior/build/:symbol ─────────────────────────────────────────
+
+/**
+ * Alias for POST /api/behavior/profile/:symbol — provided for UI button compatibility.
+ * Builds behavior profile for the given symbol and returns the profile on success.
+ */
+router.post("/behavior/build/:symbol", async (req, res): Promise<void> => {
+  const { symbol } = req.params;
+  const { startTs, endTs, minScore, mode } = req.body ?? {};
+
+  if (!ACTIVE_SYMBOLS.includes(symbol as typeof ACTIVE_SYMBOLS[number])) {
+    res.status(400).json({ error: `Invalid symbol. Use one of: ${ACTIVE_SYMBOLS.join(", ")}` });
+    return;
+  }
+
+  try {
+    clearBehaviorEvents(symbol);
+    await reloadLiveBehaviorEventsForSymbol(symbol);
+    const req2: V3BacktestRequest = { symbol, startTs, endTs, minScore, mode };
+    await runV3Backtest(req2);
+    const profile = deriveSymbolBehaviorProfile(symbol);
+    if (!profile) {
+      res.status(200).json({ ok: true, profileCount: 0, profiles: [], message: "No events captured — insufficient candle data?" });
+      return;
+    }
+    res.json({ ok: true, profileCount: 1, profiles: [profile] });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Behavior profile build failed";
+    console.error(`[behavior/build/${symbol}] error:`, message);
+    res.status(500).json({ error: message });
+  }
+});
+
 // ── POST /api/behavior/profile/:symbol/:engine ────────────────────────────────
 
 /**

@@ -26,6 +26,7 @@ import { runPrecursorPass } from "./passes/precursorPass.js";
 import { runTriggerPass } from "./passes/triggerPass.js";
 import { runBehaviorPass } from "./passes/behaviorPass.js";
 import { runExtractionPass } from "./passes/extractionPass.js";
+import { PRIMARY_MODEL } from "../ai/aiConfig.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ async function createRunRecord(
       totalMoves,
       processedMoves: 0,
       failedMoves: 0,
-      metaJson: { model: "gpt-5.1", startedAt: new Date().toISOString() },
+      metaJson: { model: PRIMARY_MODEL, startedAt: new Date().toISOString() },
     })
     .returning({ id: calibrationPassRunsTable.id });
   return row.id;

@@ -37,6 +37,7 @@ import {
   getTradeHealthCalibration,
   getFullCalibrationExport,
 } from "../core/calibration/feeddown.js";
+import { deriveSymbolBehaviorProfile } from "../core/backtest/behaviorProfiler.js";
 
 const router: IRouter = Router();
 
@@ -377,8 +378,23 @@ router.get("/calibration/export/:symbol", async (req, res): Promise<void> => {
       filename = `calibration_moves_${symbol}_${ts}.json`;
 
     } else if (exportType === "passes") {
-      const runs = await getAllPassRuns(symbol);
-      response = { symbol, exportType: "passes", exportedAt: new Date().toISOString(), runCount: runs.length, runs };
+      // Return both run-header metadata AND per-move-type calibration profiles (precursor/trigger/behavior/extraction results)
+      const [runs, profiles] = await Promise.all([
+        getAllPassRuns(symbol),
+        getAllCalibrationProfiles(symbol),
+      ]);
+      response = {
+        symbol,
+        exportType: "passes",
+        exportedAt: new Date().toISOString(),
+        runCount: runs.length,
+        runs,
+        passResults: {
+          description: "Per-move-type calibration profiles derived from all AI passes (precursor, trigger, in-move behavior, extraction).",
+          profileCount: profiles.length,
+          profiles,
+        },
+      };
       filename = `calibration_passes_${symbol}_${ts}.json`;
 
     } else if (exportType === "profile") {
@@ -387,20 +403,44 @@ router.get("/calibration/export/:symbol", async (req, res): Promise<void> => {
       filename = `calibration_profile_${symbol}_${ts}.json`;
 
     } else if (exportType === "comparison") {
-      const [aggregate, engine, scoring, health] = await Promise.all([
-        buildCalibrationAggregate(symbol),
+      // 3-domain comparison: Current Engine Behavior vs Target Moves vs Recommended Calibration
+      const [moves, profiles, engine] = await Promise.all([
+        getDetectedMoves(symbol),
+        getAllCalibrationProfiles(symbol),
         getEngineCalibration(symbol),
-        getScoringCalibration(symbol),
-        getTradeHealthCalibration(symbol),
       ]);
+      const behaviorProfile = deriveSymbolBehaviorProfile(symbol);
+      const mags = moves.map(m => Number(m.movePct ?? 0)).sort((a, b) => a - b);
+      const median = mags.length > 0 ? mags[Math.floor(mags.length / 2)] : null;
+      const moveTypeDistribution = moves.reduce<Record<string, number>>((acc, m) => {
+        const t = String(m.moveType ?? "unknown");
+        acc[t] = (acc[t] ?? 0) + 1;
+        return acc;
+      }, {});
       response = {
         symbol,
         exportType: "comparison",
         exportedAt: new Date().toISOString(),
-        aggregate,
-        engineCoverage: engine,
-        scoring,
-        health,
+        currentEngineBehavior: {
+          description: "Signal-driven engine behavior profile from /api/behavior/profile/:symbol",
+          source: `/api/behavior/profile/${symbol}`,
+          data: behaviorProfile,
+          engineCoverage: engine,
+        },
+        targetMoves: {
+          description: "Structurally detected moves from /api/calibration/moves/:symbol",
+          source: `/api/calibration/moves/${symbol}`,
+          totalMoves: moves.length,
+          medianMagnitudePct: median,
+          moveTypeDistribution,
+          sampleMoves: moves.slice(0, 10),
+        },
+        recommendedCalibration: {
+          description: "AI-generated calibration profiles from /api/calibration/profile/:symbol/:strategy",
+          source: `/api/calibration/profiles/${symbol}`,
+          profileCount: profiles.length,
+          profiles,
+        },
       };
       filename = `calibration_comparison_${symbol}_${ts}.json`;
 

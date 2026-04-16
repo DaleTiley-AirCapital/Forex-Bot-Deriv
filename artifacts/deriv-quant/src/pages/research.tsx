@@ -958,6 +958,13 @@ function MoveCalibrationTab() {
   const [aggregate, setAggregate] = useState<AggregateResult | null>(null);
   const [aggLoading, setAggLoading] = useState(false);
 
+  const [targetMovesStats, setTargetMovesStats] = useState<{
+    totalMoves: number;
+    medianMagnitudePct: number | null;
+    moveTypeDistribution: Record<string, number>;
+    qualityDistribution: Record<string, number>;
+  } | null>(null);
+
   const [behaviorProfile, setBehaviorProfile] = useState<BehaviorOverview | null>(null);
   const [calibProfile, setCalibProfile] = useState<CalibrationProfile | null>(null);
   const [domainLoading, setDomainLoading] = useState(false);
@@ -997,16 +1004,47 @@ function MoveCalibrationTab() {
     setEngineLoading(true);
     const profilePath = (family && family !== "all") ? family : "all";
     try {
-      const [agg, eng, beh, calib] = await Promise.all([
+      const [agg, eng, beh, calib, rawMovesResp] = await Promise.all([
         apiFetch(`calibration/aggregate/${sym}`).catch(() => null),
         apiFetch(`calibration/engine/${sym}`).catch(() => null),
         apiFetch(`behavior/profile/${sym}`).catch(() => null),
         apiFetch(`calibration/profile/${sym}/${profilePath}`).catch(() => null),
+        apiFetch(`calibration/moves/${sym}`).catch(() => null),
       ]);
       setAggregate(agg);
       setEngines(eng?.engines ?? []);
       setBehaviorProfile(beh ?? null);
       setCalibProfile(calib ?? null);
+
+      // Compute Target Moves stats directly from the moves endpoint (constraint #9)
+      const rawMoves: Array<{ magnitudePct?: number | string | null; moveType?: string | null; qualityTier?: string | null }> =
+        rawMovesResp?.moves ?? [];
+      if (rawMoves.length > 0) {
+        const mags = rawMoves
+          .map(m => Number(m.magnitudePct ?? 0))
+          .filter(v => !isNaN(v))
+          .sort((a, b) => a - b);
+        const mid = Math.floor(mags.length / 2);
+        const medianMag = mags.length > 0 ? mags[mid] : null;
+        const moveTypeDist = rawMoves.reduce<Record<string, number>>((acc, m) => {
+          const t = String(m.moveType ?? "unknown");
+          acc[t] = (acc[t] ?? 0) + 1;
+          return acc;
+        }, {});
+        const qualityDist = rawMoves.reduce<Record<string, number>>((acc, m) => {
+          const t = String(m.qualityTier ?? "?");
+          acc[t] = (acc[t] ?? 0) + 1;
+          return acc;
+        }, {});
+        setTargetMovesStats({
+          totalMoves: rawMoves.length,
+          medianMagnitudePct: medianMag,
+          moveTypeDistribution: moveTypeDist,
+          qualityDistribution: qualityDist,
+        });
+      } else {
+        setTargetMovesStats(null);
+      }
     } finally {
       setAggLoading(false);
       setDomainLoading(false);
@@ -1473,37 +1511,47 @@ function MoveCalibrationTab() {
               )}
             </DomainCard>
 
-            {/* Domain B — Target Moves (move-first, structural detection) */}
+            {/* Domain B — Target Moves (sourced from /api/calibration/moves/:symbol — constraint #9) */}
             <DomainCard title="Target Moves" icon={<Target className="w-3.5 h-3.5 text-primary" />}>
-              {!aggregate || aggregate.totalMoves === 0 ? (
+              {!targetMovesStats ? (
                 <p className="text-[11px] text-muted-foreground">No moves detected. Run "Detect Moves" first.</p>
               ) : (
                 <>
-                  <StatRow label="Total moves" value={aggregate.totalMoves} />
-                  <StatRow label="Avg move %" value={`${(aggregate.overall?.avgMovePct * 100).toFixed(1)}%`} />
-                  <StatRow label="Median move %" value={`${(aggregate.overall?.medianMovePct * 100).toFixed(1)}%`} />
-                  <StatRow label="Avg hold (hrs)" value={aggregate.overall?.avgHoldHours?.toFixed(1) ?? "—"} />
-                  <StatRow label="Direction up/down" value={`${aggregate.overall?.directionSplit?.up ?? 0} / ${aggregate.overall?.directionSplit?.down ?? 0}`} />
+                  <StatRow label="Total moves" value={targetMovesStats.totalMoves} />
+                  <StatRow
+                    label="Median magnitude %"
+                    value={targetMovesStats.medianMagnitudePct != null
+                      ? `${(targetMovesStats.medianMagnitudePct * 100).toFixed(2)}%`
+                      : "—"}
+                  />
+                  {/* Avg hold from aggregate (computed from same moves table) */}
+                  {aggregate?.overall && (
+                    <>
+                      <StatRow label="Avg move %" value={`${(aggregate.overall.avgMovePct * 100).toFixed(1)}%`} />
+                      <StatRow label="Avg hold (hrs)" value={aggregate.overall.avgHoldHours?.toFixed(1) ?? "—"} />
+                      <StatRow label="Direction up/down" value={`${aggregate.overall.directionSplit?.up ?? 0} / ${aggregate.overall.directionSplit?.down ?? 0}`} />
+                    </>
+                  )}
                   <div className="mt-1.5 pt-1.5 border-t border-border/20 space-y-0.5">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">By family</p>
-                    {Object.entries(aggregate.byMoveType ?? {}).map(([type, stats]) => (
+                    {Object.entries(targetMovesStats.moveTypeDistribution).map(([type, count]) => (
                       <div key={type} className="flex items-center justify-between text-[11px]">
                         <TypePill type={type} />
-                        <span className="font-mono text-foreground">{stats.count}× · {(stats.avgMovePct * 100).toFixed(1)}%</span>
+                        <span className="font-mono text-foreground">{count}×</span>
                       </div>
                     ))}
                   </div>
                   <div className="mt-1.5 pt-1.5 border-t border-border/20">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Quality dist.</p>
                     <div className="flex flex-wrap gap-1">
-                      {Object.entries(aggregate.overall?.qualityDistribution ?? {}).map(([tier, cnt]) => (
+                      {Object.entries(targetMovesStats.qualityDistribution).map(([tier, cnt]) => (
                         <span key={tier} className={cn("px-1.5 py-0.5 rounded text-[10px] font-bold border", TIER_COLORS[tier] ?? TIER_COLORS.D)}>
-                          {tier}: {cnt as number}
+                          {tier}: {cnt}
                         </span>
                       ))}
                     </div>
                   </div>
-                  {Object.keys(aggregate.overall?.leadInShapes ?? {}).length > 0 && (
+                  {aggregate?.overall && Object.keys(aggregate.overall.leadInShapes ?? {}).length > 0 && (
                     <div className="mt-1.5 pt-1.5 border-t border-border/20 space-y-0.5">
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Lead-in shapes</p>
                       {Object.entries(aggregate.overall.leadInShapes).slice(0, 4).map(([shape, cnt]) => (
@@ -1530,22 +1578,92 @@ function MoveCalibrationTab() {
                   <StatRow label="Avg hold (hrs)" value={calibProfile.avgHoldingHours.toFixed(1)} />
                   <StatRow label="Avg capturable %" value={`${(calibProfile.avgCaptureablePct * 100).toFixed(1)}%`} />
                   <StatRow label="Holdability score" value={calibProfile.avgHoldabilityScore.toFixed(2)} />
-                  {calibProfile.precursorSummary && (
-                    <div className="mt-1.5 pt-1.5 border-t border-border/20">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Precursor summary</p>
-                      <pre className="text-[10px] font-mono text-muted-foreground bg-muted/20 rounded p-1.5 overflow-x-auto max-h-24 whitespace-pre-wrap break-all">
-                        {JSON.stringify(calibProfile.precursorSummary, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                  {calibProfile.triggerSummary && (
-                    <div className="mt-1.5 pt-1.5 border-t border-border/20">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Trigger summary</p>
-                      <pre className="text-[10px] font-mono text-muted-foreground bg-muted/20 rounded p-1.5 overflow-x-auto max-h-24 whitespace-pre-wrap break-all">
-                        {JSON.stringify(calibProfile.triggerSummary, null, 2)}
-                      </pre>
-                    </div>
-                  )}
+                  {/* Pass 1: Precursor Card */}
+                  {calibProfile.precursorSummary && (() => {
+                    const ps = calibProfile.precursorSummary as Record<string, unknown>;
+                    const topConditions: unknown[] = (ps["topConditions"] ?? ps["conditions"] ?? ps["leadInPatterns"] ?? []) as unknown[];
+                    const avgBars = ps["avgLeadInBars"] ?? ps["avgBars"] ?? ps["lookbackBars"];
+                    return (
+                      <details className="mt-1.5 pt-1.5 border-t border-border/20" open>
+                        <summary className="text-[10px] text-amber-400/80 uppercase tracking-wide cursor-pointer hover:text-amber-300">
+                          Pass 1 · Precursor Conditions
+                        </summary>
+                        <div className="mt-1 space-y-0.5">
+                          {avgBars != null && (
+                            <div className="flex justify-between text-[11px]">
+                              <span className="text-muted-foreground">Avg lead-in bars</span>
+                              <span className="font-mono text-foreground">{String(avgBars)}</span>
+                            </div>
+                          )}
+                          {Array.isArray(topConditions) && topConditions.length > 0 && (
+                            <div className="mt-0.5">
+                              <p className="text-[10px] text-muted-foreground mb-0.5">Top conditions</p>
+                              {topConditions.slice(0, 5).map((c, i) => (
+                                <p key={i} className="text-[11px] text-foreground bg-muted/20 rounded px-1 py-0.5 mb-0.5">
+                                  {typeof c === "string" ? c : JSON.stringify(c)}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                          {avgBars == null && (!Array.isArray(topConditions) || topConditions.length === 0) && (
+                            <pre className="text-[10px] font-mono text-muted-foreground bg-muted/20 rounded p-1.5 overflow-x-auto max-h-20 whitespace-pre-wrap break-all">
+                              {JSON.stringify(calibProfile.precursorSummary, null, 2)}
+                            </pre>
+                          )}
+                        </div>
+                      </details>
+                    );
+                  })()}
+                  {/* Pass 2: Trigger Zone Card */}
+                  {calibProfile.triggerSummary && (() => {
+                    const ts2 = calibProfile.triggerSummary as Record<string, unknown>;
+                    const triggerType = ts2["triggerType"] ?? ts2["type"] ?? ts2["entrySignalType"];
+                    const confirmBars = ts2["confirmationBars"] ?? ts2["confirmBars"];
+                    const invalidation = ts2["invalidationConditions"] ?? ts2["invalidation"];
+                    const entryConditions: unknown[] = (ts2["entryConditions"] ?? ts2["conditions"] ?? []) as unknown[];
+                    return (
+                      <details className="mt-1.5 pt-1.5 border-t border-border/20" open>
+                        <summary className="text-[10px] text-sky-400/80 uppercase tracking-wide cursor-pointer hover:text-sky-300">
+                          Pass 2 · Trigger Zone (In-Move Behavior)
+                        </summary>
+                        <div className="mt-1 space-y-0.5">
+                          {triggerType != null && (
+                            <div className="flex justify-between text-[11px]">
+                              <span className="text-muted-foreground">Trigger type</span>
+                              <span className="font-mono text-foreground">{String(triggerType)}</span>
+                            </div>
+                          )}
+                          {confirmBars != null && (
+                            <div className="flex justify-between text-[11px]">
+                              <span className="text-muted-foreground">Confirm bars</span>
+                              <span className="font-mono text-foreground">{String(confirmBars)}</span>
+                            </div>
+                          )}
+                          {Array.isArray(entryConditions) && entryConditions.length > 0 && (
+                            <div className="mt-0.5">
+                              <p className="text-[10px] text-muted-foreground mb-0.5">Entry conditions</p>
+                              {entryConditions.slice(0, 4).map((c, i) => (
+                                <p key={i} className="text-[11px] text-foreground bg-muted/20 rounded px-1 py-0.5 mb-0.5">
+                                  {typeof c === "string" ? c : JSON.stringify(c)}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                          {invalidation != null && (
+                            <div className="mt-0.5">
+                              <span className="text-[10px] text-muted-foreground">Invalidation: </span>
+                              <span className="text-[11px] text-red-400">{typeof invalidation === "string" ? invalidation : JSON.stringify(invalidation)}</span>
+                            </div>
+                          )}
+                          {triggerType == null && (!Array.isArray(entryConditions) || entryConditions.length === 0) && (
+                            <pre className="text-[10px] font-mono text-muted-foreground bg-muted/20 rounded p-1.5 overflow-x-auto max-h-20 whitespace-pre-wrap break-all">
+                              {JSON.stringify(calibProfile.triggerSummary, null, 2)}
+                            </pre>
+                          )}
+                        </div>
+                      </details>
+                    );
+                  })()}
                   {calibProfile.feeddownSchema && (() => {
                     const fd = calibProfile.feeddownSchema as Record<string, unknown>;
                     const scanCadence = fd["scanCadenceMins"] ?? fd["scanCadenceRecommendation"] ?? fd["scanCadence"];
@@ -1601,6 +1719,55 @@ function MoveCalibrationTab() {
                           </pre>
                         )}
                       </div>
+                    );
+                  })()}
+                  {/* Pass 4: Best Extraction Path Card */}
+                  {(() => {
+                    const ps = calibProfile.profitabilitySummary;
+                    if (!ps || !ps.paths || ps.paths.length === 0) return null;
+                    return (
+                      <details className="mt-1.5 pt-1.5 border-t border-border/20" open>
+                        <summary className="text-[10px] text-emerald-400/80 uppercase tracking-wide cursor-pointer hover:text-emerald-300">
+                          Pass 4 · Best Extraction Path
+                        </summary>
+                        <div className="mt-1 space-y-1.5">
+                          {ps.topPath && (
+                            <div className="flex justify-between text-[11px]">
+                              <span className="text-muted-foreground">Top path</span>
+                              <span className="font-mono text-emerald-400">{ps.topPath}</span>
+                            </div>
+                          )}
+                          {ps.estimatedFitAdjustedReturn != null && (
+                            <div className="flex justify-between text-[11px]">
+                              <span className="text-muted-foreground">Est. fit-adj. return</span>
+                              <span className="font-mono text-foreground">
+                                {(ps.estimatedFitAdjustedReturn * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                          )}
+                          {ps.paths.slice(0, 4).map((path, i) => (
+                            <div key={path.name ?? i} className="bg-muted/20 rounded p-1.5 space-y-0.5">
+                              <p className="text-[10px] font-semibold text-foreground">{path.name}</p>
+                              <div className="flex justify-between text-[11px]">
+                                <span className="text-muted-foreground">Monthly return</span>
+                                <span className={cn("font-mono", path.estimatedMonthlyReturnPct >= 0 ? "text-emerald-400" : "text-red-400")}>
+                                  {(path.estimatedMonthlyReturnPct * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="flex justify-between text-[11px]">
+                                <span className="text-muted-foreground">Capturable · hold</span>
+                                <span className="font-mono text-foreground">
+                                  {(path.captureablePct * 100).toFixed(0)}% · {path.holdDays}d
+                                </span>
+                              </div>
+                              <div className="flex justify-between text-[11px]">
+                                <span className="text-muted-foreground">Confidence</span>
+                                <span className="font-mono text-foreground">{path.confidence}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
                     );
                   })()}
                   {engines.length > 0 && (

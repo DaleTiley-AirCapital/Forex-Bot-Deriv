@@ -343,6 +343,12 @@ router.get("/calibration/health/:symbol", async (req, res): Promise<void> => {
 });
 
 // ── GET /api/calibration/export/:symbol ───────────────────────────────────────
+// Optional ?type= param selects which slice to export:
+//   type=moves      — detected moves for this symbol
+//   type=passes     — all calibration pass runs for this symbol
+//   type=profile    — all calibration profiles (all move types)
+//   type=comparison — aggregate + engine coverage comparison summary
+//   (no type)       — full calibration export (existing behaviour)
 
 router.get("/calibration/export/:symbol", async (req, res): Promise<void> => {
   const { symbol } = req.params;
@@ -351,20 +357,64 @@ router.get("/calibration/export/:symbol", async (req, res): Promise<void> => {
     return;
   }
 
+  const exportType = req.query.type ? String(req.query.type) : null;
+  const VALID_EXPORT_TYPES = ["moves", "passes", "profile", "comparison"];
+  if (exportType && !VALID_EXPORT_TYPES.includes(exportType)) {
+    res.status(400).json({ error: `Invalid export type. Valid: ${VALID_EXPORT_TYPES.join(", ")} (or omit for full export)` });
+    return;
+  }
+
   const asDownload = req.query.download === "true";
+  const ts = new Date().toISOString().slice(0, 10);
 
   try {
-    const [exportData, moves] = await Promise.all([
-      getFullCalibrationExport(symbol),
-      getDetectedMoves(symbol),
-    ]);
-    const response = {
-      ...exportData,
-      detected_moves: moves,
-      detected_moves_count: moves.length,
-    };
+    let response: unknown;
+    let filename: string;
+
+    if (exportType === "moves") {
+      const moves = await getDetectedMoves(symbol);
+      response = { symbol, exportType: "moves", exportedAt: new Date().toISOString(), moveCount: moves.length, moves };
+      filename = `calibration_moves_${symbol}_${ts}.json`;
+
+    } else if (exportType === "passes") {
+      const runs = await getAllPassRuns(symbol);
+      response = { symbol, exportType: "passes", exportedAt: new Date().toISOString(), runCount: runs.length, runs };
+      filename = `calibration_passes_${symbol}_${ts}.json`;
+
+    } else if (exportType === "profile") {
+      const profiles = await getAllCalibrationProfiles(symbol);
+      response = { symbol, exportType: "profile", exportedAt: new Date().toISOString(), profileCount: profiles.length, profiles };
+      filename = `calibration_profile_${symbol}_${ts}.json`;
+
+    } else if (exportType === "comparison") {
+      const [aggregate, engine, scoring, health] = await Promise.all([
+        buildCalibrationAggregate(symbol),
+        getEngineCalibration(symbol),
+        getScoringCalibration(symbol),
+        getTradeHealthCalibration(symbol),
+      ]);
+      response = {
+        symbol,
+        exportType: "comparison",
+        exportedAt: new Date().toISOString(),
+        aggregate,
+        engineCoverage: engine,
+        scoring,
+        health,
+      };
+      filename = `calibration_comparison_${symbol}_${ts}.json`;
+
+    } else {
+      const [exportData, moves] = await Promise.all([
+        getFullCalibrationExport(symbol),
+        getDetectedMoves(symbol),
+      ]);
+      response = { ...exportData, detected_moves: moves, detected_moves_count: moves.length };
+      filename = `calibration_full_${symbol}_${ts}.json`;
+    }
+
     if (asDownload) {
-      res.setHeader("Content-Disposition", `attachment; filename="calibration_${symbol}_${new Date().toISOString().slice(0, 10)}.json"`);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.setHeader("Content-Type", "application/json");
     }
     res.json(response);

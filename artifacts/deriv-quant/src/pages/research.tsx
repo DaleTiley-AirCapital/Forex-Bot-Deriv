@@ -725,54 +725,10 @@ function BacktestTab() {
   );
 }
 
-// ─── Behavior Model Tab ───────────────────────────────────────────────────────
+// ─── Move Calibration support types ──────────────────────────────────────────
 
-const BEHAVIOR_SYMBOL_ENGINES: Record<string, string[]> = {
-  BOOM300:  ["boom_expansion_engine"],
-  CRASH300: ["crash_expansion_engine"],
-  R_75:     ["r75_reversal_engine", "r75_continuation_engine", "r75_breakout_engine"],
-  R_100:    ["r100_reversal_engine", "r100_continuation_engine", "r100_breakout_engine"],
-};
-
-interface EngineProfile {
+interface BehaviorOverview {
   symbol: string;
-  engineName: string;
-  tradeCount: number;
-  winRate: number;
-  avgHoldBars: number;
-  avgHoldHours: number;
-  avgPnlPct: number;
-  profitFactor: number;
-  avgMfePct: number;
-  mfePctP50: number;
-  mfePctP75: number;
-  mfePctP90: number;
-  avgMaePct: number;
-  maePctP50: number;
-  barsToMfeP50: number;
-  extensionProbability: number;
-  bePromotionRate: number;
-  trailingActivationRate: number;
-  byExitReason: Record<string, number>;
-  bySlStage: Record<string, number>;
-  signalsFired: number;
-  blockedByGateCount: number;
-  blockedRate: number;
-  byRegime: Record<string, { count: number; wins: number; winRate: number }>;
-  dominantRegime: string;
-  dominantEntryType: string;
-  signalFrequencyPerDay: number;
-  recommendedMemoryWindowBars: number;
-  recommendedScanCadenceMins: number;
-  scoreP50: number;
-  scoreP75: number;
-  sampleDays: number;
-  sources: string[];
-}
-
-interface BehaviorProfileSummary {
-  symbol: string;
-  engineProfiles: EngineProfile[];
   totalTrades: number;
   totalSignalsFired: number;
   totalBlocked: number;
@@ -780,304 +736,63 @@ interface BehaviorProfileSummary {
   overallBlockedRate: number;
   recommendedScanCadenceMins: number;
   lastUpdated: string;
+  engineProfiles?: Array<{
+    engineName: string;
+    tradeCount: number;
+    winRate: number;
+    avgPnlPct: number;
+    signalFrequencyPerDay: number;
+    sampleDays: number;
+  }>;
 }
 
-function MetricRow({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
-  return (
-    <div className="flex items-start gap-3 py-1.5 border-b border-border/15 last:border-0">
-      <span className="text-[11px] text-muted-foreground w-44 shrink-0">{label}</span>
-      <span className="text-[11px] font-mono text-foreground">{value}</span>
-      {sub && <span className="text-[10px] text-muted-foreground ml-1">{sub}</span>}
-    </div>
-  );
+interface ProfitabilityPath {
+  name: string;
+  estimatedMonthlyReturnPct: number;
+  captureablePct: number;
+  holdDays: number;
+  confidence: string;
 }
 
-function EngineProfileCard({ ep }: { ep: EngineProfile }) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div className="rounded-lg border border-border/30 overflow-hidden">
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="w-full px-3 py-2.5 bg-muted/10 flex items-center justify-between hover:bg-muted/15 transition-colors"
-      >
-        <span className="text-xs font-medium font-mono">{ep.engineName}</span>
-        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span>{ep.tradeCount} trades</span>
-          <span className={ep.winRate >= 0.5 ? "text-green-400" : "text-red-400"}>
-            {(ep.winRate * 100).toFixed(1)}% WR
-          </span>
-          <span>{ep.sampleDays}d sample</span>
-          <ChevronRight className={cn("w-3.5 h-3.5 transition-transform", open && "rotate-90")} />
-        </div>
-      </button>
-      {open && (
-        <div className="px-3 py-2 grid grid-cols-1 sm:grid-cols-2 gap-x-6">
-          <div>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1 mb-0.5">Trade Quality</p>
-            <MetricRow label="Trades" value={ep.tradeCount} />
-            <MetricRow label="Win rate" value={`${(ep.winRate * 100).toFixed(1)}%`} />
-            <MetricRow label="Avg P&L" value={`${(ep.avgPnlPct * 100).toFixed(2)}%`} />
-            <MetricRow label="Profit factor" value={isFinite(ep.profitFactor) ? ep.profitFactor.toFixed(2) : "∞"} />
-            <MetricRow label="Avg hold" value={`${ep.avgHoldHours.toFixed(1)}h`} sub={`${ep.avgHoldBars.toFixed(0)} bars`} />
-
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-3 mb-0.5">MFE / MAE Distribution</p>
-            <MetricRow label="MFE P50 / P75 / P90" value={`${(ep.mfePctP50 * 100).toFixed(2)}% / ${(ep.mfePctP75 * 100).toFixed(2)}% / ${(ep.mfePctP90 * 100).toFixed(2)}%`} />
-            <MetricRow label="MAE P50 (avg adverse)" value={`${(ep.maePctP50 * 100).toFixed(2)}% avg`} />
-            <MetricRow label="Time to peak MFE (P50)" value={`${ep.barsToMfeP50} bars`} sub="≈ mins" />
-            <MetricRow label="Extension probability" value={`${(ep.extensionProbability * 100).toFixed(1)}%`} sub="≥50% of proj move" />
-            <MetricRow label="Breakeven promotion rate" value={`${(ep.bePromotionRate * 100).toFixed(1)}%`} />
-            <MetricRow label="Trailing activation rate" value={`${(ep.trailingActivationRate * 100).toFixed(1)}%`} />
-          </div>
-
-          <div>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1 mb-0.5">Signals &amp; Gating</p>
-            <MetricRow label="Signals fired" value={ep.signalsFired} />
-            <MetricRow label="Blocked by gate" value={ep.blockedByGateCount} />
-            <MetricRow label="Block rate" value={`${(ep.blockedRate * 100).toFixed(1)}%`} />
-            <MetricRow label="Signal freq / day" value={ep.signalFrequencyPerDay.toFixed(2)} />
-
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-3 mb-0.5">Runtime Guidance</p>
-            <MetricRow label="Recommended memory window" value={`${ep.recommendedMemoryWindowBars} bars`} sub="≈ mins" />
-            <MetricRow label="Recommended scan cadence" value={`${ep.recommendedScanCadenceMins} min`} />
-            <MetricRow label="Score P50 / P75" value={`${ep.scoreP50.toFixed(1)} / ${ep.scoreP75.toFixed(1)}`} />
-            <MetricRow label="Dominant regime" value={ep.dominantRegime || "—"} />
-            <MetricRow label="Dominant entry type" value={ep.dominantEntryType || "—"} />
-
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-3 mb-0.5">Exit Distribution</p>
-            {Object.entries(ep.byExitReason).map(([reason, count]) => (
-              <MetricRow key={reason} label={reason.replace(/_/g, " ")} value={count} />
-            ))}
-
-            {Object.keys(ep.bySlStage).length > 0 && (
-              <>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-3 mb-0.5">SL Stage at Exit</p>
-                {Object.entries(ep.bySlStage).map(([stage, count]) => (
-                  <MetricRow key={stage} label={stage.replace(/_/g, " ")} value={count} />
-                ))}
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+interface CalibrationProfile {
+  id: number;
+  symbol: string;
+  moveType: string;
+  windowDays: number;
+  targetMoves: number;
+  capturedMoves: number;
+  missedMoves: number;
+  fitScore: number;
+  missReasons: Array<{ reason: string; count: number }> | null;
+  avgMovePct: number;
+  medianMovePct: number;
+  avgHoldingHours: number;
+  avgCaptureablePct: number;
+  avgHoldabilityScore: number;
+  engineCoverage: unknown | null;
+  precursorSummary: unknown | null;
+  triggerSummary: unknown | null;
+  feeddownSchema: unknown | null;
+  profitabilitySummary: {
+    paths: ProfitabilityPath[];
+    topPath: string;
+    estimatedFitAdjustedReturn: number;
+  } | null;
+  lastRunId: number | null;
+  generatedAt: string;
 }
 
-function BehaviorModelTab() {
-  const behaviorSymbols = Object.keys(BEHAVIOR_SYMBOL_ENGINES);
-  const [symbol, setSymbol] = useState("BOOM300");
-  const [engine, setEngine] = useState(BEHAVIOR_SYMBOL_ENGINES["BOOM300"][0]);
-  const [loading, setLoading] = useState(false);
-  const [building, setBuilding] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const [profile, setProfile] = useState<BehaviorProfileSummary | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [buildMsg, setBuildMsg] = useState<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  function handleSymbolChange(sym: string) {
-    setSymbol(sym);
-    setEngine(BEHAVIOR_SYMBOL_ENGINES[sym][0]);
-    setBuildMsg(null);
-    setErr(null);
-    setProfile(null);
-  }
-
-  useEffect(() => {
-    fetchCachedProfile(symbol);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [symbol]);
-
-  async function fetchCachedProfile(sym: string) {
-    setLoading(true);
-    setErr(null);
-    setProfile(null);
-    try {
-      const d = await apiFetch(`behavior/profile/${sym}`);
-      setProfile(d as BehaviorProfileSummary);
-    } catch {
-      // 404 = no profile yet — shown as empty state, not an error
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function runProfile() {
-    setBuilding(true);
-    setBuildMsg(null);
-    setErr(null);
-    setElapsed(0);
-    const startTime = Date.now();
-    timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
-    try {
-      await apiFetch(`behavior/profile/${symbol}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      setBuildMsg(`Profile built for ${symbol}.`);
-      await fetchCachedProfile(symbol);
-    } catch (e: any) {
-      setErr(e.message);
-    } finally {
-      setBuilding(false);
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-  }
-
-  async function exportProfileJson() {
-    if (!profile) return;
-    if (!profile.engineProfiles.some(ep => ep.engineName === engine)) return;
-    const ts = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
-    try {
-      const data = await apiFetch(`behavior/export/${symbol}/${engine}`);
-      downloadBehaviorJson(data, `behavior-profile-${symbol}-${engine}-${ts}.json`);
-    } catch (e: any) {
-      setErr(`Export failed: ${e?.message ?? "Unknown error"}`);
-    }
-  }
-
-  function downloadBehaviorJson(data: unknown, filename: string) {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  const engines = BEHAVIOR_SYMBOL_ENGINES[symbol] ?? [];
-
-  return (
-    <div className="space-y-5">
-      <div className="rounded-xl border border-border/50 bg-card p-4 space-y-4">
-        <div>
-          <h3 className="text-sm font-semibold">Strategy Behavior Profile</h3>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Derives per-engine behavioral profiles from historical backtest replay using the live V3 runtime.
-            Shows MFE/MAE distributions, time-to-peak, extension probability, signal gating, and runtime guidance
-            (scan cadence, memory window). Select a symbol and engine, then run to rebuild from the last 90 days.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Symbol:</span>
-            <select
-              value={symbol}
-              onChange={e => handleSymbolChange(e.target.value)}
-              className="text-xs bg-background border border-border/50 rounded px-2 py-1.5 text-foreground focus:outline-none focus:border-primary/50"
-            >
-              {behaviorSymbols.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Engine:</span>
-            <select
-              value={engine}
-              onChange={e => setEngine(e.target.value)}
-              className="text-xs bg-background border border-border/50 rounded px-2 py-1.5 text-foreground focus:outline-none focus:border-primary/50"
-            >
-              {engines.map(eng => <option key={eng} value={eng}>{eng}</option>)}
-            </select>
-          </div>
-
-          <button
-            onClick={runProfile}
-            disabled={building}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-primary/30 bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {building ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-            {building ? `Building… ${elapsed}s` : "Run Profile"}
-          </button>
-
-          {profile && profile.engineProfiles.some(ep => ep.engineName === engine) && (
-            <button
-              onClick={exportProfileJson}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-border/50 bg-background text-muted-foreground text-xs font-medium hover:text-foreground hover:border-border transition-colors"
-              title={`Export behavioral profile for ${symbol} / ${engine}`}
-            >
-              <Download className="w-3.5 h-3.5" />
-              Export Profile JSON
-            </button>
-          )}
-
-          {building && (
-            <span className="text-xs text-muted-foreground">
-              Running V3 backtest replay to derive profile — this may take up to 90s.
-            </span>
-          )}
-        </div>
-
-        {err && <ErrorBox msg={err} />}
-        {buildMsg && !err && <SuccessBox msg={buildMsg} />}
-      </div>
-
-      {loading && (
-        <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          Loading profile…
-        </div>
-      )}
-
-      {!loading && !profile && !building && (
-        <div className="rounded-xl border border-border/30 bg-card p-8 text-center">
-          <Activity className="w-8 h-8 mx-auto mb-2 text-muted-foreground/40" />
-          <p className="text-sm font-medium text-muted-foreground">No profile data for {symbol}</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Click <strong className="text-foreground">Run Profile</strong> to derive behavioral statistics
-            from a 90-day backtest replay.
-          </p>
-        </div>
-      )}
-
-      {profile && (
-        <div className="space-y-4">
-          {/* Symbol-level summary */}
-          <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold flex items-center gap-2">
-                <Activity className="w-4 h-4 text-primary" />
-                {profile.symbol} — Overview
-              </h3>
-              <span className="text-[10px] text-muted-foreground">
-                Updated {new Date(profile.lastUpdated).toLocaleString()}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <SummaryCard label="Total Trades" value={String(profile.totalTrades)} />
-              <SummaryCard label="Overall Win Rate" value={`${(profile.overallWinRate * 100).toFixed(1)}%`} />
-              <SummaryCard label="Overall Block Rate" value={`${(profile.overallBlockedRate * 100).toFixed(1)}%`} />
-              <SummaryCard label="Rec. Scan Cadence" value={`${profile.recommendedScanCadenceMins} min`} />
-            </div>
-            <div className="flex items-center gap-4 text-[11px] text-muted-foreground flex-wrap">
-              <span>Signals fired: <strong className="text-foreground">{profile.totalSignalsFired}</strong></span>
-              <span>Signals blocked: <strong className="text-foreground">{profile.totalBlocked}</strong></span>
-              <span>Engines: <strong className="text-foreground">{profile.engineProfiles.length}</strong></span>
-            </div>
-          </div>
-
-          {/* Per-engine breakdown */}
-          {profile.engineProfiles.length === 0 ? (
-            <div className="rounded-xl border border-border/30 bg-card p-4 text-center">
-              <p className="text-xs text-muted-foreground">No engine profiles derived — insufficient closed trade data.</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-0.5">
-                Engine Profiles
-              </h3>
-              {profile.engineProfiles.map(ep => (
-                <EngineProfileCard key={ep.engineName} ep={ep} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+interface PassRun {
+  id: number;
+  symbol: string;
+  passName: string;
+  status: string;
+  totalMoves: number;
+  processedMoves: number;
+  failedMoves: number;
+  windowDays: number;
+  startedAt: string;
+  completedAt?: string | null;
 }
 
 // ─── Move Calibration Tab ─────────────────────────────────────────────────────
@@ -1192,30 +907,6 @@ interface AggregateResult {
   generatedAt: string;
 }
 
-interface TierData {
-  count: number;
-  avgMovePct: number;
-  suggestedMinScore?: number;
-  [key: string]: unknown;
-}
-
-interface ScoringResult {
-  symbol: string;
-  scores?: Record<string, number>;
-  [key: string]: TierData | string | Record<string, number> | undefined;
-}
-
-interface HealthResult {
-  symbol: string;
-  avgHoldingHours?: number;
-  p25HoldHours?: number;
-  p50HoldHours?: number;
-  p75HoldHours?: number;
-  avgCaptureablePct: number;
-  systemCompatibility?: string;
-  topBehaviorPatterns: Array<{ pattern: string; count: number }>;
-}
-
 interface EngineRow {
   engineName?: string;
   matchedMoves: number;
@@ -1257,6 +948,7 @@ function MoveCalibrationTab() {
   const [windowDays, setWindowDays] = useState(30);
   const [minMovePct, setMinMovePct] = useState(0.05);
   const [clearExisting, setClearExisting] = useState(true);
+  const [strategyFamily, setStrategyFamily] = useState("all");
 
   const [detecting, setDetecting] = useState(false);
   const [detectResult, setDetectResult] = useState<DetectResult | null>(null);
@@ -1265,8 +957,8 @@ function MoveCalibrationTab() {
   const [aggregate, setAggregate] = useState<AggregateResult | null>(null);
   const [aggLoading, setAggLoading] = useState(false);
 
-  const [scoring, setScoring] = useState<ScoringResult | null>(null);
-  const [health, setHealth] = useState<HealthResult | null>(null);
+  const [behaviorProfile, setBehaviorProfile] = useState<BehaviorOverview | null>(null);
+  const [calibProfile, setCalibProfile] = useState<CalibrationProfile | null>(null);
   const [domainLoading, setDomainLoading] = useState(false);
 
   const [engines, setEngines] = useState<EngineRow[]>([]);
@@ -1288,6 +980,10 @@ function MoveCalibrationTab() {
   const [passErr, setPassErr] = useState<string | null>(null);
   const passIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const [runs, setRuns] = useState<PassRun[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
+  const [runsExpanded, setRunsExpanded] = useState(false);
+
   const [exportBusy, setExportBusy] = useState<Record<string, boolean>>({});
 
   const loadDomains = useCallback(async (sym: string) => {
@@ -1295,20 +991,30 @@ function MoveCalibrationTab() {
     setDomainLoading(true);
     setEngineLoading(true);
     try {
-      const [agg, sc, hl, eng] = await Promise.all([
+      const [agg, eng, beh, calib] = await Promise.all([
         apiFetch(`calibration/aggregate/${sym}`).catch(() => null),
-        apiFetch(`calibration/scoring/${sym}`).catch(() => null),
-        apiFetch(`calibration/health/${sym}`).catch(() => null),
         apiFetch(`calibration/engine/${sym}`).catch(() => null),
+        apiFetch(`behavior/profile/${sym}`).catch(() => null),
+        apiFetch(`calibration/profile/${sym}/all`).catch(() => null),
       ]);
       setAggregate(agg);
-      setScoring(sc);
-      setHealth(hl);
       setEngines(eng?.engines ?? []);
+      setBehaviorProfile(beh ?? null);
+      setCalibProfile(calib ?? null);
     } finally {
       setAggLoading(false);
       setDomainLoading(false);
       setEngineLoading(false);
+    }
+  }, []);
+
+  const loadRuns = useCallback(async (sym: string) => {
+    setRunsLoading(true);
+    try {
+      const d = await apiFetch(`calibration/runs/${sym}`).catch(() => null);
+      setRuns(d?.runs ?? []);
+    } finally {
+      setRunsLoading(false);
     }
   }, []);
 
@@ -1331,11 +1037,16 @@ function MoveCalibrationTab() {
   useEffect(() => {
     loadDomains(symbol);
     loadMoves(symbol, moveTypeFilter, tierFilter);
+    loadRuns(symbol);
   }, [symbol]);
 
   useEffect(() => {
     loadMoves(symbol, moveTypeFilter, tierFilter);
   }, [moveTypeFilter, tierFilter]);
+
+  useEffect(() => {
+    setMoveTypeFilter(strategyFamily);
+  }, [strategyFamily]);
 
   useEffect(() => {
     return () => { if (passIntervalRef.current) clearInterval(passIntervalRef.current); };
@@ -1372,7 +1083,7 @@ function MoveCalibrationTab() {
         if (s.status === "completed" || s.status === "failed") {
           clearInterval(passIntervalRef.current!);
           setPassBusy(false);
-          await Promise.all([loadDomains(symbol), loadMoves(symbol, moveTypeFilter, tierFilter)]);
+          await Promise.all([loadDomains(symbol), loadMoves(symbol, moveTypeFilter, tierFilter), loadRuns(symbol)]);
         }
       } catch {}
     }, 4000);
@@ -1460,6 +1171,20 @@ function MoveCalibrationTab() {
             </select>
           </div>
 
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Strategy Family</span>
+            <select
+              value={strategyFamily}
+              onChange={e => setStrategyFamily(e.target.value)}
+              className="text-xs bg-background border border-border/50 rounded px-2 py-1.5 text-foreground focus:outline-none focus:border-primary/50"
+            >
+              <option value="all">All families</option>
+              <option value="breakout">Breakout</option>
+              <option value="continuation">Continuation</option>
+              <option value="reversal">Reversal</option>
+            </select>
+          </div>
+
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer self-end pb-1.5">
             <input
               type="checkbox"
@@ -1528,8 +1253,45 @@ function MoveCalibrationTab() {
         {!(aggLoading || domainLoading || engineLoading) && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
 
-            {/* Domain A — Structural Moves */}
-            <DomainCard title="Structural Moves" icon={<Target className="w-3.5 h-3.5 text-primary" />}>
+            {/* Domain A — Current Engine Behavior (signal-first, from behavior layer) */}
+            <DomainCard title="Current Engine Behavior" icon={<Activity className="w-3.5 h-3.5 text-amber-400" />}>
+              {!behaviorProfile ? (
+                <p className="text-[11px] text-muted-foreground">No behavior profile. Run behavior profile from the Behavior Model tab to populate.</p>
+              ) : (
+                <>
+                  <StatRow label="Total trades" value={behaviorProfile.totalTrades} />
+                  <StatRow label="Signals fired" value={behaviorProfile.totalSignalsFired} />
+                  <StatRow label="Blocked" value={behaviorProfile.totalBlocked} />
+                  <StatRow label="Win rate" value={`${(behaviorProfile.overallWinRate * 100).toFixed(1)}%`} />
+                  <StatRow label="Block rate" value={`${(behaviorProfile.overallBlockedRate * 100).toFixed(1)}%`} />
+                  <StatRow label="Rec. scan cadence" value={`${behaviorProfile.recommendedScanCadenceMins}min`} />
+                  {(behaviorProfile.engineProfiles ?? []).length > 0 && (
+                    <div className="mt-1.5 pt-1.5 border-t border-border/20 space-y-1.5">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Engines</p>
+                      {(behaviorProfile.engineProfiles ?? []).map(ep => (
+                        <div key={ep.engineName} className="space-y-0.5">
+                          <p className="text-[10px] font-mono font-semibold text-foreground truncate">{ep.engineName}</p>
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-muted-foreground">Trades / WR</span>
+                            <span className="font-mono text-foreground">{ep.tradeCount} · {(ep.winRate * 100).toFixed(1)}%</span>
+                          </div>
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-muted-foreground">Signals/day</span>
+                            <span className="font-mono text-foreground">{ep.signalFrequencyPerDay.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-muted-foreground mt-2">
+                    Updated {new Date(behaviorProfile.lastUpdated).toLocaleDateString()}
+                  </p>
+                </>
+              )}
+            </DomainCard>
+
+            {/* Domain B — Target Moves (move-first, structural detection) */}
+            <DomainCard title="Target Moves" icon={<Target className="w-3.5 h-3.5 text-primary" />}>
               {!aggregate || aggregate.totalMoves === 0 ? (
                 <p className="text-[11px] text-muted-foreground">No moves detected. Run "Detect Moves" first.</p>
               ) : (
@@ -1537,10 +1299,10 @@ function MoveCalibrationTab() {
                   <StatRow label="Total moves" value={aggregate.totalMoves} />
                   <StatRow label="Avg move %" value={`${(aggregate.overall?.avgMovePct * 100).toFixed(1)}%`} />
                   <StatRow label="Median move %" value={`${(aggregate.overall?.medianMovePct * 100).toFixed(1)}%`} />
-                  <StatRow label="Avg hold (hrs)" value={aggregate.overall?.avgHoldHours?.toFixed(1)} />
+                  <StatRow label="Avg hold (hrs)" value={aggregate.overall?.avgHoldHours?.toFixed(1) ?? "—"} />
                   <StatRow label="Direction up/down" value={`${aggregate.overall?.directionSplit?.up ?? 0} / ${aggregate.overall?.directionSplit?.down ?? 0}`} />
                   <div className="mt-1.5 pt-1.5 border-t border-border/20 space-y-0.5">
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">By move type</p>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">By family</p>
                     {Object.entries(aggregate.byMoveType ?? {}).map(([type, stats]) => (
                       <div key={type} className="flex items-center justify-between text-[11px]">
                         <TypePill type={type} />
@@ -1548,7 +1310,7 @@ function MoveCalibrationTab() {
                       </div>
                     ))}
                   </div>
-                  <div className="mt-1.5 pt-1.5 border-t border-border/20 space-y-0.5">
+                  <div className="mt-1.5 pt-1.5 border-t border-border/20">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Quality dist.</p>
                     <div className="flex flex-wrap gap-1">
                       {Object.entries(aggregate.overall?.qualityDistribution ?? {}).map(([tier, cnt]) => (
@@ -1569,110 +1331,133 @@ function MoveCalibrationTab() {
                       ))}
                     </div>
                   )}
-                  {aggregate.overall?.capturedMoves !== undefined && (
-                    <div className="mt-1.5 pt-1.5 border-t border-border/20">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Honest fit</p>
-                      <StatRow label="Captured" value={`${aggregate.overall.capturedMoves} / ${aggregate.overall.targetMoves}`} />
-                      <StatRow label="Fit score" value={`${(aggregate.overall.fitScore * 100).toFixed(1)}%`} />
-                    </div>
-                  )}
                 </>
               )}
             </DomainCard>
 
-            {/* Domain B — Behavior Model */}
-            <DomainCard title="Behavior Model" icon={<Activity className="w-3.5 h-3.5 text-amber-400" />}>
-              {!scoring && !health ? (
-                <p className="text-[11px] text-muted-foreground">No behavior data yet.</p>
+            {/* Domain C — Recommended Calibration (from stored profile, post AI passes) */}
+            <DomainCard title="Recommended Calibration" icon={<Zap className="w-3.5 h-3.5 text-sky-400" />}>
+              {!calibProfile ? (
+                <p className="text-[11px] text-muted-foreground">No calibration profile yet. Detect moves then run AI passes to populate.</p>
               ) : (
                 <>
-                  {scoring && (
-                    <>
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Tier breakdown</p>
-                      {TIERS.map(t => {
-                        const td = scoring[`tier${t}`] as TierData | undefined;
-                        if (!td) return null;
-                        return (
-                          <div key={t} className="flex items-start gap-2 py-0.5">
-                            <TierPill tier={t} />
-                            <div className="flex-1 text-[11px] space-y-0">
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Count</span>
-                                <span className="font-mono text-foreground">{td.count}</span>
-                              </div>
-                              {td.count > 0 && (
-                                <>
-                                  <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Avg move %</span>
-                                    <span className="font-mono text-foreground">{(td.avgMovePct * 100).toFixed(1)}%</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Suggested min score</span>
-                                    <span className="font-mono text-foreground">{td.suggestedMinScore ?? "—"}</span>
-                                  </div>
-                                </>
-                              )}
-                            </div>
+                  <StatRow label="Fit score" value={`${(calibProfile.fitScore * 100).toFixed(1)}%`} />
+                  <StatRow label="Target / captured" value={`${calibProfile.capturedMoves} / ${calibProfile.targetMoves}`} />
+                  <StatRow label="Avg move %" value={`${(calibProfile.avgMovePct * 100).toFixed(1)}%`} />
+                  <StatRow label="Avg hold (hrs)" value={calibProfile.avgHoldingHours.toFixed(1)} />
+                  <StatRow label="Avg capturable %" value={`${(calibProfile.avgCaptureablePct * 100).toFixed(1)}%`} />
+                  <StatRow label="Holdability score" value={calibProfile.avgHoldabilityScore.toFixed(2)} />
+                  {engines.length > 0 && (
+                    <div className="mt-1.5 pt-1.5 border-t border-border/20 space-y-1">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Engine coverage</p>
+                      {engines.map((eng) => (
+                        <div key={eng.engineName ?? "unknown"} className="space-y-0.5">
+                          <p className="text-[10px] font-semibold text-foreground truncate">{eng.engineName ?? "—"}</p>
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-muted-foreground">Matched / fire rate</span>
+                            <span className="font-mono text-foreground">{eng.matchedMoves} · {(eng.fireRate * 100).toFixed(1)}%</span>
                           </div>
-                        );
-                      })}
-                    </>
-                  )}
-                  {health && (
-                    <div className="mt-1.5 pt-1.5 border-t border-border/20 space-y-0.5">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Trade health</p>
-                      <StatRow label="Avg hold (hrs)" value={health.avgHoldingHours?.toFixed(1) ?? "—"} />
-                      <StatRow label="p25 hold (hrs)" value={health.p25HoldHours?.toFixed(1) ?? "—"} />
-                      <StatRow label="p50 hold (hrs)" value={health.p50HoldHours?.toFixed(1) ?? "—"} />
-                      <StatRow label="p75 hold (hrs)" value={health.p75HoldHours?.toFixed(1) ?? "—"} />
-                      <StatRow label="Avg capturable %" value={`${(health.avgCaptureablePct * 100)?.toFixed(1)}%`} />
-                      {health.systemCompatibility && (
-                        <StatRow label="Compatibility" value={health.systemCompatibility} />
-                      )}
-                      {health.topBehaviorPatterns?.length > 0 && (
-                        <div className="mt-1 pt-1 border-t border-border/20">
-                          <p className="text-[10px] text-muted-foreground mb-0.5">Top patterns</p>
-                          {health.topBehaviorPatterns.slice(0, 3).map((p) => (
-                            <div key={p.pattern} className="flex justify-between text-[11px]">
-                              <span className="text-muted-foreground truncate max-w-[120px]">{p.pattern}</span>
-                              <span className="font-mono text-foreground">{p.count}</span>
+                          {(eng.topMissReasons?.length ?? 0) > 0 && (
+                            <div className="text-[10px] text-muted-foreground">
+                              Miss: {(eng.topMissReasons ?? []).slice(0, 2).join(" · ")}
                             </div>
-                          ))}
+                          )}
                         </div>
-                      )}
+                      ))}
                     </div>
                   )}
+                  <p className="text-[10px] text-muted-foreground mt-2">
+                    Built {new Date(calibProfile.generatedAt).toLocaleDateString()} · window {calibProfile.windowDays}d
+                  </p>
                 </>
-              )}
-            </DomainCard>
-
-            {/* Domain C — Engine Coverage */}
-            <DomainCard title="Engine Coverage" icon={<Zap className="w-3.5 h-3.5 text-sky-400" />}>
-              {engines.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">No engine coverage data. Run AI passes first.</p>
-              ) : (
-                <div className="space-y-3">
-                  {engines.map((eng) => (
-                    <div key={eng.engineName ?? "unknown"} className="space-y-0.5">
-                      <p className="text-[10px] font-semibold text-foreground">{eng.engineName ?? "—"}</p>
-                      <StatRow label="Matched moves" value={eng.matchedMoves} />
-                      <StatRow label="Would fire" value={eng.wouldFireCount} />
-                      <StatRow label="Fire rate" value={`${(eng.fireRate * 100).toFixed(1)}%`} />
-                      <StatRow label="Avg miss move %" value={`${(eng.avgMissMovePct * 100).toFixed(1)}%`} />
-                      {(eng.topMissReasons?.length ?? 0) > 0 && (
-                        <div className="text-[10px] text-muted-foreground mt-0.5">
-                          Miss: {(eng.topMissReasons ?? []).slice(0, 2).join(" · ")}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
               )}
             </DomainCard>
 
           </div>
         )}
       </div>
+
+      {/* ── Honest Fit & Profitability ── */}
+      {(aggregate?.overall?.capturedMoves !== undefined || calibProfile?.profitabilitySummary) && (
+        <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+            <Target className="w-3.5 h-3.5 text-primary" />
+            Honest Fit &amp; Profitability
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Fit stats */}
+            <div className="space-y-0.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Move Coverage</p>
+              {aggregate?.overall && (
+                <>
+                  <StatRow label="Target moves" value={aggregate.overall.targetMoves} />
+                  <StatRow label="Captured moves" value={aggregate.overall.capturedMoves} />
+                  <StatRow label="Missed moves" value={aggregate.overall.missedMoves} />
+                  <StatRow label="Fit score" value={`${(aggregate.overall.fitScore * 100).toFixed(1)}%`} />
+                </>
+              )}
+              {(aggregate?.overall?.missReasons?.length ?? 0) > 0 && (
+                <div className="mt-2 pt-2 border-t border-border/20">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Miss reasons</p>
+                  {(aggregate!.overall.missReasons ?? []).slice(0, 4).map((mr) => (
+                    <div key={mr.reason} className="flex justify-between text-[11px]">
+                      <span className="text-muted-foreground truncate max-w-[180px]">{mr.reason}</span>
+                      <span className="font-mono text-foreground">{mr.count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Profitability paths */}
+            <div className="space-y-0.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Profitability Paths</p>
+              {!calibProfile?.profitabilitySummary ? (
+                <p className="text-[11px] text-muted-foreground">Run AI passes (extraction) to generate profitability estimates.</p>
+              ) : (
+                <>
+                  <StatRow label="Top path" value={calibProfile.profitabilitySummary.topPath ?? "—"} />
+                  <StatRow
+                    label="Fit-adjusted return"
+                    value={calibProfile.profitabilitySummary.estimatedFitAdjustedReturn != null
+                      ? `${(calibProfile.profitabilitySummary.estimatedFitAdjustedReturn * 100).toFixed(1)}%/mo`
+                      : "—"}
+                  />
+                  {(calibProfile.profitabilitySummary.paths ?? []).map((path) => (
+                    <div key={path.name} className="mt-1.5 pt-1.5 border-t border-border/20">
+                      <p className="text-[10px] font-semibold text-foreground mb-0.5">{path.name}</p>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-muted-foreground">Monthly return</span>
+                        <span className={cn("font-mono", path.estimatedMonthlyReturnPct >= 0 ? "text-emerald-400" : "text-red-400")}>
+                          {(path.estimatedMonthlyReturnPct * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-muted-foreground">Annualized</span>
+                        <span className="font-mono text-foreground">
+                          {(path.estimatedMonthlyReturnPct * 12 * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-muted-foreground">Capturable %</span>
+                        <span className="font-mono text-foreground">{(path.captureablePct * 100).toFixed(1)}%</span>
+                      </div>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-muted-foreground">Hold (days)</span>
+                        <span className="font-mono text-foreground">{path.holdDays.toFixed(1)}</span>
+                      </div>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-muted-foreground">Confidence</span>
+                        <span className="font-mono text-foreground">{path.confidence}</span>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── AI Passes ── */}
       <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
@@ -1875,44 +1660,127 @@ function MoveCalibrationTab() {
         <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Export Calibration Data</h3>
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => doExport("full", `calibration/export/${symbol}`, `calibration_full_${symbol}_${new Date().toISOString().slice(0,10)}.json`)}
-            disabled={!!exportBusy["full"]}
+            onClick={() => doExport("moves", `calibration/export/${symbol}?type=moves`, `calibration_moves_${symbol}_${new Date().toISOString().slice(0,10)}.json`)}
+            disabled={!!exportBusy["moves"]}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-xs text-muted-foreground hover:text-foreground hover:border-border disabled:opacity-50"
+            title="Export all detected structural moves for this symbol"
           >
-            {exportBusy["full"] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-            Full Calibration
+            {exportBusy["moves"] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            Export Detected Moves
           </button>
 
           <button
-            onClick={() => doExport("engine", `calibration/engine/${symbol}`, `calibration_engine_${symbol}_${new Date().toISOString().slice(0,10)}.json`)}
-            disabled={!!exportBusy["engine"]}
+            onClick={() => doExport("passes", `calibration/export/${symbol}?type=passes`, `calibration_passes_${symbol}_${new Date().toISOString().slice(0,10)}.json`)}
+            disabled={!!exportBusy["passes"]}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-xs text-muted-foreground hover:text-foreground hover:border-border disabled:opacity-50"
+            title="Export all AI pass run records for this symbol"
           >
-            {exportBusy["engine"] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-            Engine Coverage
+            {exportBusy["passes"] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            Export Pass Results
           </button>
 
           <button
-            onClick={() => doExport("scoring", `calibration/scoring/${symbol}`, `calibration_scoring_${symbol}_${new Date().toISOString().slice(0,10)}.json`)}
-            disabled={!!exportBusy["scoring"]}
+            onClick={() => doExport("profile", `calibration/export/${symbol}?type=profile`, `calibration_profile_${symbol}_${new Date().toISOString().slice(0,10)}.json`)}
+            disabled={!!exportBusy["profile"]}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-xs text-muted-foreground hover:text-foreground hover:border-border disabled:opacity-50"
+            title="Export stored calibration profiles (all move types) for this symbol"
           >
-            {exportBusy["scoring"] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-            Scoring Data
+            {exportBusy["profile"] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            Export Calibration Profile
           </button>
 
           <button
-            onClick={() => doExport("health", `calibration/health/${symbol}`, `calibration_health_${symbol}_${new Date().toISOString().slice(0,10)}.json`)}
-            disabled={!!exportBusy["health"]}
+            onClick={() => doExport("comparison", `calibration/export/${symbol}?type=comparison`, `calibration_comparison_${symbol}_${new Date().toISOString().slice(0,10)}.json`)}
+            disabled={!!exportBusy["comparison"]}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-xs text-muted-foreground hover:text-foreground hover:border-border disabled:opacity-50"
+            title="Export 3-domain comparison summary (aggregate + engine + scoring + health)"
           >
-            {exportBusy["health"] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-            Trade Health
+            {exportBusy["comparison"] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            Export Comparison Summary
           </button>
         </div>
         <p className="text-[11px] text-muted-foreground">
           All exports are read-only research artifacts. None of these outputs are connected to live execution.
         </p>
+      </div>
+
+      {/* ── Run History ── */}
+      <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+        <button
+          onClick={() => {
+            if (!runsExpanded) loadRuns(symbol);
+            setRunsExpanded(v => !v);
+          }}
+          className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-muted/10 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-xs font-semibold text-foreground">Run History</span>
+            {runs.length > 0 && (
+              <span className="text-[11px] text-muted-foreground">({runs.length} runs)</span>
+            )}
+          </div>
+          <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform", runsExpanded && "rotate-180")} />
+        </button>
+
+        {runsExpanded && (
+          <div className="border-t border-border/30">
+            {runsLoading && (
+              <div className="flex items-center gap-2 px-4 py-4 text-xs text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" />Loading run history…
+              </div>
+            )}
+            {!runsLoading && runs.length === 0 && (
+              <div className="px-4 py-6 text-center">
+                <p className="text-xs text-muted-foreground">No AI pass runs recorded yet for {symbol}.</p>
+              </div>
+            )}
+            {!runsLoading && runs.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="border-b border-border/30 text-muted-foreground">
+                      <th className="text-left px-4 py-2 font-medium">ID</th>
+                      <th className="text-left px-3 py-2 font-medium">Pass</th>
+                      <th className="text-left px-3 py-2 font-medium">Status</th>
+                      <th className="text-left px-3 py-2 font-medium">Moves</th>
+                      <th className="text-left px-3 py-2 font-medium">Processed</th>
+                      <th className="text-left px-3 py-2 font-medium">Failed</th>
+                      <th className="text-left px-3 py-2 font-medium">Window</th>
+                      <th className="text-left px-3 py-2 font-medium">Started</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runs.slice(0, 20).map((run) => (
+                      <tr key={run.id} className="border-b border-border/20 hover:bg-muted/20 transition-colors">
+                        <td className="px-4 py-1.5 font-mono text-muted-foreground">#{run.id}</td>
+                        <td className="px-3 py-1.5 font-mono text-foreground">{run.passName}</td>
+                        <td className="px-3 py-1.5">
+                          <span className={cn(
+                            "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border",
+                            run.status === "completed" ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25" :
+                            run.status === "partial"   ? "text-amber-400 bg-amber-500/10 border-amber-500/25" :
+                            run.status === "failed"    ? "text-red-400 bg-red-500/10 border-red-500/25" :
+                            "text-sky-400 bg-sky-500/10 border-sky-500/25"
+                          )}>
+                            {run.status}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 font-mono text-foreground">{run.totalMoves ?? "—"}</td>
+                        <td className="px-3 py-1.5 font-mono text-foreground">{run.processedMoves ?? "—"}</td>
+                        <td className="px-3 py-1.5 font-mono text-foreground">{run.failedMoves ?? "—"}</td>
+                        <td className="px-3 py-1.5 font-mono text-muted-foreground">{run.windowDays}d</td>
+                        <td className="px-3 py-1.5 text-muted-foreground">
+                          {run.startedAt ? new Date(run.startedAt).toLocaleString() : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
     </div>
@@ -1921,12 +1789,11 @@ function MoveCalibrationTab() {
 
 // ─── Tab Navigation ───────────────────────────────────────────────────────────
 
-type TabId = "ai" | "backtest" | "behavior" | "calibration";
+type TabId = "ai" | "backtest" | "calibration";
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
-  { id: "ai",          label: "AI Analysis",       icon: <Brain    className="w-3.5 h-3.5" /> },
+  { id: "ai",          label: "AI Analysis",       icon: <Brain     className="w-3.5 h-3.5" /> },
   { id: "backtest",    label: "Backtest",           icon: <BarChart2 className="w-3.5 h-3.5" /> },
-  { id: "behavior",    label: "Behavior Model",     icon: <Activity  className="w-3.5 h-3.5" /> },
   { id: "calibration", label: "Move Calibration",   icon: <Target    className="w-3.5 h-3.5" /> },
 ];
 
@@ -1968,7 +1835,6 @@ export default function Research() {
 
       {activeTab === "ai"          && <AiAnalysisTab />}
       {activeTab === "backtest"    && <BacktestTab />}
-      {activeTab === "behavior"    && <BehaviorModelTab />}
       {activeTab === "calibration" && <MoveCalibrationTab />}
     </div>
   );

@@ -23,7 +23,7 @@ import {
   moveBehaviorPassesTable,
   strategyCalibrationProfilesTable,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -79,15 +79,27 @@ export async function buildCalibrationAggregate(
     .from(detectedMovesTable)
     .where(eq(detectedMovesTable.symbol, symbol));
 
-  const precursorRows = await db
-    .select()
-    .from(movePrecursorPassesTable)
-    .where(eq(movePrecursorPassesTable.symbol, symbol));
+  // Scope pass queries to CURRENT detected move IDs only.
+  // Without this scoping, stale pass rows from a prior detect run (whose moves were
+  // deleted but whose pass rows were not) pollute the captured/missed calculation
+  // and can produce capturedMoves > targetMoves (fitScore > 1) or negative missedMoves.
+  const currentMoveIds = moves.map(m => m.id);
 
-  const behaviorRows = await db
-    .select()
-    .from(moveBehaviorPassesTable)
-    .where(eq(moveBehaviorPassesTable.symbol, symbol));
+  const precursorRows = currentMoveIds.length > 0
+    ? await db.select().from(movePrecursorPassesTable)
+        .where(and(
+          eq(movePrecursorPassesTable.symbol, symbol),
+          inArray(movePrecursorPassesTable.moveId, currentMoveIds),
+        ))
+    : [];
+
+  const behaviorRows = currentMoveIds.length > 0
+    ? await db.select().from(moveBehaviorPassesTable)
+        .where(and(
+          eq(moveBehaviorPassesTable.symbol, symbol),
+          inArray(moveBehaviorPassesTable.moveId, currentMoveIds),
+        ))
+    : [];
 
   const triggerRows  = behaviorRows.filter(r => r.passName === "trigger");
   const behaviorOnly = behaviorRows.filter(r => r.passName === "behavior");

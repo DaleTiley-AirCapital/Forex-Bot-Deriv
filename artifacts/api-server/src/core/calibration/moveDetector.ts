@@ -19,6 +19,9 @@ import { db, backgroundDb } from "@workspace/db";
 import {
   candlesTable,
   detectedMovesTable,
+  movePrecursorPassesTable,
+  moveBehaviorPassesTable,
+  strategyCalibrationProfilesTable,
   type InsertDetectedMoveRow,
 } from "@workspace/db";
 import { eq, and, gte, lte, asc, inArray } from "drizzle-orm";
@@ -48,6 +51,9 @@ export interface DetectedMove {
   symbol: string;
   direction: "up" | "down";
   moveType: "breakout" | "continuation" | "reversal" | "unknown";
+  // Deterministic label from moveLabeler.ts stored separately so future AI
+  // refinement can replace moveType without losing the original detector output.
+  strategyFamilyCandidate: "breakout" | "continuation" | "reversal" | "unknown";
   startTs: number;
   endTs: number;
   startPrice: number;
@@ -420,6 +426,7 @@ function recordMove(
     symbol,
     direction,
     moveType,
+    strategyFamilyCandidate: moveType,  // same value — stored separately for AI-refinement safety
     startTs:    candles[startIdx].openTs,
     endTs:      candles[endIdx].openTs,
     startPrice,
@@ -496,6 +503,15 @@ export async function detectAndStoreMoves(
   const moves = extractStructuralMoves(candles, symbol, minMovePct);
 
   if (clearExisting) {
+    // Cascade-delete all dependent calibration rows first so stale pass data
+    // from old move IDs never contaminates subsequent honest-fit calculations.
+    // Order: profiles → precursor/behavior passes → detected moves
+    await db.delete(strategyCalibrationProfilesTable)
+      .where(eq(strategyCalibrationProfilesTable.symbol, symbol));
+    await db.delete(movePrecursorPassesTable)
+      .where(eq(movePrecursorPassesTable.symbol, symbol));
+    await db.delete(moveBehaviorPassesTable)
+      .where(eq(moveBehaviorPassesTable.symbol, symbol));
     await db.delete(detectedMovesTable)
       .where(eq(detectedMovesTable.symbol, symbol));
   }
@@ -520,9 +536,10 @@ export async function detectAndStoreMoves(
       qualityScore:           m.qualityScore,
       qualityTier:            m.qualityTier,
       windowDays,
-      isInterpolatedExcluded: true,
-      contextJson:            m.contextJson,
-      triggerZoneJson:        m.triggerZoneJson,
+      isInterpolatedExcluded:  true,
+      strategyFamilyCandidate: m.strategyFamilyCandidate,
+      contextJson:             m.contextJson,
+      triggerZoneJson:         m.triggerZoneJson,
     }));
 
     const BATCH = 100;

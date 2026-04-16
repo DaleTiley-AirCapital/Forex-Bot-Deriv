@@ -48,6 +48,10 @@ export const detectedMovesTable = pgTable("detected_moves", {
   qualityTier:             text("quality_tier").notNull().default("D"),
   windowDays:              integer("window_days").notNull().default(90),
   isInterpolatedExcluded:  boolean("is_interpolated_excluded").notNull().default(true),
+  // Deterministic move family label from moveLabeler.ts — computed at detection time
+  // and stored separately from any future AI refinement.
+  // Values: "breakout" | "continuation" | "reversal" | "unknown"
+  strategyFamilyCandidate: text("strategy_family_candidate").notNull().default("unknown"),
   contextJson:             jsonb("context_json"),
   // Candle-level characteristics around the trigger zone (first bar of the move).
   // Captures body size, wick ratios, momentum confirmation candles, and BB position

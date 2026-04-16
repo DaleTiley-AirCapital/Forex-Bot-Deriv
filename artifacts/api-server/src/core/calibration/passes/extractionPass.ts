@@ -21,7 +21,7 @@ import {
   strategyCalibrationProfilesTable,
   type DetectedMoveRow,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { getOpenAIClient } from "../../../infrastructure/openai.js";
 
 function median(arr: number[]): number {
@@ -38,15 +38,26 @@ export async function runExtractionPass(
 ): Promise<void> {
   if (moves.length === 0) return;
 
-  const precursorRows = await db
-    .select()
-    .from(movePrecursorPassesTable)
-    .where(eq(movePrecursorPassesTable.symbol, symbol));
+  // Scope all pass queries to the CURRENT detected move IDs so stale rows from
+  // a previous detect run never inflate captured/fit or skew miss reasons.
+  const currentMoveIds = moves.map(m => m.id);
 
-  const triggerRows = await db
-    .select()
-    .from(moveBehaviorPassesTable)
-    .where(eq(moveBehaviorPassesTable.symbol, symbol));
+  const precursorRows = currentMoveIds.length > 0
+    ? await db.select().from(movePrecursorPassesTable)
+        .where(and(
+          eq(movePrecursorPassesTable.symbol, symbol),
+          inArray(movePrecursorPassesTable.moveId, currentMoveIds),
+        ))
+    : [];
+
+  const allBehaviorRows = currentMoveIds.length > 0
+    ? await db.select().from(moveBehaviorPassesTable)
+        .where(and(
+          eq(moveBehaviorPassesTable.symbol, symbol),
+          inArray(moveBehaviorPassesTable.moveId, currentMoveIds),
+        ))
+    : [];
+  const triggerRows = allBehaviorRows;
 
   const behaviorRows = triggerRows.filter(r => r.passName === "behavior");
   const triggerOnlyRows = triggerRows.filter(r => r.passName === "trigger");

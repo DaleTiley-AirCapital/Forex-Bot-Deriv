@@ -98,8 +98,13 @@ export async function buildCalibrationAggregate(
   const behaviorById  = new Map(behaviorOnly.map(b => [b.moveId, b]));
 
   // ── Honest coverage calculation ────────────────────────────────────────────
-  // A move is "captured" only if the precursor pass ran and engineWouldFire=true
-  const capturedMoves = precursorRows.filter(r => r.engineWouldFire).length;
+  // A move is "captured" only if BOTH:
+  //   1. precursor pass ran and engineWouldFire=true
+  //   2. trigger pass ran for the same moveId (confirming entry was identified)
+  const triggerMoveIds = new Set(triggerRows.map(t => t.moveId));
+  const capturedMoves = precursorRows.filter(
+    r => r.engineWouldFire && triggerMoveIds.has(r.moveId),
+  ).length;
   const missedMoves   = moves.length - capturedMoves;
   const fitScore      = moves.length > 0 ? capturedMoves / moves.length : 0;
 

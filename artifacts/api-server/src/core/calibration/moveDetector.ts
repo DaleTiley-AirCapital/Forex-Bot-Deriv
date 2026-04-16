@@ -22,6 +22,7 @@ import {
   type InsertDetectedMoveRow,
 } from "@workspace/db";
 import { eq, and, gte, lte, asc, inArray } from "drizzle-orm";
+import { labelMove } from "./moveLabeler.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -162,23 +163,6 @@ function calcDirectionalPersistence(
     if (direction === "down" && delta < 0) aligned++;
   }
   return aligned / total;
-}
-
-// ── Move type classifier (deterministic) ──────────────────────────────────────
-
-function classifyMoveType(
-  shape: string,
-  direction: "up" | "down",
-  emaSlope: number,
-): "breakout" | "continuation" | "reversal" | "unknown" {
-  const isTrendingWithMove =
-    (shape === "trending" && direction === "up" && emaSlope > 0.0002) ||
-    (shape === "trending" && direction === "down" && emaSlope < -0.0002);
-
-  if (shape === "compressing") return "breakout";
-  if (isTrendingWithMove) return "continuation";
-  if (shape === "ranging" || (shape === "trending" && !isTrendingWithMove)) return "reversal";
-  return "unknown";
 }
 
 // ── Quality scoring ────────────────────────────────────────────────────────────
@@ -357,7 +341,7 @@ function recordMove(
   const atrEnd               = calcAtr(candles, endIdx);
   const rangeExpansion        = atrStart > 0 ? atrEnd / atrStart : 1;
   const spikeCount4h          = countSpikes(candles, startIdx, symbol);
-  const moveType              = classifyMoveType(shape, direction, emaSlope);
+  const moveType              = labelMove({ direction, leadInShape: shape, directionalPersistence, rangeExpansion, movePct });
   const holdingMinutes        = (candles[endIdx].openTs - candles[startIdx].openTs) / 60;
 
   const { qualityScore, qualityTier } = scoreAndTier({

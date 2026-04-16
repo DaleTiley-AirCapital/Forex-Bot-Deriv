@@ -20,7 +20,8 @@ import {
   detectedMovesTable,
   type DetectedMoveRow,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
+import { movePrecursorPassesTable, moveBehaviorPassesTable } from "@workspace/db";
 import { runPrecursorPass } from "./passes/precursorPass.js";
 import { runTriggerPass } from "./passes/triggerPass.js";
 import { runBehaviorPass } from "./passes/behaviorPass.js";
@@ -37,6 +38,7 @@ export interface RunPassesOptions {
   minTier?: "A" | "B" | "C" | "D";
   moveType?: string;
   maxMoves?: number;
+  force?: boolean;
 }
 
 export interface RunPassesResult {
@@ -49,6 +51,29 @@ export interface RunPassesResult {
   failedMoves: number;
   errors: Array<{ moveId: number; pass: string; error: string }>;
   durationMs: number;
+}
+
+// ── Already-completed pass check (resumability) ────────────────────────────────
+
+async function hasPrecursorPass(moveId: number): Promise<boolean> {
+  const rows = await db
+    .select({ id: movePrecursorPassesTable.id })
+    .from(movePrecursorPassesTable)
+    .where(eq(movePrecursorPassesTable.moveId, moveId))
+    .limit(1);
+  return rows.length > 0;
+}
+
+async function hasBehaviorPass(moveId: number, pass: "trigger" | "behavior"): Promise<boolean> {
+  const rows = await db
+    .select({ id: moveBehaviorPassesTable.id })
+    .from(moveBehaviorPassesTable)
+    .where(and(
+      eq(moveBehaviorPassesTable.moveId, moveId),
+      eq(moveBehaviorPassesTable.passName, pass),
+    ))
+    .limit(1);
+  return rows.length > 0;
 }
 
 // ── Tier ordering ──────────────────────────────────────────────────────────────
@@ -137,6 +162,7 @@ export async function runCalibrationPasses(
     minTier,
     moveType,
     maxMoves,
+    force = false,
   } = opts;
 
   const conditions: ReturnType<typeof eq>[] = [eq(detectedMovesTable.symbol, symbol)];
@@ -163,7 +189,17 @@ export async function runCalibrationPasses(
 
   for (const move of filteredMoves) {
     let moveFailed = false;
+    let moveSkipped = true;
     for (const pass of perMovePasses) {
+      // Skip-completed: if force=false and this pass already ran for this move, skip it
+      if (!force) {
+        const alreadyDone =
+          pass === "precursor"
+            ? await hasPrecursorPass(move.id)
+            : await hasBehaviorPass(move.id, pass as "trigger" | "behavior");
+        if (alreadyDone) continue;
+      }
+      moveSkipped = false;
       try {
         await runPassForMove(move, pass, runId);
       } catch (err) {
@@ -175,7 +211,7 @@ export async function runCalibrationPasses(
         });
       }
     }
-    if (!moveFailed) processedMoves++;
+    if (!moveSkipped && !moveFailed) processedMoves++;
 
     // Checkpoint progress every 10 moves
     if ((processedMoves + errors.length) % 10 === 0) {
@@ -235,7 +271,17 @@ export async function getLatestPassRun(
     .select()
     .from(calibrationPassRunsTable)
     .where(eq(calibrationPassRunsTable.symbol, symbol))
-    .orderBy(calibrationPassRunsTable.startedAt)
+    .orderBy(desc(calibrationPassRunsTable.startedAt))
     .limit(1);
   return rows[0] ?? null;
+}
+
+export async function getAllPassRuns(
+  symbol: string,
+): Promise<typeof calibrationPassRunsTable.$inferSelect[]> {
+  return db
+    .select()
+    .from(calibrationPassRunsTable)
+    .where(eq(calibrationPassRunsTable.symbol, symbol))
+    .orderBy(desc(calibrationPassRunsTable.startedAt));
 }

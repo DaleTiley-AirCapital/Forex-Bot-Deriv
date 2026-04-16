@@ -1736,14 +1736,14 @@ function MoveCalibrationTab() {
                         {m.movePct != null ? `${(m.movePct * 100).toFixed(1)}%` : "—"}
                       </td>
                       <td className="px-3 py-1.5 font-mono text-foreground">
-                        {m.holdingHours != null ? m.holdingHours.toFixed(1) : "—"}
+                        {m.holdingMinutes != null ? (m.holdingMinutes / 60).toFixed(1) : "—"}
                       </td>
                       <td className="px-3 py-1.5 font-mono text-foreground">
                         {m.qualityScore != null ? m.qualityScore.toFixed(0) : "—"}
                       </td>
                       <td className="px-3 py-1.5 text-muted-foreground">{m.leadInShape ?? "—"}</td>
                       <td className="px-3 py-1.5 text-muted-foreground">
-                        {m.startTime ? new Date(m.startTime).toLocaleDateString() : "—"}
+                        {m.startTs ? new Date(m.startTs * 1000).toLocaleDateString() : "—"}
                       </td>
                     </tr>
                   ))}

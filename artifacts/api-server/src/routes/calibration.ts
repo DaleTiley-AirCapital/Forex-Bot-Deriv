@@ -23,6 +23,7 @@ import {
   runCalibrationPasses,
   getPassRunStatus,
   getLatestPassRun,
+  getAllPassRuns,
   type PassName,
 } from "../core/calibration/calibrationPassRunner.js";
 import {
@@ -136,6 +137,7 @@ router.post("/calibration/run-passes/:symbol", async (req, res): Promise<void> =
     minTier,
     moveType,
     maxMoves,
+    force = false,
   } = req.body ?? {};
 
   if (!VALID_PASS_NAMES.includes(passName as PassName)) {
@@ -155,6 +157,7 @@ router.post("/calibration/run-passes/:symbol", async (req, res): Promise<void> =
       minTier:    minTier as "A" | "B" | "C" | "D" | undefined,
       moveType:   moveType ? String(moveType) : undefined,
       maxMoves:   maxMoves ? Number(maxMoves) : undefined,
+      force:      Boolean(force),
     });
     res.json({ ok: true, ...result });
   } catch (err) {
@@ -182,6 +185,25 @@ router.get("/calibration/run-status/:runId", async (req, res): Promise<void> => 
     res.json(status);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Status fetch failed";
+    res.status(500).json({ error: message });
+  }
+});
+
+// ── GET /api/calibration/runs/:symbol ─────────────────────────────────────────
+// All pass runs for a symbol, most-recent first.
+
+router.get("/calibration/runs/:symbol", async (req, res): Promise<void> => {
+  const { symbol } = req.params;
+  if (!VALID_SYMBOLS.includes(symbol as typeof ACTIVE_SYMBOLS[number])) {
+    res.status(400).json({ error: `Invalid symbol. Valid: ${VALID_SYMBOLS.join(", ")}` });
+    return;
+  }
+
+  try {
+    const runs = await getAllPassRuns(symbol);
+    res.json({ symbol, runCount: runs.length, runs });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Runs fetch failed";
     res.status(500).json({ error: message });
   }
 });
@@ -316,12 +338,20 @@ router.get("/calibration/export/:symbol", async (req, res): Promise<void> => {
   const asDownload = req.query.download === "true";
 
   try {
-    const exportData = await getFullCalibrationExport(symbol);
+    const [exportData, moves] = await Promise.all([
+      getFullCalibrationExport(symbol),
+      getDetectedMoves(symbol),
+    ]);
+    const response = {
+      ...exportData,
+      detected_moves: moves,
+      detected_moves_count: moves.length,
+    };
     if (asDownload) {
       res.setHeader("Content-Disposition", `attachment; filename="calibration_${symbol}_${new Date().toISOString().slice(0, 10)}.json"`);
       res.setHeader("Content-Type", "application/json");
     }
-    res.json(exportData);
+    res.json(response);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Calibration export failed";
     res.status(500).json({ error: message });

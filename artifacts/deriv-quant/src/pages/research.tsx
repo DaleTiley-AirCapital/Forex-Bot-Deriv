@@ -948,6 +948,11 @@ interface PassStatusResult {
   errorSummary?: string | null;
 }
 
+function toBackendMoveType(family: string): string {
+  if (family === "boom_expansion" || family === "crash_expansion") return "all";
+  return family;
+}
+
 function MoveCalibrationTab() {
   const [symbol, setSymbol] = useState("BOOM300");
   const [windowDays, setWindowDays] = useState(90);
@@ -1091,7 +1096,7 @@ function MoveCalibrationTab() {
   }, []);
 
   useEffect(() => {
-    loadDomains(symbol, strategyFamily);
+    loadDomains(symbol, toBackendMoveType(strategyFamily));
     loadMoves(symbol, moveTypeFilter, tierFilter);
     loadRuns(symbol);
   }, [symbol]);
@@ -1101,8 +1106,8 @@ function MoveCalibrationTab() {
   }, [moveTypeFilter, tierFilter]);
 
   useEffect(() => {
-    setMoveTypeFilter(strategyFamily);
-    loadDomains(symbol, strategyFamily);
+    setMoveTypeFilter(toBackendMoveType(strategyFamily));
+    loadDomains(symbol, toBackendMoveType(strategyFamily));
   }, [strategyFamily]);
 
   useEffect(() => {
@@ -1134,7 +1139,7 @@ function MoveCalibrationTab() {
       });
       setDetectResult(d);
       await Promise.all([
-        loadDomains(symbol, strategyFamily),
+        loadDomains(symbol, toBackendMoveType(strategyFamily)),
         loadMoves(symbol, moveTypeFilter, tierFilter),
       ]);
       return true;
@@ -1157,7 +1162,7 @@ function MoveCalibrationTab() {
           clearInterval(passIntervalRef.current!);
           stopElapsed();
           setPassBusy(false);
-          await Promise.all([loadDomains(symbol, strategyFamily), loadMoves(symbol, moveTypeFilter, tierFilter), loadRuns(symbol)]);
+          await Promise.all([loadDomains(symbol, toBackendMoveType(strategyFamily)), loadMoves(symbol, moveTypeFilter, tierFilter), loadRuns(symbol)]);
         }
       } catch {}
     }, 4000);
@@ -1172,7 +1177,7 @@ function MoveCalibrationTab() {
       const pn = overridePassName ?? passName;
       const body: Record<string, unknown> = { windowDays, passName: pn };
       if (passMinTier) body.minTier = passMinTier;
-      const effectiveMoveType = passMoveType !== "all" ? passMoveType : (strategyFamily !== "all" ? strategyFamily : undefined);
+      const effectiveMoveType = passMoveType !== "all" ? passMoveType : (strategyFamily !== "all" ? toBackendMoveType(strategyFamily) : undefined);
       if (effectiveMoveType) body.moveType = effectiveMoveType;
       if (maxMoves && !isNaN(Number(maxMoves))) body.maxMoves = Number(maxMoves);
       const d = await apiFetch(`calibration/run-passes/${symbol}`, {
@@ -1187,7 +1192,7 @@ function MoveCalibrationTab() {
         setPassStatus(d);
         setPassBusy(false);
         stopElapsed();
-        await Promise.all([loadDomains(symbol, strategyFamily), loadMoves(symbol, moveTypeFilter, tierFilter)]);
+        await Promise.all([loadDomains(symbol, toBackendMoveType(strategyFamily)), loadMoves(symbol, moveTypeFilter, tierFilter)]);
       }
       return true;
     } catch (e: unknown) {
@@ -1402,7 +1407,7 @@ function MoveCalibrationTab() {
           </button>
 
           <button
-            onClick={() => { loadDomains(symbol, strategyFamily); loadMoves(symbol, moveTypeFilter, tierFilter); loadRuns(symbol); }}
+            onClick={() => { loadDomains(symbol, toBackendMoveType(strategyFamily)); loadMoves(symbol, moveTypeFilter, tierFilter); loadRuns(symbol); }}
             disabled={aggLoading}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-xs text-muted-foreground hover:text-foreground hover:border-border self-end"
           >
@@ -1509,8 +1514,8 @@ function MoveCalibrationTab() {
                     onClick={async () => {
                       setBuildingProfile(true);
                       try {
-                        const buildRes = await apiFetch(`behavior/build/${symbol}`, { method: "POST" }).catch(() => null);
-                        const beh = buildRes ?? await apiFetch(`behavior/profile/${symbol}`).catch(() => null);
+                        await apiFetch(`behavior/build/${symbol}`, { method: "POST" }).catch(() => null);
+                        const beh = await apiFetch(`behavior/profile/${symbol}`).catch(() => null);
                         setBehaviorProfile(beh ?? null);
                       } catch (err) {
                         console.error("[BehaviorProfile] Build failed:", err);

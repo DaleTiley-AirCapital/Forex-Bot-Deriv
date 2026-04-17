@@ -286,6 +286,42 @@ async function initDb(): Promise<void> {
   }
   // ─────────────────────────────────────────────────────────────────────────────
 
+  // ── One-time fix: clear inflated profitability_summary JSONB ─────────────────
+  // Task #104: rows written before Task #100's movePct bug fix stored an
+  // estimatedMonthlyReturnPct that was 100× too large (avgPct was in percentage
+  // form rather than fraction form, then multiplied by 100 in the formula).
+  // Task #101 already corrected the scalar avg_move_pct / median_move_pct
+  // columns, but the profitability_summary JSONB was left with inflated values.
+  // Solution: NULL out profitability_summary for ALL rows so the next extraction
+  // pass regenerates it with correct numbers. The column is research-only and
+  // the UI already handles NULL gracefully.
+  // Idempotency: recorded in platform_state so this runs exactly once.
+  try {
+    const profMarkerKey = "migration_fix_profitability_summary_inflated_done";
+    const profMarkerRows = await db.select().from(platformStateTable)
+      .where(eq(platformStateTable.key, profMarkerKey)).limit(1);
+
+    if (profMarkerRows.length > 0) {
+      console.log("[DB] Profitability-summary fix: already applied (marker present) — skipping.");
+    } else {
+      const profFixResult = await db.execute(sql`
+        UPDATE strategy_calibration_profiles
+        SET profitability_summary = NULL
+        WHERE profitability_summary IS NOT NULL
+      `);
+      const profRowCount = (profFixResult as unknown as { rowCount?: number }).rowCount ?? 0;
+      console.log(`[DB] Profitability-summary fix: cleared inflated JSONB on ${profRowCount} calibration profile row(s). Will regenerate on next extraction pass.`);
+
+      await db.insert(platformStateTable)
+        .values({ key: profMarkerKey, value: "true" })
+        .onConflictDoNothing();
+      console.log(`[DB] Profitability-summary fix: marker '${profMarkerKey}' recorded.`);
+    }
+  } catch (err) {
+    console.warn("[DB] Profitability-summary fix skipped (table may not exist yet):", err instanceof Error ? err.message : err);
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
+
   // ── Explicit candles schema verification (fail-loud before scheduler starts) ──
   const candlesColCheck = await db.execute(sql`
     SELECT column_name FROM information_schema.columns

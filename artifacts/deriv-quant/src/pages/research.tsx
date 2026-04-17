@@ -1011,6 +1011,16 @@ function MoveCalibrationTab() {
   const [runsExpanded, setRunsExpanded] = useState(false);
 
   const [exportBusy, setExportBusy] = useState<Record<string, boolean>>({});
+  const [moveCounts, setMoveCounts] = useState<Record<string, number>>({});
+
+  const loadMoveCounts = useCallback(async () => {
+    try {
+      const d = await apiFetch("calibration/move-counts");
+      setMoveCounts(d.counts ?? {});
+    } catch {
+      // non-critical — badge just won't show
+    }
+  }, []);
 
   const loadDomains = useCallback(async (sym: string, family?: string) => {
     setAggLoading(true);
@@ -1099,6 +1109,7 @@ function MoveCalibrationTab() {
   }, []);
 
   useEffect(() => {
+    loadMoveCounts();
     loadDomains(symbol, toBackendMoveType(strategyFamily));
     loadMoves(symbol, moveTypeFilter, tierFilter);
     loadRuns(symbol);
@@ -1142,6 +1153,7 @@ function MoveCalibrationTab() {
       });
       setDetectResult(d);
       await Promise.all([
+        loadMoveCounts(),
         loadDomains(symbol, toBackendMoveType(strategyFamily)),
         loadMoves(symbol, moveTypeFilter, tierFilter),
       ]);
@@ -1273,6 +1285,30 @@ function MoveCalibrationTab() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Move count badges — one per symbol */}
+        <div className="flex flex-wrap gap-2">
+          {CALIB_SYMBOLS.map(s => {
+            const n = moveCounts[s] ?? 0;
+            const isActive = s === symbol;
+            return (
+              <button
+                key={s}
+                onClick={() => { setSymbol(s); setDetectResult(null); setDetectErr(null); setStrategyFamily("all"); }}
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors",
+                  isActive
+                    ? "bg-primary/15 text-primary border-primary/30"
+                    : "bg-muted/30 text-muted-foreground border-border/40 hover:text-foreground hover:border-border/70"
+                )}
+              >
+                <span className="font-semibold">{s}</span>
+                <span className="opacity-70">·</span>
+                <span>{n.toLocaleString()} moves</span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Shared controls */}

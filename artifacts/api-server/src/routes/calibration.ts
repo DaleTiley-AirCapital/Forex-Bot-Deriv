@@ -18,8 +18,8 @@
 
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { movePrecursorPassesTable, moveBehaviorPassesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { movePrecursorPassesTable, moveBehaviorPassesTable, detectedMovesTable } from "@workspace/db";
+import { eq, sql } from "drizzle-orm";
 import { ACTIVE_SYMBOLS } from "../core/engineTypes.js";
 import { detectAndStoreMoves, getDetectedMoves } from "../core/calibration/moveDetector.js";
 import {
@@ -112,6 +112,28 @@ router.get("/calibration/moves/:symbol", async (req, res): Promise<void> => {
     res.json({ symbol, moveCount: moves.length, moves });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to fetch moves";
+    res.status(500).json({ error: message });
+  }
+});
+
+// ── GET /api/calibration/move-counts ──────────────────────────────────────────
+// Returns row counts from detected_moves for each calibration symbol.
+
+router.get("/calibration/move-counts", async (_req, res): Promise<void> => {
+  try {
+    const rows = await db
+      .select({ symbol: detectedMovesTable.symbol, count: sql<number>`count(*)::int` })
+      .from(detectedMovesTable)
+      .groupBy(detectedMovesTable.symbol);
+
+    const counts: Record<string, number> = {};
+    for (const row of rows) {
+      counts[row.symbol] = row.count;
+    }
+    res.json({ counts });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to fetch move counts";
+    console.error("[calibration/move-counts] error:", message);
     res.status(500).json({ error: message });
   }
 });

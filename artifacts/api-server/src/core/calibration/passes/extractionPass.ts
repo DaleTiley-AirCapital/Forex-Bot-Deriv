@@ -24,6 +24,7 @@ import {
 import { eq, and, inArray } from "drizzle-orm";
 import { chatComplete } from "../../../infrastructure/openai.js";
 import { retrieveContext } from "../../ai/contextRetriever.js";
+import { parseAiJson } from "./parseAiJson.js";
 
 function median(arr: number[]): number {
   if (arr.length === 0) return 0;
@@ -37,7 +38,10 @@ export async function runExtractionPass(
   moves: DetectedMoveRow[],
   runId: number,
 ): Promise<void> {
-  if (moves.length === 0) return;
+  if (moves.length === 0) {
+    console.warn(`[extractionPass] Called with 0 moves for symbol=${symbol} — skipping profile write.`);
+    return;
+  }
 
   // Scope all pass queries to the CURRENT detected move IDs so stale rows from
   // a previous detect run never inflate captured/fit or skew miss reasons.
@@ -196,14 +200,13 @@ Respond with ONLY valid JSON:
 
   const response = await chatComplete({
     messages: [{ role: "user", content: prompt }],
-    max_tokens: 900,
+    max_tokens: 1800,
     temperature: 0.3,
   });
 
   const raw = response.choices[0]?.message?.content?.trim() ?? "";
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("No JSON in extraction pass response");
-  const parsed = JSON.parse(match[0]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const parsed = parseAiJson<any>(raw, "extraction pass");
 
   const feeddownSchema = {
     structuralRules:        parsed.structuralRules ?? [],

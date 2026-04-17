@@ -17,6 +17,7 @@ import {
 import { eq, and, gte, lte, asc } from "drizzle-orm";
 import { chatComplete } from "../../../infrastructure/openai.js";
 import { retrieveContext } from "../../ai/contextRetriever.js";
+import { parseAiJson } from "./parseAiJson.js";
 
 const MAX_BEHAVIOR_BARS = 200;
 
@@ -122,9 +123,8 @@ Respond with ONLY valid JSON:
   });
 
   const raw = response.choices[0]?.message?.content?.trim() ?? "";
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("No JSON in behavior pass response");
-  const parsed = JSON.parse(match[0]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const parsed = parseAiJson<any>(raw, "behavior pass");
 
   const holdabilityScore = Math.max(0, Math.min(1, Number(parsed.holdabilityScore) || 0));
   const maxIntradrawdown = Math.max(0, Number(parsed.maxIntradrawdownPct) || 0);

@@ -166,8 +166,18 @@ export async function runCalibrationPasses(
     force = false,
   } = opts;
 
+  // "boom_expansion" / "crash_expansion" are stored in strategyFamilyCandidate, not moveType.
+  // "all" means no filter — include every move for the symbol.
+  const FAMILY_FILTERS = new Set(["boom_expansion", "crash_expansion"]);
+
   const conditions: ReturnType<typeof eq>[] = [eq(detectedMovesTable.symbol, symbol)];
-  if (moveType) conditions.push(eq(detectedMovesTable.moveType, moveType));
+  if (moveType && moveType !== "all") {
+    if (FAMILY_FILTERS.has(moveType)) {
+      conditions.push(eq(detectedMovesTable.strategyFamilyCandidate, moveType));
+    } else {
+      conditions.push(eq(detectedMovesTable.moveType, moveType));
+    }
+  }
 
   const allMoves = await db
     .select()
@@ -177,6 +187,12 @@ export async function runCalibrationPasses(
 
   const filteredMoves = filterByMinTier(allMoves, minTier).slice(0, maxMoves ?? allMoves.length);
   const totalMoves = filteredMoves.length;
+
+  if (totalMoves === 0) {
+    console.warn(
+      `[calibrationPassRunner] 0 moves found for symbol=${symbol} moveType=${moveType ?? "(none)"} — no passes will run.`,
+    );
+  }
 
   const runId = await createRunRecord(symbol, windowDays, passName, totalMoves);
 

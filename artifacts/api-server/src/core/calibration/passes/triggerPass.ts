@@ -17,7 +17,6 @@ import {
 import { eq, and, gte, lte, asc } from "drizzle-orm";
 import { chatComplete } from "../../../infrastructure/openai.js";
 import { retrieveContext } from "../../ai/contextRetriever.js";
-import { parseAiJson } from "./parseAiJson.js";
 
 const TRIGGER_SCAN_BARS = 48;
 
@@ -110,8 +109,9 @@ Respond with ONLY valid JSON:
   });
 
   const raw = response.choices[0]?.message?.content?.trim() ?? "";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const parsed = parseAiJson<any>(raw, "trigger pass");
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("No JSON in trigger pass response");
+  const parsed = JSON.parse(match[0]);
 
   const entryBarIdx = Math.max(1, Math.min(Number(parsed.earliestEntryBar) || 1, candles.length - 1));
   const entryCandle = candles[entryBarIdx];

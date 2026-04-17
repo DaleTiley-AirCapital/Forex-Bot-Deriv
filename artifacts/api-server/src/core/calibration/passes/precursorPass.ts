@@ -17,7 +17,6 @@ import {
 import { eq, and, gte, lte, asc } from "drizzle-orm";
 import { chatComplete } from "../../../infrastructure/openai.js";
 import { retrieveContext } from "../../ai/contextRetriever.js";
-import { parseAiJson } from "./parseAiJson.js";
 
 const PRECURSOR_LOOKBACK_BARS = 96;
 
@@ -140,13 +139,14 @@ Respond with ONLY valid JSON:
 
   const response = await chatComplete({
     messages: [{ role: "user", content: prompt }],
-    max_tokens: 900,
+    max_tokens: 500,
     temperature: 0.25,
   });
 
   const raw = response.choices[0]?.message?.content?.trim() ?? "";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const parsed = parseAiJson<any>(raw, "precursor pass");
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("No JSON in precursor pass response");
+  const parsed = JSON.parse(match[0]);
 
   await db.insert(movePrecursorPassesTable).values({
     moveId:              move.id,

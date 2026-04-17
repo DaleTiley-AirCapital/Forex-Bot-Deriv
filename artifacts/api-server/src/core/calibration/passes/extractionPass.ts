@@ -24,7 +24,6 @@ import {
 import { eq, and, inArray } from "drizzle-orm";
 import { chatComplete } from "../../../infrastructure/openai.js";
 import { retrieveContext } from "../../ai/contextRetriever.js";
-import { parseAiJson } from "./parseAiJson.js";
 
 function median(arr: number[]): number {
   if (arr.length === 0) return 0;
@@ -205,8 +204,19 @@ Respond with ONLY valid JSON:
   });
 
   const raw = response.choices[0]?.message?.content?.trim() ?? "";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const parsed = parseAiJson<any>(raw, "extraction pass");
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("No JSON in extraction pass response");
+  // Attempt parse; on failure sanitise bare control characters inside JSON strings and retry once.
+  let parsed: ReturnType<typeof JSON.parse>;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch {
+    const sanitised = match[0].replace(
+      /"(?:[^"\\]|\\.)*"/g,
+      (s) => s.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t"),
+    );
+    parsed = JSON.parse(sanitised);
+  }
 
   const feeddownSchema = {
     structuralRules:        parsed.structuralRules ?? [],

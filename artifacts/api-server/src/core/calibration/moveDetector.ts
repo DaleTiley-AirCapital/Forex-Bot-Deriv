@@ -584,9 +584,16 @@ export async function getDetectedMoves(
   const tierThreshold = minTier ? (tierOrder[minTier] ?? 3) : 3;
   const validTiers = (["A", "B", "C", "D"] as const).filter(t => (tierOrder[t] ?? 3) <= tierThreshold);
 
+  const FAMILY_FILTERS = ["boom_expansion", "crash_expansion"];
   type WhereCondition = ReturnType<typeof eq>;
   const conditions: WhereCondition[] = [eq(detectedMovesTable.symbol, symbol)];
-  if (moveType) conditions.push(eq(detectedMovesTable.moveType, moveType));
+  if (moveType) {
+    if (FAMILY_FILTERS.includes(moveType)) {
+      conditions.push(eq(detectedMovesTable.strategyFamilyCandidate, moveType));
+    } else {
+      conditions.push(eq(detectedMovesTable.moveType, moveType));
+    }
+  }
   if (validTiers.length < 4) {
     conditions.push(inArray(detectedMovesTable.qualityTier, [...validTiers]));
   }

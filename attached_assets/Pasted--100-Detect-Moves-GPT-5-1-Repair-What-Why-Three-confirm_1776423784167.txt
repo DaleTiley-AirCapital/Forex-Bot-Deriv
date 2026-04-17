@@ -1,0 +1,56 @@
+#100 - Detect Moves + GPT-5.1 Repair
+
+What & Why
+Three confirmed bugs are breaking the Move Calibration flow and AI pipeline:
+
+Bug A — avgMovePct double multiplication (698% display) The calibrationAggregator.ts already converts movePct fractions to percentages (movePcts = moves.map(m => m.movePct * 100)) before computing avgMovePct. The UI then multiplies again: aggregate.overall.avgMovePct * 100. Result: a real 6.98% average shows as 698.4%. Same double-conversion exists in extractionPass.ts for every avgMovePct and medianMovePct it writes into the calibration profile.
+
+Bug B — BOOM300/CRASH300 mostly "unknown" family labels moveLabeler.ts has no symbol awareness. Its generic thresholds (rangeExpansion ≥ 1.5 AND directionalPersistence ≥ 0.65 for "breakout") are calibrated for equity swings, not Deriv synthetic spike behaviour. BOOM/CRASH spikes are directional but have irregular ATR ratios, so most fall through to "unknown" instead of the symbol-native family. strategyFamilyCandidate is always copied from moveType, so it is also mostly "unknown" for BOOM300/CRASH300.
+
+Bug C — GPT-5.1 rejects max_tokens parameter Error: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead. The chatComplete() wrapper passes through max_tokens unchanged. GPT-5.1 (and o-series models) require max_completion_tokens. Every AI call in the calibration passes, AI chat, research route, and openai.ts internal functions is affected.
+
+Done looks like
+Avg move % in the Move Calibration UI matches the raw export data numerically
+BOOM300 move family distribution shows boom_expansion (not mostly unknown)
+CRASH300 move family distribution shows crash_expansion
+R_75 and R_100 continue using reversal / continuation / breakout
+GPT-5.1 AI calls no longer fail on max_tokens
+AI Analysis, calibration passes, and backtest AI chat all run successfully
+TypeScript compiles without new errors
+
+Out of scope
+Redesigning the calibration system
+Changing live trading logic or trade management
+Chat UI redesign
+Adding new symbols
+
+NON-NEGOTIABLE RULES
+movePct is stored in the DB as a decimal fraction (e.g., 0.0533 = 5.33%). Never change this storage convention.
+avgMovePct and medianMovePct must use a single consistent unit across backend and UI — the simplest fix is to store them as fractions and let the UI do * 100 for display.
+BOOM300 must map to boom_expansion, CRASH300 to crash_expansion — these values must be stored in strategyFamilyCandidate (text column, no constraint).
+moveType may remain as the generic structural label (breakout/continuation/reversal/unknown) OR be updated to symbol-native values — executor's choice, but must be consistent with UI display.
+Do NOT add max_tokens to gpt-5.1 calls anywhere. Use max_completion_tokens exclusively for gpt-5.x models.
+Pre-existing TS errors (layout.tsx, data.tsx, decisions.tsx, diagnostics.tsx) must not be introduced as new errors by this task.
+
+Tasks
+Fix GPT-5.1 max_completion_tokens — In chatComplete(), detect when the active model is a gpt-5.x model (or any o-series model) and translate max_tokens → max_completion_tokens in the outgoing request params so all existing callers work without changes. Remove max_tokens from the fallback path too if FALLBACK_MODEL also requires it.
+
+Fix avgMovePct double-multiplication — In calibrationAggregator.ts, change the movePcts array to use m.movePct (fraction) instead of m.movePct * 100. Same fix in extractionPass.ts for its movePcts array and all per-moveType typePcts arrays. Update contextRetriever.ts where it formats calibration profile avgMovePct / medianMovePct as display percentages (add * 100 there). Verify the UI's existing * 100 now produces correct values and audit any other display sites that may have the same double-multiplication.
+
+Symbol-native family classification — Update moveDetector.ts recordMove() to assign strategyFamilyCandidate based on symbol: BOOM300 → "boom_expansion", CRASH300 → "crash_expansion", R_75/R_100 → keep the value from moveLabeler.labelMove(). For BOOM300/CRASH300, also update moveType to use more permissive thresholds (any qualifying directional move with directionalPersistence >= 0.55 classifies as "breakout" rather than "unknown"), or accept that moveType stays generic and only strategyFamilyCandidate is symbol-native — whichever approach eliminates the dominant "unknown" count. Extend the TypeScript type union for strategyFamilyCandidate to include "boom_expansion" | "crash_expansion".
+
+Update UI family distribution display — In research.tsx, the moveTypeDistribution in targetMovesStats is currently built from m.moveType. Update it to use m.strategyFamilyCandidate instead so BOOM300/CRASH300 show the correct family labels in the summary card. Ensure the "By family" breakdown row reflects this.
+
+Rebuild and validate — Run tsc --noEmit on lib/db and api-server, restart both workflows, and confirm: no max_tokens errors in logs, AI Analysis returns a result, Detect Moves for BOOM300 shows boom_expansion family labels, and Avg move % matches the row-level export data.
+
+Also validate that the “By family” summary in the Move Calibration UI uses strategyFamilyCandidate consistently everywhere for BOOM300/CRASH300, including cards, tables, exports, and any derived summary objects — not just one display path.
+
+Relevant files
+artifacts/api-server/src/infrastructure/openai.ts:41-65
+artifacts/api-server/src/core/calibration/calibrationAggregator.ts:183-257
+artifacts/api-server/src/core/calibration/passes/extractionPass.ts:67,209,218,241,261,279,304,316
+artifacts/api-server/src/core/calibration/moveDetector.ts:385-452
+artifacts/api-server/src/core/calibration/moveLabeler.ts
+artifacts/api-server/src/core/ai/contextRetriever.ts:290-294
+artifacts/deriv-quant/src/pages/research.tsx:1030-1062,1582-1650
+lib/db/src/schema/detectedMoves.ts:51-54

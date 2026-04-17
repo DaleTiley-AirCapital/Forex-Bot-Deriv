@@ -1,0 +1,261 @@
+#100 — Detect Moves Repair + GPT-5.1 AI Pipeline Repair
+
+## What & Why
+
+Two major issues are now confirmed in the current Move Calibration flow:
+
+### Problem 1 — Detect Moves summary is wrong / misleading
+
+The BOOM300 Detect Moves export shows row-level `movePct` values as decimal fractions such as:
+
+* `0.0533`
+* `0.1067`
+* `0.1578`
+
+which clearly represent approximately:
+
+* **5.33%**
+* **10.68%**
+* **15.78%**
+
+But the UI summary is showing:
+
+* **Avg move % = 698.4%**
+* **By family = unknown 311, continuation 2**
+
+This is incorrect.
+
+The detector/export proves:
+
+* average move formatting/aggregation is wrong
+* BOOM300 family classification is wrong
+* the move detector is still acting like a generic swing-leg finder instead of a symbol-native move finder
+
+### Problem 2 — AI is still broken after GPT-5.1 migration
+
+The app now fails with:
+
+* `Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.`
+
+This means the GPT-5.1 migration is incomplete:
+
+* central AI wrapper exists
+* model swap was attempted
+* but the request payloads are still not valid for the active GPT-5.1 usage path
+
+So this task is a focused repair pass for:
+
+* Detect Moves correctness
+* symbol-native family classification
+* GPT-5.1 request compatibility
+* end-to-end AI Analysis / Move Calibration pass execution
+
+This is a repair task, not a broad redesign.
+
+---
+
+## Done looks like
+
+* Detect Moves summary is numerically correct
+* Avg move % matches the underlying export data
+* BOOM300 and CRASH300 no longer show mostly `unknown` family labels when symbol-native family classification should apply
+* BOOM300 uses only its valid move family
+* CRASH300 uses only its valid move family
+* R_75 and R_100 continue using their 3 valid families
+* GPT-5.1 calls no longer fail on `max_tokens`
+* AI Analysis works again
+* Move Calibration passes run again
+* Behavior/Calibration UI reflects correct family outputs
+* TypeScript/build passes
+
+---
+
+## Out of scope
+
+* changing live trading logic
+* calibration feeddown into engine execution
+* trade manager redesign
+* full move-model redesign
+* chat UI redesign
+* adding new symbols
+
+---
+
+## NON-NEGOTIABLE RULES
+
+1. Do NOT redesign the whole calibration system in this task
+2. Do NOT change live trading logic
+3. Fix only the correctness and compatibility issues
+4. BOOM300 and CRASH300 must use symbol-native family classification
+5. Do NOT leave any GPT-5.1 request path using invalid parameters
+6. Validate with real exported/detected data, not assumptions
+
+---
+
+## Tasks
+
+### 1. Audit Detect Moves numeric aggregation
+
+Inspect the code that computes the Detect Moves summary card in the Research → Move Calibration UI and the backend/export path that feeds it.
+
+Identify exactly:
+
+* how `Avg move %` is calculated
+* how `Median magnitude %` is calculated
+* whether `movePct` is treated as:
+
+  * fraction
+  * percent
+  * already-scaled percent
+* whether any values are being multiplied by 100 more than once
+
+Fix the aggregation so:
+
+* row-level `movePct` values stored as decimal fractions are displayed as proper percentages
+* average and median are both mathematically correct
+* the UI summary matches the export data
+
+### 2. Audit family classification in Detect Moves
+
+Inspect the move detector and any family-labeling logic used after detection.
+
+Confirm exactly how:
+
+* `moveType`
+* `strategyFamilyCandidate`
+* family counts in the summary card
+
+are currently derived.
+
+### 3. Fix symbol-native family classification
+
+Implement symbol-aware family classification rules in Detect Moves:
+
+* **BOOM300** → only its valid BOOM strategy family
+* **CRASH300** → only its valid CRASH strategy family
+* **R_75** → reversal / continuation / breakout
+* **R_100** → reversal / continuation / breakout
+
+The detector must not leave BOOM300 and CRASH300 mostly classified as `unknown` if the move qualifies for the symbol-native family.
+
+If a move truly cannot be classified, keep `unknown`, but this should become the exception, not the dominant case.
+
+### 4. Add explicit fallback/diagnostic labeling
+
+If a move remains `unknown`, expose why.
+
+At minimum include a concise reason in metadata/debug output such as:
+
+* no_family_match
+* insufficient_breakout_structure
+* insufficient_continuation_structure
+* insufficient_reversal_structure
+* symbol_family_mismatch
+
+This is for debugging only and can live in metadata/export/debug fields.
+
+### 5. Fix GPT-5.1 request parameter compatibility
+
+Inspect every active GPT-5.1 call path and repair parameter usage.
+
+At minimum inspect:
+
+* `artifacts/api-server/src/infrastructure/openai.ts`
+* AI Analysis path
+* Move Calibration pass files
+* backtest AI analysis path
+* chat route if active
+
+Replace invalid `max_tokens` usage with the correct compatible parameter for the active GPT-5.1 path.
+
+Do a full search to ensure no active GPT-5.1 request still sends invalid parameters.
+
+### 6. Validate the shared AI wrapper
+
+Ensure the central AI wrapper:
+
+* uses GPT-5.1 correctly
+* still supports fallback model behavior if needed
+* passes valid request bodies in all call sites
+* does not silently swallow model/API errors
+
+### 7. Validate AI Analysis end to end
+
+Run the AI Analysis path and confirm:
+
+* no `max_tokens` error
+* no model-access error
+* meaningful result is returned
+
+### 8. Validate Move Calibration passes end to end
+
+Run:
+
+* Detect Moves
+* Run All Passes
+* Full Calibration
+
+Confirm:
+
+* Detect Moves works with correct family mapping and summary values
+* AI passes no longer fail on model parameter issues
+* outputs persist normally
+
+### 9. Fix UI summary wording if needed
+
+If the summary labels are misleading, correct them.
+
+For example:
+
+* if the data is a fraction converted to percent, the card must clearly show percentage values
+* if family labels are symbol-native, the summary should reflect that cleanly
+
+### 10. Validate against BOOM300 specifically
+
+Use BOOM300 as the primary validation case because that is where the issue is already visible.
+
+Confirm:
+
+* Avg move % is realistic
+* family counts are realistic
+* BOOM300 no longer shows `unknown 311 / continuation 2` unless the data genuinely supports that, with evidence
+
+---
+
+## Relevant files
+
+At minimum inspect/change:
+
+* `artifacts/deriv-quant/src/pages/research.tsx`
+* `artifacts/api-server/src/core/calibration/moveDetector.ts`
+* `artifacts/api-server/src/routes/calibration.ts`
+* `artifacts/api-server/src/infrastructure/openai.ts`
+* calibration pass files under:
+
+  * `artifacts/api-server/src/core/calibration/passes/`
+* any AI Analysis route/job file currently calling GPT-5.1
+* any export formatter used by Detect Moves
+
+---
+
+## Required final response format
+
+### Task #100 complete
+
+1. Files changed
+2. Detect Moves aggregation bug summary
+3. Family classification bug summary
+4. Symbol-native family mapping implemented
+5. AI request compatibility fixes
+6. Detect Moves validation results
+7. AI Analysis validation results
+8. Move Calibration pass validation results
+9. BOOM300-specific validation summary
+10. TypeScript/build result
+11. Explicit confirmations:
+
+* Avg move % now matches export data
+* BOOM300/CRASH300 use symbol-native family classification
+* GPT-5.1 no longer fails on invalid `max_tokens`
+* AI Analysis works
+* Move Calibration passes work

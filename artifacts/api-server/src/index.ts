@@ -233,6 +233,11 @@ async function initDb(): Promise<void> {
     "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS expected_hold_days DOUBLE PRECISION",
     "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS capture_rate DOUBLE PRECISION",
     "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS empirical_win_rate DOUBLE PRECISION",
+    // Data fix (task-102): back-fill strategy_family_candidate for existing BOOM300/CRASH300 rows
+    // that were detected before the correct family label was assigned in moveDetector.ts.
+    // IS DISTINCT FROM is null-safe: correctly updates NULL rows as well as wrong-label rows.
+    "UPDATE detected_moves SET strategy_family_candidate = 'boom_expansion' WHERE symbol = 'BOOM300' AND strategy_family_candidate IS DISTINCT FROM 'boom_expansion'",
+    "UPDATE detected_moves SET strategy_family_candidate = 'crash_expansion' WHERE symbol = 'CRASH300' AND strategy_family_candidate IS DISTINCT FROM 'crash_expansion'",
   ];
   for (const stmt of migrations) {
     try {

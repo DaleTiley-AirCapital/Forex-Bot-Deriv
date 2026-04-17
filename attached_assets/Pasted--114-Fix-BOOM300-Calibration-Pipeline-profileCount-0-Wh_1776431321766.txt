@@ -1,0 +1,67 @@
+#114 - Fix BOOM300 Calibration Pipeline (profileCount: 0)
+
+What & Why
+Move Calibration runs to completion for BOOM300 but exports show profileCount: 0, profiles: []. The calibration pipeline has a confirmed break point that prevents extraction pass results from being written for BOOM300 and CRASH300. The failure is traced and the exact drop-out point is identified — this task fixes it.
+
+Root cause (confirmed via code trace): calibrationPassRunner.ts:170: if (moveType) conditions.push(eq(detectedMovesTable.moveType, moveType))
+
+When the UI selects strategyFamily = "boom_expansion", it calls toBackendMoveType("boom_expansion") which returns the string "all". Because "all" is truthy, the run-passes route sets resolvedMoveType = "all" and the pass runner adds WHERE move_type = 'all' to the DB query. No moves have move_type = 'all' (valid values are "breakout"/"continuation"/"reversal"/"unknown"), so filteredMoves = []. The extraction pass hits if (moves.length === 0) return; at line 40 and immediately returns without writing any profiles. Per-move passes also find nothing to process.
+
+Cascade: strategy_calibration_profiles has 0 rows for BOOM300 → GET /api/calibration/export/BOOM300?type=profile → profileCount: 0, profiles: [].
+
+Same bug affects CRASH300 via "crash_expansion" → toBackendMoveType → "all".
+
+Secondary issue discovered: calibrationPassRunner.ts does not route boom_expansion/crash_expansion through strategyFamilyCandidate (as getDetectedMoves does after Task #106) — inconsistency that would surface if a filter other than "all" is used.
+
+No other code is broken. The pipeline stages before (detect moves) and after (profile read/export routes) are structurally correct. Only the move-query in the pass runner is wrong.
+
+Done looks like
+Detect Moves for BOOM300 produces rows (already working — 313 rows)
+Run All Passes for BOOM300 with strategyFamily = "boom_expansion" selected processes all 313 BOOM300 moves (not 0)
+Extraction pass writes at least one profile row with symbol = "BOOM300" and move_type = "all"
+GET /api/calibration/export/BOOM300?type=profile returns profileCount ≥ 1 (not 0)
+GET /api/calibration/profiles/BOOM300 returns profiles
+CRASH300 is equally fixed (319 rows)
+R_75 / R_100 regressions confirmed absent
+TypeScript / build passes with zero new errors
+Diagnostics logging makes 0-move situations visible in server logs for future debugging
+
+Out of scope
+Redesigning move detection
+Redesigning calibration strategy logic
+Changing live trading, trade manager, or scheduler logic
+Building new AI features or chat features
+New symbols
+Patching with fake profile rows — fix must be real
+
+NON-NEGOTIABLE RULES
+Do NOT redesign the calibration system
+Do NOT patch around the issue with fake profile rows
+You MUST trace from the run-passes route through the pass runner into extractionPass and confirm the fix end-to-end
+Fix only the confirmed break point and its immediate consistency gaps — no scope creep
+
+Tasks
+Fix the moveType filter in calibrationPassRunner.ts — Change the move query condition from if (moveType) conditions.push(...) to if (moveType && moveType !== "all") conditions.push(...). Also mirror the getDetectedMoves pattern from Task #106: route boom_expansion/crash_expansion values to filter on strategyFamilyCandidate instead of moveType. This is the single fix that unblocks the full pipeline.
+
+Add pipeline diagnostics — In runCalibrationPasses, add a server-side log when 0 moves are found for a query (log the symbol, moveType filter used, and 0 count so future breakages are immediately visible). In runExtractionPass, upgrade the silent early-return to also log a warning to the console. Do not add verbose logging otherwise.
+
+Validate BOOM300 end-to-end and check for regressions — Run tsc --noEmit on api-server. Confirm that after the fix, all four symbols have consistent behaviour: BOOM300 (313 moves processed), CRASH300 (319 moves), R_75, R_100. Verify /api/calibration/profiles/BOOM300 returns ≥1 profile row.
+
+Also confirm that the written BOOM300/CRASH300 profile rows use the expected strategy family key consistently (e.g. boom_expansion / crash_expansion) and that profile fetch/export routes are querying the same key, not only that profileCount is non-zero.
+
+Required final response format
+Files changed
+Exact BOOM300 drop-out point (confirmed from trace)
+Fix implemented
+BOOM300 end-to-end validation result (profile rows written/exported)
+Other-symbol regression check (CRASH300, R_75, R_100)
+TypeScript/build result
+
+Relevant files
+artifacts/api-server/src/core/calibration/calibrationPassRunner.ts:155-176
+artifacts/api-server/src/core/calibration/passes/extractionPass.ts:35-45
+artifacts/api-server/src/core/calibration/calibrationAggregator.ts:272-291
+artifacts/api-server/src/routes/calibration.ts:141-196
+artifacts/deriv-quant/src/pages/research.tsx:954-957,1192-1201
+lib/db/src/schema/detectedMoves.ts
+lib/db/src/schema/strategyCalibrationProfiles.ts

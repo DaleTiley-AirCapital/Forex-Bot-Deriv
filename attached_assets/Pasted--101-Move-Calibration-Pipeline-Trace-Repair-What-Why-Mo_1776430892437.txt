@@ -1,0 +1,222 @@
+#101 — Move Calibration Pipeline Trace & Repair
+
+## What & Why
+Move Calibration is still not working end to end.
+
+We now have hard evidence of a pipeline break:
+- Detect Moves produces data for BOOM300
+- but the exported calibration profile for BOOM300 is empty:
+  - `profileCount: 0`
+  - `profiles: []`
+
+So the failure is now somewhere AFTER move detection.
+
+This task is a strict trace-and-repair task for the calibration pipeline only.
+
+We are NOT redesigning the system in this task.
+We are NOT changing live trading logic.
+We are NOT broadening scope.
+
+We are only doing this:
+
+1. trace the full Move Calibration pipeline
+2. identify exactly where BOOM300 drops out
+3. repair that break
+4. restore end-to-end profile creation/export
+
+The goal is to make Move Calibration actually produce usable profiles for BOOM300 (and the other active symbols if affected).
+
+---
+
+## Done looks like
+
+- Detect Moves produces rows for BOOM300
+- Run All Passes completes for BOOM300 without silent failure
+- Full Calibration produces at least one BOOM300 profile row when valid moves exist
+- `GET /api/calibration/profile/:symbol/:strategy`
+  returns real data for BOOM300 when appropriate
+- `GET /api/calibration/export/:symbol`
+  no longer returns `profileCount: 0` for BOOM300 if moves/passes/profile generation succeeded
+- The exact stage where BOOM300 was previously dropping out is identified and fixed
+- TypeScript/build passes
+- Validation confirms the full calibration path works end to end
+
+---
+
+## Out of scope
+
+- redesigning move detection
+- redesigning calibration strategy logic
+- changing live trading logic
+- changing trade manager
+- changing scheduler
+- building new AI features
+- chat redesign
+- new symbols
+
+---
+
+## NON-NEGOTIABLE RULES
+
+1. Do NOT redesign the calibration system in this task
+2. Do NOT patch around the issue with fake profile rows
+3. Do NOT hide missing data by weakening exports
+4. You must trace the real failure point and fix it properly
+5. You must validate the pipeline using BOOM300 specifically
+6. Keep scope tightly limited to calibration pipeline integrity
+
+---
+
+## Tasks
+
+### 1. Trace the full BOOM300 calibration pipeline
+Trace the complete data path for BOOM300 through these stages:
+
+1. Detect Moves
+2. stored detected_moves rows
+3. pass-run creation
+4. precursor/trigger/behavior/extraction pass execution
+5. pass result persistence
+6. calibration aggregation
+7. strategy_calibration_profiles write
+8. profile fetch route
+9. profile export route
+
+For each stage, confirm:
+- what input it received
+- what output it wrote
+- what filters were applied
+- whether BOOM300 rows were dropped there
+
+This must be done using the actual current repo code and live data path, not assumptions.
+
+### 2. Identify the exact BOOM300 drop-out point
+Find exactly where BOOM300 is being lost.
+
+Examples of acceptable root causes:
+- family mismatch
+- wrong strategy key
+- profile query filtering
+- aggregator grouping mismatch
+- pass results not persisted
+- export route filtering wrong field
+- symbol-native family value not matching expected profile strategy
+- any equivalent real cause
+
+You must identify the exact code path and exact reason.
+
+### 3. Audit BOOM300 family key consistency across pipeline
+Inspect all BOOM300-relevant fields across the calibration path, including:
+- `symbol`
+- `moveType`
+- `strategyFamilyCandidate`
+- any pass `strategyFamily`
+- profile grouping keys
+- route params used by `/profile/:symbol/:strategy`
+- export grouping/filter logic
+
+Confirm whether BOOM300 is consistently represented as:
+- `boom_expansion`
+- or another key
+- or generic `breakout/continuation/reversal/unknown`
+
+Fix any inconsistency so the full pipeline agrees on the same BOOM300 strategy key.
+
+### 4. Audit profile aggregation preconditions
+Inspect the profile aggregator and determine:
+- what minimum data it requires before writing a profile
+- whether BOOM300 currently fails those preconditions
+- whether that failure is valid or due to a bug
+
+If a valid precondition exists, make it observable in logs/response.
+If the precondition logic is wrong for BOOM300, fix it.
+
+### 5. Audit pass persistence
+Confirm that each calibration pass for BOOM300:
+- executes
+- returns usable data
+- writes records to the expected tables
+- is linked to the correct move/profile grouping keys
+
+If pass results are generated but not persisted or not retrievable by the aggregator, fix that.
+
+### 6. Audit profile route and export route filtering
+Inspect:
+- `GET /api/calibration/profile/:symbol/:strategy`
+- `GET /api/calibration/export/:symbol`
+
+Confirm:
+- whether they are filtering on the correct family key
+- whether they are expecting a strategy value that BOOM300 profiles never use
+- whether export is excluding valid profiles unintentionally
+
+Fix any mismatch.
+
+### 7. Add explicit calibration-stage diagnostics
+Add lightweight diagnostics/logging so future failures are visible.
+
+At minimum log or expose:
+- detected move count
+- pass run count
+- pass success/failure counts
+- aggregation candidate count
+- profile rows written
+- profile rows exported
+
+Do not spam logs, but make the drop-out stage visible.
+
+### 8. Validate BOOM300 end to end
+Run:
+- Detect Moves
+- Run All Passes
+- Full Calibration
+- Profile fetch
+- Export
+
+Confirm the complete path now works for BOOM300.
+
+### 9. Validate other active symbols for regressions
+Quickly confirm the same repair did not break:
+- CRASH300
+- R_75
+- R_100
+
+This is a regression check only, not a full redesign.
+
+---
+
+## Relevant files
+
+At minimum inspect/change:
+- `artifacts/api-server/src/core/calibration/moveDetector.ts`
+- `artifacts/api-server/src/core/calibration/calibrationPassRunner.ts`
+- `artifacts/api-server/src/core/calibration/calibrationAggregator.ts`
+- calibration pass files under:
+  - `artifacts/api-server/src/core/calibration/passes/`
+- `artifacts/api-server/src/routes/calibration.ts`
+- any export/profile helper files
+- DB schema files for:
+  - detected moves
+  - pass results
+  - strategy calibration profiles
+
+---
+
+## Required final response format
+
+### Task #101 complete
+1. Files changed
+2. Full BOOM300 pipeline trace summary
+3. Exact BOOM300 drop-out point
+4. Root cause
+5. Fix implemented
+6. BOOM300 family-key consistency summary
+7. Pass persistence validation
+8. Aggregator/profile/export validation
+9. BOOM300 end-to-end validation result
+10. Other-symbol regression check
+11. TypeScript/build result
+12. Explicit confirmations:
+   - BOOM300 no longer drops out before profile generation
+   - calibration profiles are now written/exported when valid BOOM300 data exists
+   - the pipeline failure point is now visible/diagnosable

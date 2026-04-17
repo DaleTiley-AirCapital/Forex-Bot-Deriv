@@ -180,7 +180,7 @@ export async function buildCalibrationAggregate(
   }
 
   // ── Overall aggregates ─────────────────────────────────────────────────────
-  const movePcts    = moves.map(m => m.movePct * 100);
+  const movePcts    = moves.map(m => m.movePct);
   const holdHours   = moves.map(m => m.holdingMinutes / 60);
   const captureable = triggerRows.map(r => r.captureablePct);
   const holdability = behaviorOnly.map(r => r.holdabilityScore);
@@ -206,7 +206,7 @@ export async function buildCalibrationAggregate(
 
   for (const mt of moveTypes) {
     const typeMoves = moves.filter(m => m.moveType === mt);
-    const typePcts  = typeMoves.map(m => m.movePct * 100);
+    const typePcts  = typeMoves.map(m => m.movePct);
     const typeHours = typeMoves.map(m => m.holdingMinutes / 60);
     // Use distinct moveIds to guard against inflation from force=true reruns
     const typeMoveIdSet = new Set(typeMoves.map(m => m.id));

@@ -53,7 +53,7 @@ export interface DetectedMove {
   moveType: "breakout" | "continuation" | "reversal" | "unknown";
   // Deterministic label from moveLabeler.ts stored separately so future AI
   // refinement can replace moveType without losing the original detector output.
-  strategyFamilyCandidate: "breakout" | "continuation" | "reversal" | "unknown";
+  strategyFamilyCandidate: "breakout" | "continuation" | "reversal" | "unknown" | "boom_expansion" | "crash_expansion";
   startTs: number;
   endTs: number;
   startPrice: number;
@@ -426,7 +426,11 @@ function recordMove(
     symbol,
     direction,
     moveType,
-    strategyFamilyCandidate: moveType,  // same value — stored separately for AI-refinement safety
+    strategyFamilyCandidate: symbol === "BOOM300"
+      ? "boom_expansion"
+      : symbol === "CRASH300"
+        ? "crash_expansion"
+        : moveType,
     startTs:    candles[startIdx].openTs,
     endTs:      candles[endIdx].openTs,
     startPrice,

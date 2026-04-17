@@ -39,17 +39,34 @@ export async function getOpenAIClient(): Promise<OpenAI> {
 }
 
 /**
+ * normalizeParamsForModel — translates max_tokens → max_completion_tokens for
+ * gpt-5.x and o-series models, which reject the legacy max_tokens parameter.
+ */
+function normalizeParamsForModel(
+  params: Record<string, unknown>,
+  model: string,
+): Record<string, unknown> {
+  const needsCompletionTokens = /^gpt-5/.test(model) || /^o\d/.test(model);
+  if (!needsCompletionTokens) return params;
+  if (!("max_tokens" in params)) return params;
+  const { max_tokens, ...rest } = params;
+  return { ...rest, max_completion_tokens: max_tokens };
+}
+
+/**
  * chatComplete — wraps client.chat.completions.create with automatic FALLBACK_MODEL retry.
  * If PRIMARY_MODEL returns a 403/404/model_not_found/quota error, retries with FALLBACK_MODEL.
+ * Automatically translates max_tokens → max_completion_tokens for gpt-5.x / o-series models.
  * Use this instead of calling client.chat.completions.create directly with PRIMARY_MODEL.
  */
 export async function chatComplete(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, "model"> & { model?: string },
 ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
   const client = await getOpenAIClient();
-  const primaryParams = { ...params, model: params.model ?? PRIMARY_MODEL };
+  const primaryModel  = params.model ?? PRIMARY_MODEL;
+  const primaryParams = normalizeParamsForModel({ ...params, model: primaryModel }, primaryModel);
   try {
-    return await client.chat.completions.create(primaryParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
+    return await client.chat.completions.create(primaryParams as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
   } catch (err) {
     const status = (err as { status?: number })?.status;
     const code   = (err as { error?: { code?: string } })?.error?.code;
@@ -58,7 +75,8 @@ export async function chatComplete(
       code === "model_not_found" || code === "insufficient_quota" || code === "model_not_available";
     if (isFallbackCandidate && (params.model === PRIMARY_MODEL || params.model == null)) {
       console.warn(`[AI] PRIMARY_MODEL (${PRIMARY_MODEL}) error (${status}/${code ?? ""}), falling back to ${FALLBACK_MODEL}`);
-      return await client.chat.completions.create({ ...params, model: FALLBACK_MODEL } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
+      const fallbackParams = normalizeParamsForModel({ ...params, model: FALLBACK_MODEL }, FALLBACK_MODEL);
+      return await client.chat.completions.create(fallbackParams as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
     }
     throw err;
   }

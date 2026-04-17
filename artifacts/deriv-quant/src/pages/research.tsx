@@ -811,10 +811,12 @@ const TIER_COLORS: Record<string, string> = {
   D: "text-red-400 bg-red-500/10 border-red-500/25",
 };
 const TYPE_COLORS: Record<string, string> = {
-  breakout:     "text-purple-400 bg-purple-500/10 border-purple-500/25",
-  continuation: "text-sky-400 bg-sky-500/10 border-sky-500/25",
-  reversal:     "text-amber-400 bg-amber-500/10 border-amber-500/25",
-  unknown:      "text-muted-foreground bg-muted/20 border-border/30",
+  breakout:        "text-purple-400 bg-purple-500/10 border-purple-500/25",
+  continuation:    "text-sky-400 bg-sky-500/10 border-sky-500/25",
+  reversal:        "text-amber-400 bg-amber-500/10 border-amber-500/25",
+  unknown:         "text-muted-foreground bg-muted/20 border-border/30",
+  boom_expansion:  "text-emerald-400 bg-emerald-500/10 border-emerald-500/25",
+  crash_expansion: "text-rose-400 bg-rose-500/10 border-rose-500/25",
 };
 
 function TierPill({ tier }: { tier: string }) {
@@ -924,6 +926,7 @@ interface DetectedMove {
   id: number;
   symbol: string;
   moveType: string;
+  strategyFamilyCandidate?: string | null;
   qualityTier: string;
   qualityScore?: number;
   direction: string;
@@ -1028,7 +1031,7 @@ function MoveCalibrationTab() {
       setCalibProfile(calib ?? null);
 
       // Compute Target Moves stats directly from the moves endpoint (constraint #9 — source: /api/calibration/moves/:symbol)
-      const rawMoves: Array<{ movePct?: number | string | null; moveType?: string | null; qualityTier?: string | null; qualityScore?: number | string | null }> =
+      const rawMoves: Array<{ movePct?: number | string | null; moveType?: string | null; strategyFamilyCandidate?: string | null; qualityTier?: string | null; qualityScore?: number | string | null }> =
         rawMovesResp?.moves ?? [];
       if (rawMoves.length > 0) {
         const mags = rawMoves
@@ -1043,7 +1046,7 @@ function MoveCalibrationTab() {
           .sort((a, b) => a - b);
         const medianQuality = qualScores.length > 0 ? qualScores[Math.floor(qualScores.length / 2)] : null;
         const moveTypeDist = rawMoves.reduce<Record<string, number>>((acc, m) => {
-          const t = String(m.moveType ?? "unknown");
+          const t = String(m.strategyFamilyCandidate ?? m.moveType ?? "unknown");
           acc[t] = (acc[t] ?? 0) + 1;
           return acc;
         }, {});
@@ -2077,7 +2080,7 @@ function MoveCalibrationTab() {
                 <tbody>
                   {displayedMoves.map((m) => (
                     <tr key={m.id} className="border-b border-border/20 hover:bg-muted/20 transition-colors">
-                      <td className="px-4 py-1.5"><TypePill type={m.moveType} /></td>
+                      <td className="px-4 py-1.5"><TypePill type={m.strategyFamilyCandidate ?? m.moveType} /></td>
                       <td className="px-3 py-1.5"><TierPill tier={m.qualityTier} /></td>
                       <td className="px-3 py-1.5">
                         {m.direction === "up"

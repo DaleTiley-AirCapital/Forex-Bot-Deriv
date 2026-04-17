@@ -289,7 +289,7 @@ Generated: ${p.generatedAt?.toISOString() ?? "unknown"} | Window: ${p.windowDays
 Honest Fit: ${p.capturedMoves}/${p.targetMoves} moves captured (${(p.fitScore * 100).toFixed(1)}%)
 Missed: ${p.missedMoves} | Miss reasons: ${JSON.stringify(p.missReasons ?? []).slice(0, 200)}
 
-Move stats: avg ${p.avgMovePct?.toFixed(1)}% | median ${p.medianMovePct?.toFixed(1)}% | avg hold ${p.avgHoldingHours?.toFixed(1)}h
+Move stats: avg ${((p.avgMovePct ?? 0) * 100).toFixed(1)}% | median ${((p.medianMovePct ?? 0) * 100).toFixed(1)}% | avg hold ${p.avgHoldingHours?.toFixed(1)}h
 Holdability: ${p.avgHoldabilityScore?.toFixed(2) ?? "N/A"} | Capturable: ${((p.avgCaptureablePct ?? 0) * 100).toFixed(1)}%
 
 ${feeddown?.overallFitNarrative ? `Fit narrative: ${feeddown.overallFitNarrative}` : ""}

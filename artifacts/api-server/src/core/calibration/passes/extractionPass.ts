@@ -64,7 +64,7 @@ export async function runExtractionPass(
   const triggerOnlyRows = triggerRows.filter(r => r.passName === "trigger");
 
   // Compute aggregate stats
-  const movePcts      = moves.map(m => m.movePct * 100);
+  const movePcts      = moves.map(m => m.movePct);
   const holdHours     = moves.map(m => m.holdingMinutes / 60);
   const holdability   = behaviorRows.map(r => r.holdabilityScore);
   const capturable    = triggerOnlyRows.map(r => r.captureablePct);
@@ -276,7 +276,7 @@ Respond with ONLY valid JSON:
   const types = [...new Set(moves.map(m => m.moveType))];
   for (const mt of types) {
     const typeMoves   = moves.filter(m => m.moveType === mt);
-    const typePcts    = typeMoves.map(m => m.movePct * 100);
+    const typePcts    = typeMoves.map(m => m.movePct);
     const typeHours   = typeMoves.map(m => m.holdingMinutes / 60);
     // Honest fit per move-type: both precursor fired AND trigger ran for that move.
     // Use distinct moveIds to prevent inflation from force=true reruns.

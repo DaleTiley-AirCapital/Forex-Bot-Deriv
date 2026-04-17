@@ -34,6 +34,7 @@ const MIN_MOVE_BARS = 20;           // at least 20 bars
 const LEAD_IN_BARS = 60;            // bars before move start for context
 const ATR_PERIOD = 14;              // bars for ATR calculation
 const BOOM_CRASH_SYMBOLS = ["BOOM300", "CRASH300"];
+const VOLATILITY_SYMBOLS  = ["R_75",  "R_100"];
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -298,6 +299,77 @@ function countSpikes(
   return spikes;
 }
 
+// ── Volatility family candidate classifier (R_75 / R_100) ─────────────────────
+//
+// R_75 and R_100 are continuous-noise volatility instruments.  Unlike BOOM/CRASH
+// they have no spike-event signature, so every qualifying structural move maps
+// to one of the three engine families that exist for these symbols:
+//
+//   "breakout"      — directional expansion from a compressed or ranging baseline,
+//                     OR a high-persistence directional burst from any lead-in.
+//                     Thresholds are relaxed vs. the generic labelMove() because
+//                     R_75/R_100 moves are smoother and don't require the extreme
+//                     ATR ratios seen in BOOM/CRASH spike cascades.
+//
+//   "continuation"  — move continuing an established trending lead-in with
+//                     sufficient directional persistence.
+//
+//   "reversal"      — mean-reverting move against a trending lead-in, or a
+//                     low-persistence move from an expanding phase.
+//
+// The function ALWAYS returns one of these three values — never "unknown" —
+// so the "By family" card in the Research page shows meaningful groupings
+// instead of an opaque "unknown" bucket.
+//
+// Threshold rationale:
+//   R_75/R_100 engine spec in precursorPass.ts uses leadInShapes "compressing"
+//   for breakout engines and "trending" for continuation/reversal engines.
+//   The directionalPersistence and rangeExpansion cut-offs here are intentionally
+//   more generous than labelMove() to match the looser structural criteria the
+//   engine passes accept for these lower-volatility instruments.
+
+function classifyVolatilityFamilyCandidate(
+  leadInShape: string,
+  directionalPersistence: number,
+  rangeExpansion: number,
+): "breakout" | "continuation" | "reversal" {
+  // Priority 1: Clear breakout — meaningful range expansion AND solid momentum
+  if (rangeExpansion >= 1.3 && directionalPersistence >= 0.55) {
+    return "breakout";
+  }
+
+  // Priority 2: Breakout from compression or ranging even with moderate expansion
+  if (
+    (leadInShape === "compressing" || leadInShape === "ranging") &&
+    rangeExpansion >= 1.1 &&
+    directionalPersistence >= 0.50
+  ) {
+    return "breakout";
+  }
+
+  // Priority 3: Continuation — trending lead-in with sufficient directional follow-through
+  if (leadInShape === "trending" && directionalPersistence >= 0.52) {
+    return "continuation";
+  }
+
+  // Priority 4: Reversal — trending lead-in but move lacked directional persistence
+  if (leadInShape === "trending" && directionalPersistence < 0.52) {
+    return "reversal";
+  }
+
+  // Priority 5: Expanding lead-in — strong persistence → still-trending continuation;
+  //             weak persistence → exhaustion reversal
+  if (leadInShape === "expanding") {
+    return directionalPersistence >= 0.55 ? "continuation" : "reversal";
+  }
+
+  // Residual (compressing/ranging with low expansion or persistence):
+  // Use directional persistence as the deciding signal.
+  // High persistence → clean directional move, classify as breakout.
+  // Low persistence  → choppy mean-reverting move, classify as reversal.
+  return directionalPersistence >= 0.55 ? "breakout" : "reversal";
+}
+
 // ── Core swing extraction — threshold-based zigzag ────────────────────────────
 //
 // Only reverses direction when price retraces >= reversalPct from the current
@@ -422,15 +494,26 @@ function recordMove(
 
   const triggerZoneJson = calcTriggerZone(candles, startIdx, atrStart);
 
+  // Assign strategy family candidate based on instrument class:
+  //   BOOM300  → always "boom_expansion"  (spike-expansion engine family)
+  //   CRASH300 → always "crash_expansion" (spike-expansion engine family)
+  //   R_75 / R_100 → structural family from classifyVolatilityFamilyCandidate()
+  //                  (never "unknown" — always resolves to breakout/continuation/reversal)
+  //   Other symbols → fall back to the generic labelMove() result (may be "unknown")
+  const strategyFamilyCandidate: DetectedMove["strategyFamilyCandidate"] =
+    symbol === "BOOM300"
+      ? "boom_expansion"
+      : symbol === "CRASH300"
+        ? "crash_expansion"
+        : VOLATILITY_SYMBOLS.includes(symbol)
+          ? classifyVolatilityFamilyCandidate(shape, directionalPersistence, rangeExpansion)
+          : moveType;
+
   moves.push({
     symbol,
     direction,
     moveType,
-    strategyFamilyCandidate: symbol === "BOOM300"
-      ? "boom_expansion"
-      : symbol === "CRASH300"
-        ? "crash_expansion"
-        : moveType,
+    strategyFamilyCandidate,
     startTs:    candles[startIdx].openTs,
     endTs:      candles[endIdx].openTs,
     startPrice,
@@ -584,11 +667,20 @@ export async function getDetectedMoves(
   const tierThreshold = minTier ? (tierOrder[minTier] ?? 3) : 3;
   const validTiers = (["A", "B", "C", "D"] as const).filter(t => (tierOrder[t] ?? 3) <= tierThreshold);
 
-  const FAMILY_FILTERS = ["boom_expansion", "crash_expansion"];
+  // All named family labels are stored in strategyFamilyCandidate, so we always
+  // filter on that column for family queries.  This covers:
+  //   "boom_expansion" / "crash_expansion"  — BOOM300/CRASH300 spike families
+  //   "breakout" / "continuation" / "reversal" — R_75/R_100 and generic structural
+  // Filtering moveType is kept only as a fallback for unknown/custom values that
+  // are not covered by the strategyFamilyCandidate column.
+  const FAMILY_FILTERS = new Set([
+    "boom_expansion", "crash_expansion",
+    "breakout", "continuation", "reversal",
+  ]);
   type WhereCondition = ReturnType<typeof eq>;
   const conditions: WhereCondition[] = [eq(detectedMovesTable.symbol, symbol)];
   if (moveType) {
-    if (FAMILY_FILTERS.includes(moveType)) {
+    if (FAMILY_FILTERS.has(moveType)) {
       conditions.push(eq(detectedMovesTable.strategyFamilyCandidate, moveType));
     } else {
       conditions.push(eq(detectedMovesTable.moveType, moveType));

@@ -50,8 +50,15 @@ export const detectedMovesTable = pgTable("detected_moves", {
   isInterpolatedExcluded:  boolean("is_interpolated_excluded").notNull().default(true),
   // Deterministic move family label — computed at detection time, stored separately
   // from moveType so future AI refinement can replace this without losing the original.
-  // Values: "breakout" | "continuation" | "reversal" | "unknown"
-  //         "boom_expansion" (BOOM300) | "crash_expansion" (CRASH300)
+  //
+  // Per-instrument values assigned by moveDetector.ts:
+  //   BOOM300   → "boom_expansion"   (spike-expansion engine family, always)
+  //   CRASH300  → "crash_expansion"  (spike-expansion engine family, always)
+  //   R_75      → "breakout" | "continuation" | "reversal"
+  //                 assigned by classifyVolatilityFamilyCandidate(); never "unknown"
+  //                 so every R_75 move appears under a named group in the Research UI
+  //   R_100     → same as R_75 above
+  //   Others    → mirrors moveType, may be "unknown" when structural evidence is weak
   strategyFamilyCandidate: text("strategy_family_candidate").notNull().default("unknown"),
   contextJson:             jsonb("context_json"),
   // Candle-level characteristics around the trigger zone (first bar of the move).

@@ -556,7 +556,8 @@ export async function detectAndStoreMoves(
   const movesByType: Record<string, number> = {};
   const movesByTier: Record<string, number> = {};
   for (const m of moves) {
-    movesByType[m.moveType] = (movesByType[m.moveType] ?? 0) + 1;
+    const family = m.strategyFamilyCandidate ?? m.moveType;
+    movesByType[family] = (movesByType[family] ?? 0) + 1;
     movesByTier[m.qualityTier] = (movesByTier[m.qualityTier] ?? 0) + 1;
   }
 

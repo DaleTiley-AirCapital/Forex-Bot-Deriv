@@ -41,16 +41,17 @@ export async function getOpenAIClient(): Promise<OpenAI> {
 /**
  * normalizeParamsForModel — translates max_tokens → max_completion_tokens for
  * gpt-5.x and o-series models, which reject the legacy max_tokens parameter.
+ * Returns { params, normalized } so callers can log when translation occurs.
  */
 function normalizeParamsForModel(
   params: Record<string, unknown>,
   model: string,
-): Record<string, unknown> {
+): { params: Record<string, unknown>; normalized: boolean } {
   const needsCompletionTokens = /^gpt-5/.test(model) || /^o\d/.test(model);
-  if (!needsCompletionTokens) return params;
-  if (!("max_tokens" in params)) return params;
+  if (!needsCompletionTokens) return { params, normalized: false };
+  if (!("max_tokens" in params)) return { params, normalized: false };
   const { max_tokens, ...rest } = params;
-  return { ...rest, max_completion_tokens: max_tokens };
+  return { params: { ...rest, max_completion_tokens: max_tokens }, normalized: true };
 }
 
 /**
@@ -63,8 +64,14 @@ export async function chatComplete(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, "model"> & { model?: string },
 ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
   const client = await getOpenAIClient();
-  const primaryModel  = params.model ?? PRIMARY_MODEL;
-  const primaryParams = normalizeParamsForModel({ ...params, model: primaryModel }, primaryModel);
+  const primaryModel = params.model ?? PRIMARY_MODEL;
+  const { params: primaryParams, normalized: primaryNormalized } = normalizeParamsForModel(
+    { ...params, model: primaryModel },
+    primaryModel,
+  );
+  if (primaryNormalized) {
+    console.log(`[AI] chatComplete: max_tokens → max_completion_tokens for model ${primaryModel}`);
+  }
   try {
     return await client.chat.completions.create(primaryParams as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
   } catch (err) {
@@ -75,24 +82,34 @@ export async function chatComplete(
       code === "model_not_found" || code === "insufficient_quota" || code === "model_not_available";
     if (isFallbackCandidate && (params.model === PRIMARY_MODEL || params.model == null)) {
       console.warn(`[AI] PRIMARY_MODEL (${PRIMARY_MODEL}) error (${status}/${code ?? ""}), falling back to ${FALLBACK_MODEL}`);
-      const fallbackParams = normalizeParamsForModel({ ...params, model: FALLBACK_MODEL }, FALLBACK_MODEL);
+      const { params: fallbackParams, normalized: fallbackNormalized } = normalizeParamsForModel(
+        { ...params, model: FALLBACK_MODEL },
+        FALLBACK_MODEL,
+      );
+      if (fallbackNormalized) {
+        console.log(`[AI] chatComplete: max_tokens → max_completion_tokens for fallback model ${FALLBACK_MODEL}`);
+      }
       return await client.chat.completions.create(fallbackParams as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
     }
     throw err;
   }
 }
 
-export async function checkOpenAiHealth(): Promise<{ configured: boolean; working: boolean; error?: string }> {
+export async function checkOpenAiHealth(): Promise<{ configured: boolean; working: boolean; model?: string; error?: string }> {
   try {
     const key = await getOpenAIKey();
     if (!key) return { configured: false, working: false };
 
+    // max_tokens is intentionally ≥ 200 here: gpt-5.x / o-series reasoning models need
+    // enough budget for internal reasoning tokens before producing output.
+    // normalizeParamsForModel() inside chatComplete() translates this to max_completion_tokens.
     const response = await chatComplete({
       messages: [{ role: "user", content: "Reply with OK" }],
-      max_tokens: 5,
+      max_tokens: 200,
     });
     const ok = !!response.choices[0]?.message?.content;
-    return { configured: true, working: ok };
+    const model = response.model ?? undefined;
+    return { configured: true, working: ok, model };
   } catch (err) {
     return { configured: true, working: false, error: err instanceof Error ? err.message : "Unknown error" };
   }

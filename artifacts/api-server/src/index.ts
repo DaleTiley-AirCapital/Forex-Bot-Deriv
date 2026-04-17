@@ -243,6 +243,44 @@ async function initDb(): Promise<void> {
   }
   console.log(`[DB] Ran ${migrations.length} column migrations.`);
 
+  // ── One-time data fix: divide avg_move_pct / median_move_pct by 100 ──────────
+  // Task #100 fixed double-multiplication at write time, but rows written before
+  // that fix stored values in percentage form (e.g. 6.98 instead of 0.0698).
+  // The UI multiplies by 100 for display, so those rows showed "698%" instead of "6.98%".
+  //
+  // Idempotency: we record a marker in platform_state so this update runs exactly
+  // once, regardless of how many times the server restarts. The > 1.0 WHERE clause
+  // is kept as a secondary safety net in case the marker was cleared.
+  try {
+    const markerKey = "migration_fix_move_pct_div100_done";
+    const markerRows = await db.select().from(platformStateTable)
+      .where(eq(platformStateTable.key, markerKey)).limit(1);
+
+    if (markerRows.length > 0) {
+      console.log("[DB] Move-pct fix: already applied (marker present) — skipping.");
+    } else {
+      const fixResult = await db.execute(sql`
+        UPDATE strategy_calibration_profiles
+        SET
+          avg_move_pct    = avg_move_pct    / 100.0,
+          median_move_pct = median_move_pct / 100.0
+        WHERE avg_move_pct > 1.0
+           OR median_move_pct > 1.0
+      `);
+      const rowCount = (fixResult as unknown as { rowCount?: number }).rowCount ?? 0;
+      console.log(`[DB] Move-pct fix: divided avg_move_pct/median_move_pct by 100 on ${rowCount} calibration profile row(s).`);
+
+      // Record that this one-time fix has been applied.
+      await db.insert(platformStateTable)
+        .values({ key: markerKey, value: "true" })
+        .onConflictDoNothing();
+      console.log(`[DB] Move-pct fix: marker '${markerKey}' recorded.`);
+    }
+  } catch (err) {
+    console.warn("[DB] Move-pct fix skipped (table may not exist yet):", err instanceof Error ? err.message : err);
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
+
   // ── Explicit candles schema verification (fail-loud before scheduler starts) ──
   const candlesColCheck = await db.execute(sql`
     SELECT column_name FROM information_schema.columns

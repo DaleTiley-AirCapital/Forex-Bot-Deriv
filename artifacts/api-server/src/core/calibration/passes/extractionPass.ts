@@ -142,7 +142,7 @@ export async function runExtractionPass(
 
 Symbol: ${symbol}
 Analysis window: ${moves.length} detected moves
-Move size range: ${Math.min(...movePcts).toFixed(1)}% – ${Math.max(...movePcts).toFixed(1)}% (median ${median(movePcts).toFixed(1)}%)
+Move size range: ${(Math.min(...movePcts) * 100).toFixed(1)}% – ${(Math.max(...movePcts) * 100).toFixed(1)}% (median ${(median(movePcts) * 100).toFixed(1)}%)
 Hold duration range: ${Math.min(...holdHours).toFixed(1)}h – ${Math.max(...holdHours).toFixed(1)}h
 Move types: ${JSON.stringify(byType)}
 Engine coverage (current engines would fire): ${(fitScore * 100).toFixed(0)}% of detected moves

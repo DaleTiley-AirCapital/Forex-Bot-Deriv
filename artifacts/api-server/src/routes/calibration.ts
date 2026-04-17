@@ -425,7 +425,7 @@ router.get("/calibration/export/:symbol", async (req, res): Promise<void> => {
       const mags = moves.map(m => Number(m.movePct ?? 0)).sort((a, b) => a - b);
       const median = mags.length > 0 ? mags[Math.floor(mags.length / 2)] : null;
       const moveTypeDistribution = moves.reduce<Record<string, number>>((acc, m) => {
-        const t = String(m.moveType ?? "unknown");
+        const t = String(m.strategyFamilyCandidate ?? m.moveType ?? "unknown");
         acc[t] = (acc[t] ?? 0) + 1;
         return acc;
       }, {});

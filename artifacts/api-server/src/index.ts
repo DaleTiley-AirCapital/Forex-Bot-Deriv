@@ -220,6 +220,8 @@ async function initDb(): Promise<void> {
     "ALTER TABLE trades ADD COLUMN IF NOT EXISTS trade_stage INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE trades ADD COLUMN IF NOT EXISTS mfe_pct DOUBLE PRECISION NOT NULL DEFAULT 0",
     "ALTER TABLE trades ADD COLUMN IF NOT EXISTS mae_pct DOUBLE PRECISION NOT NULL DEFAULT 0",
+    "ALTER TABLE trades ADD COLUMN IF NOT EXISTS calibration_move_id INTEGER",
+    "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS calibration_move_id INTEGER",
     "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS composite_score DOUBLE PRECISION",
     "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS scoring_dimensions JSONB",
     "ALTER TABLE signal_log ADD COLUMN IF NOT EXISTS mode TEXT",

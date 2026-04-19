@@ -25,7 +25,15 @@ import { fileURLToPath } from "url";
 import { getOpenAIClient } from "../../infrastructure/openai.js";
 import { EMBEDDING_MODEL, MAX_RETRIEVAL_CHARS } from "./aiConfig.js";
 
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
+// `import.meta.url` is unavailable in CJS production builds (esbuild format:"cjs").
+// Fall back to process.cwd() so the server starts; safeRead() guards missing files.
+const __dirname = (() => {
+  try {
+    return fileURLToPath(new URL(".", import.meta.url));
+  } catch {
+    return process.cwd();
+  }
+})();
 const WORKSPACE_ROOT = resolve(__dirname, "../../../../../");
 
 function safeRead(relPath: string, maxChars = 40_000): string {

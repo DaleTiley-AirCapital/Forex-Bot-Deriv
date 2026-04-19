@@ -21,9 +21,18 @@ import { retrieveContext } from "../../ai/contextRetriever.js";
 const PRECURSOR_LOOKBACK_BARS = 96;
 
 // Engine coverage rules (deterministic, not AI)
+//
+// BOOM300 / CRASH300 notes:
+//   - Both instruments trade in BOTH directions (SELL after swing high, BUY after drift-down)
+//   - Their spike-driven behavior produces inherently low directional persistence which
+//     suppresses quality scores to C/D even on structurally significant moves.
+//   - "ranging" and "compressing" lead-ins are valid entry conditions for boom/crash spikes
+//     (price often consolidates before the spike event).
+//   - Direction is "both" because the engine handles sell (after swing high) and buy (after
+//     drift-down exhaustion) symmetrically.
 const ENGINE_MAP: Record<string, { symbols: string[]; direction: string; leadInShapes: string[] }> = {
-  "boom_expansion_engine":        { symbols: ["BOOM300"], direction: "down", leadInShapes: ["trending", "expanding"] },
-  "crash_expansion_engine":       { symbols: ["CRASH300"], direction: "up", leadInShapes: ["trending", "expanding"] },
+  "boom_expansion_engine":        { symbols: ["BOOM300"], direction: "both", leadInShapes: ["trending", "expanding", "ranging", "compressing"] },
+  "crash_expansion_engine":       { symbols: ["CRASH300"], direction: "both", leadInShapes: ["trending", "expanding", "ranging", "compressing"] },
   "r75_reversal_engine":          { symbols: ["R_75"], direction: "both", leadInShapes: ["ranging", "trending"] },
   "r75_continuation_engine":      { symbols: ["R_75"], direction: "both", leadInShapes: ["trending"] },
   "r75_breakout_engine":          { symbols: ["R_75"], direction: "both", leadInShapes: ["compressing"] },
@@ -31,6 +40,11 @@ const ENGINE_MAP: Record<string, { symbols: string[]; direction: string; leadInS
   "r100_continuation_engine":     { symbols: ["R_100"], direction: "both", leadInShapes: ["trending"] },
   "r100_breakout_engine":         { symbols: ["R_100"], direction: "both", leadInShapes: ["compressing"] },
 };
+
+// BOOM/CRASH instruments are spike-driven — their moves inherently have lower directional
+// persistence than smooth R_75/R_100 moves, so quality tier C is a valid "engine-worthy"
+// threshold for these symbols. Tier D remains the noise floor for both instrument classes.
+const BOOM_CRASH_SYMBOLS_SET = new Set(["BOOM300", "CRASH300"]);
 
 function findMatchingEngine(move: DetectedMoveRow): string | null {
   for (const [engineName, rule] of Object.entries(ENGINE_MAP)) {
@@ -43,7 +57,12 @@ function findMatchingEngine(move: DetectedMoveRow): string | null {
 
 function wouldEngineFire(move: DetectedMoveRow, engineMatched: string | null): boolean {
   if (!engineMatched) return false;
-  // Heuristic: engine fires if quality tier is A or B (move was strong/clear enough)
+  // Spike-driven BOOM/CRASH instruments score C on moves that are structurally significant
+  // (the low directional persistence of spike moves suppresses the quality score vs R instruments).
+  // Accept C-tier for BOOM/CRASH; require A or B for smooth volatility instruments.
+  if (BOOM_CRASH_SYMBOLS_SET.has(move.symbol)) {
+    return move.qualityTier === "A" || move.qualityTier === "B" || move.qualityTier === "C";
+  }
   return move.qualityTier === "A" || move.qualityTier === "B";
 }
 
@@ -120,7 +139,8 @@ Pre-move price drift: ${preMovePct}% (positive = up before the main move)
 ENGINE COVERAGE CHECK:
 Matched engine: ${engineMatched ?? "none"}
 Engine would fire: ${engineWouldFire}
-System engines: boom_expansion_engine (BOOM300 down), crash_expansion_engine (CRASH300 up),
+System engines: boom_expansion_engine (BOOM300 both directions — SELL after swing high, BUY after drift-down exhaustion),
+  crash_expansion_engine (CRASH300 both directions — BUY after crash spike cluster, SELL after rally exhaustion),
   r75_reversal_engine, r75_continuation_engine, r75_breakout_engine (R_75),
   r100_reversal_engine, r100_continuation_engine, r100_breakout_engine (R_100)
 
